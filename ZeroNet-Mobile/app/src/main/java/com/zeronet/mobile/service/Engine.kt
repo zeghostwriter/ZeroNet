@@ -136,6 +136,10 @@ object Engine {
             server.transport !in setOf("ws", "httpupgrade", "xhttp", "splithttp")
     }
     private const val HEALTH_INTERVAL_MS = 45_000L
+    /** When every server fails a health check, test again this much later before believing it. */
+    private const val HEALTH_RETEST_MS = 3_000L
+    /** Failed health checks in a row before a chosen config is reported as not answering. */
+    private const val CHOSEN_DOWN_AFTER = 2
     /** Test timeout for the user's own configs; see [testServers]. */
     private const val OWN_TIMEOUT_MS = 10_000
     private const val PROBE_URL = "http://cp.cloudflare.com/generate_204"
@@ -165,6 +169,8 @@ object Engine {
     private var profileJob: Job? = null
     private var scanJob: Job? = null
     private var monitorJob: Job? = null
+    /** Health checks in a row in which the chosen config failed; see [CHOSEN_DOWN_AFTER]. */
+    private var chosenFailures = 0
     private val healthNow = Channel<Unit>(Channel.CONFLATED)
 
     @Volatile private var settings = Settings()
@@ -347,6 +353,7 @@ object Engine {
 
     private suspend fun runConnection() {
         pool.clear()
+        chosenFailures = 0
         publish(ConnState.Searching(DiscoveryProgress()))
         if (nativeError != null) {
             fail(FailReason.CoreError, nativeError.orEmpty()); return
@@ -653,9 +660,18 @@ object Engine {
         if (pool.isNotEmpty()) {
             val results = HashMap<String, Int>()
             val errors = HashMap<String, String?>()
-            testServers(pool.map { it.server }, timeoutMs = 5000, concurrency = pool.size) { key, delay, error ->
+            suspend fun probe() = testServers(pool.map { it.server }, timeoutMs = 5000, concurrency = pool.size) { key, delay, error ->
                 results[key] = delay
                 errors[key] = error
+            }
+            probe()
+            // One failed probe is weak evidence on these networks: a single
+            // lost handshake would otherwise switch servers under the user,
+            // or report a working config as dead. Test again before acting.
+            if (results.values.none { it >= 0 }) {
+                delay(HEALTH_RETEST_MS)
+                if (!running) return@withLock
+                probe()
             }
             withContext(Dispatchers.IO) { results.forEach { (k, d) -> store.recordResult(k, d, network, errors[k]) } }
             val survivors = pool.mapNotNull { a -> results[a.server.key]?.takeIf { it >= 0 }?.let { a.copy(delayMs = it) } }
@@ -673,10 +689,14 @@ object Engine {
             serversChanged.tryEmit(Unit)
             // A config the user chose is never swapped for another: while it
             // is down, keep it in place and try it again on the next check.
+            // Nothing depends on this verdict but the message, so it waits
+            // for more than one failed check before saying so.
             if (target is ConnectTarget.Specific) {
                 if (survivors.isEmpty()) {
-                    publish(ConnState.Reconnecting(REASON_CHOSEN_DOWN))
+                    chosenFailures++
+                    if (chosenFailures >= CHOSEN_DOWN_AFTER) publish(ConnState.Reconnecting(REASON_CHOSEN_DOWN))
                 } else {
+                    chosenFailures = 0
                     pool.clear(); pool.addAll(survivors)
                     publishConnected()
                 }
