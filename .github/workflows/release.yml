@@ -133,8 +133,14 @@ jobs:
           distribution: temurin
           java-version: "17"
       - uses: android-actions/setup-android@v3
-      - name: SDK, build tools and NDK
-        run: sdkmanager "platforms;android-37" "build-tools;37.0.0" "ndk;29.0.14206865"
+        with:
+          # Its default list includes the legacy "tools" package, which the
+          # SDK repository no longer carries, failing the step.
+          packages: platform-tools
+      # Platform and build tools are installed by the Android Gradle plugin
+      # from compileSdk; the NDK version is what the Rust build is tested on.
+      - name: NDK
+        run: sdkmanager "ndk;29.0.14206865"
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-linux-android, armv7-linux-androideabi, x86_64-linux-android

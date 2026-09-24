@@ -124,6 +124,13 @@ object ZeroIcons {
     val Check = icon("check", false, "M5 12.5l4.5 4.5L19 7.5")
     val Bolt = icon("bolt", false, "M13 2.5 4.5 13.5H11l-1 8 8.5-11H12l1-8Z")
     val Shield = icon("shield", false, "M12 3 5 6v5.2c0 4.3 2.9 8.2 7 9.8 4.1-1.6 7-5.5 7-9.8V6l-7-3Z", "M9 12l2 2 4-4")
+    val Gamepad = icon(
+        "gamepad",
+        false,
+        "M7.5 7.5h9a4.5 4.5 0 0 1 4.4 3.6l.9 4.6a2.6 2.6 0 0 1-4.6 2.1L15.5 16h-7l-1.7 1.8a2.6 2.6 0 0 1-4.6-2.1l.9-4.6a4.5 4.5 0 0 1 4.4-3.6Z",
+        "M8 10.5v3", "M6.5 12h3",
+        filled = listOf("M16.9 11a.9.9 0 1 1-1.8 0 .9.9 0 0 1 1.8 0Z", "M18.4 13.2a.9.9 0 1 1-1.8 0 .9.9 0 0 1 1.8 0Z"),
+    )
     val Wifi = icon(
         "wifi", false,
         "M2.5 8.8a14 14 0 0 1 19 0", "M5.5 12.2a9.5 9.5 0 0 1 13 0", "M8.6 15.5a5 5 0 0 1 6.8 0",

@@ -5,6 +5,15 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 enum class ConnectionMode { Vpn, Proxy }
+
+/**
+ * How ZeroNet chooses and runs servers. See `Engine` for what each does.
+ *
+ * - [Normal]: encrypted (TLS / REALITY) servers only, with backups.
+ * - [Fast]: the first server that works; nothing else.
+ * - [Gaming]: lowest ping, UDP allowed, one server that is never switched mid-game.
+ */
+enum class ConnectionProfile { Normal, Fast, Gaming }
 enum class AutoConnect { Off, OnAppStart, OnBoot }
 enum class AppFilterMode { All, OnlySelected, AllExceptSelected }
 enum class EvasionLevel { Off, Auto, Strong }
@@ -24,6 +33,7 @@ enum class RemoteDns { Cloudflare, Google, Quad9, AdGuard }
 data class Settings(
     // Connection
     val mode: ConnectionMode = ConnectionMode.Vpn,
+    val profile: ConnectionProfile = ConnectionProfile.Normal,
     val autoConnect: AutoConnect = AutoConnect.Off,
     val autoSwitch: Boolean = true,
     val ipv6: Boolean = false,
@@ -65,6 +75,7 @@ data class Settings(
 ) {
     fun toJson(): JSONObject = JSONObject()
         .put("mode", mode.name)
+        .put("profile", profile.name)
         .put("autoConnect", autoConnect.name)
         .put("autoSwitch", autoSwitch)
         .put("ipv6", ipv6)
@@ -101,6 +112,7 @@ data class Settings(
             val d = Settings()
             return Settings(
                 mode = o.enumOr("mode", d.mode),
+                profile = o.enumOr("profile", d.profile),
                 autoConnect = o.enumOr("autoConnect", d.autoConnect),
                 autoSwitch = o.optBoolean("autoSwitch", d.autoSwitch),
                 ipv6 = o.optBoolean("ipv6", d.ipv6),

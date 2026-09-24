@@ -15,6 +15,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.zeronet.mobile.model.ConnectionProfile
 import com.zeronet.mobile.model.MotionLevel
 import com.zeronet.mobile.ui.components.rememberGlassAllowed
 import com.zeronet.mobile.ui.home.HomeRoute
@@ -26,6 +27,7 @@ import com.zeronet.mobile.ui.shell.Tab
 import com.zeronet.mobile.ui.shell.TabHost
 import com.zeronet.mobile.ui.shell.ZeroRoot
 import com.zeronet.mobile.ui.theme.ZeroTheme
+import com.zeronet.mobile.ui.theme.ZeroMotion
 
 /**
  * The whole app: theme from settings, first-run onboarding, then the four
@@ -53,13 +55,14 @@ fun ZeroNetApp(
         amoled = settings.amoled,
         reducedMotion = settings.motion == MotionLevel.Reduced || systemReduced,
         glass = rememberGlassAllowed(),
+        gaming = settings.profile == ConnectionProfile.Gaming,
     ) {
         val dark = ZeroTheme.colors.isDark
         SideEffect { onThemeResolved(dark) }
         CompositionLocalProvider(LocalController provides controller) {
             AnimatedContent(
                 targetState = showOnboarding,
-                transitionSpec = { (fadeIn(tween(320)) + scaleIn(initialScale = 0.97f)) togetherWith fadeOut(tween(160)) },
+                transitionSpec = { (fadeIn(tween(ZeroMotion.ms(320))) + scaleIn(initialScale = 0.97f)) togetherWith fadeOut(tween(ZeroMotion.ms(160))) },
                 label = "onboarding",
             ) { onboarding ->
                 if (onboarding) {

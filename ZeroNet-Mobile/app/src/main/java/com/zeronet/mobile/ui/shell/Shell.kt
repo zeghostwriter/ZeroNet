@@ -166,13 +166,13 @@ fun TabHost(tab: Tab, content: @Composable (Tab) -> Unit) {
         targetState = tab,
         transitionSpec = {
             if (reduced) {
-                ContentTransform(fadeIn(tween(150)), fadeOut(tween(150)))
+                ContentTransform(fadeIn(tween(ZeroMotion.ms(150))), fadeOut(tween(ZeroMotion.ms(150))))
             } else {
                 val forward = targetState.ordinal > initialState.ordinal
                 val dir = (if (forward) 1 else -1) * (if (rtl) -1 else 1)
-                val slide = spring<androidx.compose.ui.unit.IntOffset>(dampingRatio = 0.9f, stiffness = 500f)
-                (slideInHorizontally(slide) { w -> dir * w / 5 } + fadeIn(tween(220, delayMillis = 60))) togetherWith
-                    (slideOutHorizontally(slide) { w -> -dir * w / 5 } + fadeOut(tween(120)))
+                val slide = spring<androidx.compose.ui.unit.IntOffset>(dampingRatio = 0.9f, stiffness = ZeroMotion.k(500f))
+                (slideInHorizontally(slide) { w -> dir * w / 5 } + fadeIn(tween(ZeroMotion.ms(220), delayMillis = ZeroMotion.ms(60)))) togetherWith
+                    (slideOutHorizontally(slide) { w -> -dir * w / 5 } + fadeOut(tween(ZeroMotion.ms(120))))
             }
         },
         label = "tabs",
@@ -196,8 +196,8 @@ private fun BottomBar(tab: Tab, onTab: (Tab) -> Unit, haze: HazeState, modifier:
         if (reduced) {
             lead.snapTo(index.toFloat()); trail.snapTo(index.toFloat())
         } else {
-            launch { lead.animateTo(index.toFloat(), spring(dampingRatio = 0.8f, stiffness = 700f)) }
-            launch { trail.animateTo(index.toFloat(), spring(dampingRatio = 0.85f, stiffness = 260f)) }
+            launch { lead.animateTo(index.toFloat(), spring(dampingRatio = 0.8f, stiffness = ZeroMotion.k(700f))) }
+            launch { trail.animateTo(index.toFloat(), spring(dampingRatio = 0.85f, stiffness = ZeroMotion.k(260f))) }
         }
     }
     val rtl = LocalLayoutDirection.current == LayoutDirection.Rtl
@@ -292,8 +292,8 @@ private fun MessagePill(messages: AppMessages, modifier: Modifier) {
     AnimatedVisibility(
         visible = current != null,
         modifier = modifier,
-        enter = if (reduced) fadeIn(tween(150)) else fadeIn(tween(160)) + slideInVertically(ZeroMotion.expressive()) { it / 2 },
-        exit = if (reduced) fadeOut(tween(150)) else fadeOut(tween(160)) + slideOutVertically(ZeroMotion.standard()) { it / 2 },
+        enter = if (reduced) fadeIn(tween(ZeroMotion.ms(150))) else fadeIn(tween(ZeroMotion.ms(160))) + slideInVertically(ZeroMotion.expressive()) { it / 2 },
+        exit = if (reduced) fadeOut(tween(ZeroMotion.ms(150))) else fadeOut(tween(ZeroMotion.ms(160))) + slideOutVertically(ZeroMotion.standard()) { it / 2 },
     ) {
         var last by remember { mutableStateOf("") }
         if (current != null) last = current.second
@@ -329,7 +329,7 @@ fun ScreenTopBar(
     val progress = remember { Animatable(if (scrolled) 1f else 0f) }
     LaunchedEffect(scrolled) {
         val target = if (scrolled) 1f else 0f
-        if (reduced) progress.animateTo(target, tween(150)) else progress.animateTo(target, ZeroMotion.standard())
+        if (reduced) progress.animateTo(target, tween(ZeroMotion.ms(150))) else progress.animateTo(target, ZeroMotion.standard())
     }
     Box(modifier.fillMaxWidth()) {
         // The glass layer fades in as a whole; content above it stays crisp.

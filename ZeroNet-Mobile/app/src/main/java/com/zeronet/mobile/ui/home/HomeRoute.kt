@@ -54,6 +54,7 @@ import com.zeronet.mobile.ui.theme.ZeroTheme
 import com.zeronet.mobile.ui.util.Num
 import com.zeronet.mobile.ui.util.currentLocale
 import com.zeronet.mobile.ui.util.formatDelay
+import java.util.Locale
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -79,6 +80,7 @@ fun HomeRoute() {
             target = target,
             targetServer = targetServer,
             targetCountryDelay = countryDelay,
+            profile = settings.profile,
         ),
         onOrbClick = controller::toggle,
         onRetry = {
@@ -86,13 +88,15 @@ fun HomeRoute() {
             if (failed?.reason == FailReason.ServerUnavailable) controller.selectTarget(ConnectTarget.Fastest) else controller.connect()
         },
         onPickServer = { picker = true },
+        onProfile = { p -> controller.update { it.copy(profile = p) } },
     )
 
     ServerPickerSheet(
         visible = picker,
         target = target,
         groups = groups,
-        favorites = remember(servers) { servers.filter { it.favorite } },
+        mine = remember(servers) { servers.filter { it.isUser } },
+        favorites = remember(servers) { servers.filter { it.favorite && !it.isUser } },
         onSelect = {
             picker = false
             controller.selectTarget(it)
@@ -101,12 +105,13 @@ fun HomeRoute() {
     )
 }
 
-/** Fastest / favourites / countries. Choosing one saves it as the target and connects. */
+/** Fastest / your configs / favourites / countries. Choosing one saves it as the target and connects. */
 @Composable
 fun ServerPickerSheet(
     visible: Boolean,
     target: ConnectTarget,
     groups: List<CountryGroup>,
+    mine: List<Server>,
     favorites: List<Server>,
     onSelect: (ConnectTarget) -> Unit,
     onDismiss: () -> Unit,
@@ -135,6 +140,20 @@ fun ServerPickerSheet(
                     trailing = null,
                     onClick = { onSelect(ConnectTarget.Fastest) },
                 )
+            }
+            if (mine.isNotEmpty()) {
+                item(key = "mine_title", contentType = "title") { SectionTitle(stringResource(R.string.picker_mine), Modifier.padding(start = 8.dp, top = 8.dp)) }
+                items(mine, key = { "mine_" + it.key }, contentType = { "row" }) { s ->
+                    PickerRow(
+                        selected = target == ConnectTarget.Specific(s.key),
+                        leading = { FlagBadge(s.country) },
+                        title = serverTitle(context, s, locale),
+                        subtitle = if (s.country.isNotEmpty()) countryLabel(context, s.country, locale) else s.protocol.uppercase(Locale.ROOT),
+                        trailing = if (s.delayMs >= 0) formatDelay(context, s.delayMs, locale) else null,
+                        trailingColor = c.delayColor(s.delayMs),
+                        onClick = { onSelect(ConnectTarget.Specific(s.key)) },
+                    )
+                }
             }
             if (favorites.isNotEmpty()) {
                 item(key = "fav_title", contentType = "title") { SectionTitle(stringResource(R.string.picker_favorites), Modifier.padding(start = 8.dp, top = 8.dp)) }

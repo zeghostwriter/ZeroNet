@@ -173,3 +173,36 @@ jobs:
       # ifconfig/route paths are the ones the cross job only type-checks.
       - name: macOS unit tests
         run: cargo test -p zero-tun -p zero-core
+
+  android-app:
+    name: Android app
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: android-actions/setup-android@v3
+        with:
+          # Its default list includes the legacy "tools" package, which the
+          # SDK repository no longer carries, failing the step.
+          packages: platform-tools
+      # The Android Gradle plugin installs the platform and build tools that
+      # compileSdk names (licences were accepted above), so no package names
+      # are hard-coded here; this only records what the repository offers.
+      - name: available SDK platforms
+        run: sdkmanager --list 2>/dev/null | grep -E "platforms;android-3[6-9]|build-tools;3[6-9]" | sort -u || true
+      - uses: gradle/actions/setup-gradle@v4
+      # The Rust library has its own jobs above; this one checks the Kotlin
+      # and renders every screen (Robolectric + Roborazzi) on the JVM.
+      - name: compile and unit tests
+        working-directory: ZeroNet-Mobile
+        run: ./gradlew --no-daemon -Pzray.skipNative=true :app:compileDebugKotlin :app:testDebugUnitTest
+      - name: screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-screenshots
+          path: ZeroNet-Mobile/app/build/outputs/roborazzi
+          if-no-files-found: ignore
