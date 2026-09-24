@@ -1,0 +1,46 @@
+[package]
+name = "zero-scanner"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+# The terminal front end (and the `zero-scanner` binary built on it). On by
+# default so the desktop tool builds exactly as before; library users that
+# embed the scan engine — the Android build in particular — turn it off and
+# leave the terminal stack (ratatui, crossterm, clap) out of their graph.
+default = ["tui"]
+tui = ["dep:clap", "dep:crossterm", "dep:ratatui"]
+
+[[bin]]
+name = "zero-scanner"
+path = "src/main.rs"
+required-features = ["tui"]
+
+[dependencies]
+# Probe sockets are offered to the host's socket protector, so a scan run
+# inside a mobile VPN process measures the physical network, not the tunnel.
+zero-core = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "net", "io-util", "macros", "time", "sync", "process", "fs"] }
+tokio-rustls = { workspace = true }
+rustls = { workspace = true }
+rustls-pki-types = { workspace = true }
+socket2 = { workspace = true }
+clap = { version = "4.5", features = ["derive"], optional = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = "0.9"
+base64 = { workspace = true }
+rand = { workspace = true }
+roaring = "0.10"
+bitflags = { version = "2.8", features = ["serde"] }
+dashmap = "6.1"
+bytes = { workspace = true }
+url = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+crossterm = { version = "0.28", optional = true }
+httparse = { workspace = true }
+libc = { workspace = true }
+sha2 = { workspace = true }
+ratatui = { version = "0.29", default-features = false, features = ["crossterm"], optional = true }

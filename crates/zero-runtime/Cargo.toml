@@ -1,0 +1,56 @@
+[package]
+name = "zero-runtime"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+zero-core = { workspace = true }
+zero-config = { workspace = true }
+zero-dns = { workspace = true }
+zero-net = { workspace = true }
+zero-router = { workspace = true }
+zero-security = { workspace = true }
+zero-transport = { workspace = true }
+zero-protocol = { workspace = true }
+zero-evasion = { workspace = true }
+zero-observatory = { workspace = true }
+zero-tun = { workspace = true }
+# Inbound TLS configurations are compiled once per generation and cached.
+rustls = { workspace = true }
+socket2 = { workspace = true }
+tokio = { workspace = true }
+bytes = { workspace = true }
+futures = { workspace = true }
+tracing = { workspace = true }
+arc-swap = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+httparse = { workspace = true }
+h3 = { workspace = true }
+h3-quinn = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+url = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "io-util", "net", "time", "test-util"] }
+tracing-subscriber = { workspace = true }
+zero-security = { workspace = true }
+# The ClientHello parity oracle drives the TLS backend directly to capture the
+# shaped hello, without opening a connection to anything.
+rustls = { workspace = true }
+rustls-pki-types = { workspace = true }
+# The keepalive wire test stands up a minimal WebSocket relay of its own, so it
+# can count frames without trusting the transport under test to report them.
+sha1 = { workspace = true }
+base64 = { workspace = true }
+# The socket-protection test reads a descriptor's bound port back, which is
+# what lets it assert that the *local* association socket is left alone.
+libc = { workspace = true }
+# The DNS oracle stands up its own DoQ server to compare both clients against.
+quinn = { workspace = true }
+
+# `tune_allocator` sets glibc's mmap threshold.
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = { workspace = true }

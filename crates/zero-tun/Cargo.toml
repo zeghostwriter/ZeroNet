@@ -1,0 +1,16 @@
+[package]
+name = "zero-tun"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+zero-core = { workspace = true }
+tokio = { workspace = true }
+thiserror = { workspace = true }
+libc = { workspace = true }
+futures = { workspace = true }
+netstack-smoltcp = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "io-util"] }

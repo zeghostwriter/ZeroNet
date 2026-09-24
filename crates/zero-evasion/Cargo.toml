@@ -1,0 +1,20 @@
+[package]
+name = "zero-evasion"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+zero-core = { workspace = true }
+tokio = { workspace = true }
+bytes = { workspace = true }
+rand = { workspace = true }
+libc = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+# `test-util` gives the paused clock the keepalive tests need: shaping is
+# measured in minutes, and a suite that actually waited them out would be
+# unrunnable.
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "time", "io-util", "test-util"] }
+zero-observatory = { workspace = true }

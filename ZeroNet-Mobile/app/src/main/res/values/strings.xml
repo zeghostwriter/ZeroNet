@@ -1,0 +1,400 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name" translatable="false">ZeroNet</string>
+    <string name="brand_name" translatable="false">ZeroNet</string>
+
+    <!-- Service notification and quick-settings tile (used by the :vpn process). -->
+    <string name="notification_channel">Connection status</string>
+    <string name="notification_connected">Connected</string>
+    <string name="notification_searching">Finding a server…</string>
+    <string name="notification_searching_detail">Tested %1$d · %2$d working</string>
+    <string name="notification_connecting">Connecting…</string>
+    <string name="notification_reconnecting">Reconnecting…</string>
+    <string name="notification_disconnect">Disconnect</string>
+    <string name="tile_connected">Connected</string>
+    <string name="tile_disconnected">Off</string>
+    <string name="tile_searching">Searching…</string>
+
+    <!-- Tabs -->
+    <string name="tab_home">Home</string>
+    <string name="tab_servers">Servers</string>
+    <string name="tab_scanner">Scanner</string>
+    <string name="tab_settings">Settings</string>
+
+    <!-- Common actions -->
+    <string name="action_add">Add</string>
+    <string name="action_back">Back</string>
+    <string name="action_cancel">Cancel</string>
+    <string name="action_clear">Clear</string>
+    <string name="action_close">Close</string>
+    <string name="action_collapse">Hide servers</string>
+    <string name="action_connect">Connect</string>
+    <string name="action_copy_link">Copy link</string>
+    <string name="action_copy_value">Copy %1$s</string>
+    <string name="action_delete">Delete</string>
+    <string name="action_details">Details</string>
+    <string name="action_expand">Show servers</string>
+    <string name="action_favorite">Add to favourites</string>
+    <string name="action_find_servers">Find servers</string>
+    <string name="action_grant_permission">Allow VPN</string>
+    <string name="action_hide_qr">Hide QR code</string>
+    <string name="action_paste">Paste</string>
+    <string name="action_refresh_servers">Refresh servers</string>
+    <string name="action_remove_subscription">Remove %1$s</string>
+    <string name="action_save">Save</string>
+    <string name="action_share">Show QR code</string>
+    <string name="action_test">Test</string>
+    <string name="action_test_servers">Test servers</string>
+    <string name="action_try_again">Try again</string>
+    <string name="action_unfavorite">Remove from favourites</string>
+
+    <!-- Home: the orb -->
+    <string name="orb_connect">CONNECT</string>
+    <string name="orb_connecting">CONNECTING</string>
+    <string name="orb_connected">CONNECTED</string>
+    <string name="orb_disconnecting">STOPPING</string>
+    <string name="orb_failed">RETRY</string>
+    <string name="orb_action_connect">Connect</string>
+    <string name="orb_action_disconnect">Disconnect</string>
+    <string name="state_disconnected">Not connected</string>
+    <string name="state_connecting">Connecting</string>
+    <string name="state_connected_to">Connected to %1$s</string>
+    <string name="state_active">Connected now</string>
+
+    <!-- Home: the stage line under the orb -->
+    <string name="stage_idle">Tap to connect</string>
+    <string name="stage_history">Trying servers that worked before…</string>
+    <string name="stage_fetch">Getting fresh server lists…</string>
+    <string name="stage_parse">Reading %1$s servers…</string>
+    <string name="stage_tcp">Checking %1$s servers · %2$s reachable</string>
+    <string name="stage_real">Testing %1$s servers · %2$s working</string>
+    <string name="stage_connecting">Starting the tunnel…</string>
+    <string name="stage_connecting_to">Connecting to %1$s…</string>
+    <string name="stage_reconnecting">Connection dropped. Switching server…</string>
+    <string name="stage_disconnecting">Disconnecting…</string>
+    <string name="stage_connected">Your traffic is going through ZeroNet</string>
+    <string name="stage_connected_pool">Backup servers ready: %1$s</string>
+
+    <!-- Home: why a connection failed -->
+    <string name="fail_no_server">No working server on this network right now. Try again in a minute, or set anti-censorship to Strong.</string>
+    <string name="fail_no_network">You’re offline. Check Wi-Fi or mobile data.</string>
+    <string name="fail_vpn_permission">ZeroNet needs permission to set up a VPN.</string>
+    <string name="fail_vpn_revoked">Another VPN app took over the connection.</string>
+    <string name="fail_core">Something went wrong inside the engine. Please try again.</string>
+    <string name="fail_server_unavailable">That server isn’t answering. Try the fastest one instead.</string>
+
+    <!-- Home: server card and stats -->
+    <string name="server_fastest">Fastest server</string>
+    <string name="server_fastest_hint">Picked automatically for your network</string>
+    <string name="server_fastest_picked">Fastest · picked for you</string>
+    <string name="server_country_best">Best server in this country</string>
+    <string name="server_card_action">Choose a server</string>
+    <string name="stats_download">Download</string>
+    <string name="stats_upload">Upload</string>
+    <string name="stats_session">Session</string>
+
+    <!-- Units and time -->
+    <string name="unit_bps">bps</string>
+    <string name="unit_kbps">Kbps</string>
+    <string name="unit_mbps">Mbps</string>
+    <string name="unit_gbps">Gbps</string>
+    <string name="unit_b_value">%1$s B</string>
+    <string name="unit_kb_value">%1$s KB</string>
+    <string name="unit_mb_value">%1$s MB</string>
+    <string name="unit_gb_value">%1$s GB</string>
+    <string name="delay_ms">%1$s ms</string>
+    <string name="delay_unknown">—</string>
+    <string name="ago_never">Never</string>
+    <string name="ago_now">Just now</string>
+    <string name="ago_minutes">%1$s min ago</string>
+    <string name="ago_hours">%1$s h ago</string>
+    <string name="ago_days">%1$s d ago</string>
+
+    <!-- Server words -->
+    <string name="country_unknown">Unknown location</string>
+    <string name="kind_direct">Direct</string>
+    <string name="kind_cdn">CDN</string>
+    <string name="kind_other">Standard</string>
+    <string name="source_user">Added by you</string>
+    <string name="source_subscription">Your subscription</string>
+    <string name="source_feed">Public list · %1$s</string>
+    <string name="source_public">Public list</string>
+
+    <!-- Server picker sheet -->
+    <string name="picker_title">Choose a server</string>
+    <string name="picker_favorites">Favourites</string>
+    <string name="picker_countries">Countries</string>
+    <string name="picker_empty">No servers yet. Connect once and ZeroNet will find some.</string>
+
+    <!-- Servers tab -->
+    <plurals name="servers_count">
+        <item quantity="one">%1$s server</item>
+        <item quantity="other">%1$s servers</item>
+    </plurals>
+    <plurals name="servers_subtitle">
+        <item quantity="one">%1$s server · %2$s working</item>
+        <item quantity="other">%1$s servers · %2$s working</item>
+    </plurals>
+    <string name="servers_subtitle_empty">Nothing found yet</string>
+    <string name="servers_search">Search a country or name</string>
+    <string name="servers_recommended">Recommended</string>
+    <string name="servers_countries">Countries</string>
+    <string name="servers_mine">Mine</string>
+    <string name="servers_rec_empty_title">No tested servers yet</string>
+    <string name="servers_rec_empty_body">Test the list to see which servers work on your network right now.</string>
+    <string name="servers_testing">Testing %1$s of %2$s…</string>
+    <string name="servers_working_count">%1$s working</string>
+    <string name="servers_subscriptions">Subscriptions</string>
+    <string name="servers_your_servers">Your servers</string>
+    <string name="servers_mine_empty_title">Nothing added yet</string>
+    <string name="servers_mine_empty_body">Paste a link, or add a subscription from your provider.</string>
+    <string name="servers_add_title">Add servers</string>
+    <string name="servers_add_body">Paste links or a subscription address</string>
+    <string name="servers_no_matches">Nothing matches “%1$s”</string>
+    <string name="servers_empty_title">Let’s find you some servers</string>
+    <string name="servers_empty_body">ZeroNet searches public lists and tests each server on your own network. It only takes a few seconds.</string>
+    <string name="servers_finding">Searching…</string>
+
+    <!-- Server detail sheet -->
+    <string name="detail_delay">Delay</string>
+    <string name="detail_last_tested">Last tested</string>
+    <string name="detail_protocol">Protocol</string>
+    <string name="detail_transport">Transport</string>
+    <string name="detail_security">Security</string>
+    <string name="detail_address">Address</string>
+    <string name="detail_source">Source</string>
+    <string name="detail_history">Success rate</string>
+    <string name="detail_history_value">%1$s of %2$s tests</string>
+    <string name="detail_testing">Testing…</string>
+    <string name="detail_qr_description">QR code with this server’s link</string>
+    <string name="detail_share_warning">Anyone with this code can use the server. Share it only with people you trust.</string>
+    <string name="detail_delete_confirm">Delete this server? This can’t be undone.</string>
+
+    <!-- Import sheet -->
+    <string name="import_title">Add your own servers</string>
+    <string name="import_body">Paste one or more links, or add a subscription address from your provider.</string>
+    <string name="import_links">Links</string>
+    <string name="import_subscription">Subscription</string>
+    <string name="import_links_placeholder">vless://, vmess://, trojan://, ss://…</string>
+    <string name="import_result">Added %1$s · %2$s already here · %3$s not recognised</string>
+    <string name="import_error">Couldn’t import: %1$s</string>
+    <string name="import_sub_url">https://…</string>
+    <string name="import_sub_name">Name (optional)</string>
+    <string name="import_sub_invalid">Enter an address that starts with https://</string>
+    <string name="import_sub_hint">ZeroNet refreshes it together with the public lists.</string>
+
+    <!-- Transient messages -->
+    <string name="msg_copied">Copied</string>
+    <string name="msg_deleted">Server deleted</string>
+    <string name="msg_subscription_added">Subscription added. Fetching its servers…</string>
+    <string name="msg_vpn_permission_denied">ZeroNet can’t connect without VPN permission</string>
+    <string name="msg_history_cleared">Discovered servers cleared</string>
+
+    <!-- Scanner tab -->
+    <string name="scanner_explainer">Find Cloudflare addresses that still answer on your network</string>
+    <string name="scanner_ready">Ready</string>
+    <string name="scanner_scanning">Scanning…</string>
+    <string name="scanner_done">Finished</string>
+    <string name="scanner_idle_hint">About a minute</string>
+    <string name="scanner_progress_description">Scan progress</string>
+    <string name="scanner_progress_state">%1$s percent</string>
+    <string name="scanner_scanned">Scanned</string>
+    <string name="scanner_responsive">Answered</string>
+    <string name="scanner_best">Best</string>
+    <string name="scanner_start">Start scan</string>
+    <string name="scanner_stop">Stop</string>
+    <string name="scanner_again">Scan again</string>
+    <string name="scanner_error_title">The scan stopped</string>
+    <string name="scanner_results">Fastest addresses</string>
+    <string name="scanner_copy_best">Copy top %1$s</string>
+    <string name="scanner_how_title">Why scan?</string>
+    <string name="scanner_how_body">Many servers sit behind Cloudflare. When the usual addresses are filtered, a clean address that still answers on your ISP brings them back. ZeroNet uses the best results automatically.</string>
+    <string name="scanner_none_found">No address answered this time. Try again later or on another network.</string>
+    <string name="scanner_port">Port %1$s</string>
+    <string name="scanner_copy_ip">Copy %1$s</string>
+
+    <!-- Settings: shared -->
+    <string name="settings_search">Search settings</string>
+    <string name="settings_no_results">No settings match “%1$s”</string>
+    <string name="settings_applies_next">Applies on next connect</string>
+    <string name="settings_reconnect_now">Reconnect now</string>
+    <string name="option_off">Off</string>
+    <string name="option_auto">Auto</string>
+    <string name="option_system">System</string>
+
+    <!-- Settings: connection -->
+    <string name="settings_connection">Connection</string>
+    <string name="settings_mode">Mode</string>
+    <string name="settings_mode_vpn">VPN</string>
+    <string name="settings_mode_proxy">Proxy only</string>
+    <string name="settings_mode_vpn_hint">Every app goes through ZeroNet.</string>
+    <string name="settings_mode_proxy_hint">Only apps you point at the local proxy use it. No VPN icon.</string>
+    <string name="settings_autoconnect">Connect automatically</string>
+    <string name="settings_autoconnect_app">App opens</string>
+    <string name="settings_autoconnect_boot">Phone starts</string>
+    <string name="settings_autoswitch">Switch to a faster server</string>
+    <string name="settings_autoswitch_hint">When the current one slows down or drops</string>
+    <string name="settings_more_connection">Kill switch, IPv6, MTU</string>
+    <string name="settings_more_connection_hint">Advanced connection options</string>
+    <string name="settings_kill_switch">Kill switch</string>
+    <string name="settings_kill_switch_body">Android can block all internet whenever ZeroNet is not connected. In the system VPN settings, open ZeroNet and turn on “Always-on VPN” and “Block connections without VPN”.</string>
+    <string name="settings_kill_switch_open">Open VPN settings</string>
+    <string name="settings_ipv6">IPv6 through the tunnel</string>
+    <string name="settings_ipv6_hint">Leave off unless your network needs it</string>
+    <string name="settings_mtu">Packet size (MTU)</string>
+    <string name="settings_mtu_hint">%1$s works almost everywhere. Go lower if some sites stall.</string>
+
+    <!-- Settings: servers & sources -->
+    <string name="settings_sources_card">Servers &amp; sources</string>
+    <string name="settings_sources">Server sources</string>
+    <string name="settings_sources_value">%1$s of %2$s public lists on</string>
+    <plurals name="subscriptions_count">
+        <item quantity="one">%1$s subscription</item>
+        <item quantity="other">%1$s subscriptions</item>
+    </plurals>
+    <string name="settings_preferred_countries">Preferred countries</string>
+    <string name="settings_preferred_countries_hint">“Fastest” tries these first</string>
+    <string name="settings_refresh">Refresh lists</string>
+    <string name="settings_refresh_auto">Auto</string>
+    <string name="settings_refresh_manual">Manual</string>
+    <string name="settings_refresh_auto_hint">Lists refresh when you connect</string>
+    <string name="settings_refresh_manual_hint">Only when you pull down on the Servers tab</string>
+    <string name="settings_subscriptions">Your subscriptions</string>
+    <string name="sources_body">The public lists ZeroNet searches, and your own subscriptions.</string>
+    <string name="sources_public">Public lists</string>
+    <string name="sources_tier_1">Checked on every connect</string>
+    <string name="sources_tier_2">Checked when needed</string>
+    <string name="sources_tier_3">Checked on a deep search</string>
+    <string name="sources_no_subscriptions">You haven’t added any yet.</string>
+    <string name="sources_add_title">Add a subscription</string>
+    <string name="countries_search">Search countries</string>
+
+    <!-- Settings: split tunnelling -->
+    <string name="settings_split">Split tunnelling</string>
+    <string name="settings_iran_direct">Iranian sites skip the VPN</string>
+    <string name="settings_iran_direct_hint">Banks and local services stay fast and work normally</string>
+    <string name="settings_apps">Apps</string>
+    <string name="settings_apps_all">All</string>
+    <string name="settings_apps_only">Only chosen</string>
+    <string name="settings_apps_except">All but chosen</string>
+    <string name="settings_apps_proxy_note">Only applies in VPN mode</string>
+    <string name="settings_choose_apps">Choose apps</string>
+    <string name="settings_apps_none">None chosen</string>
+    <plurals name="apps_selected">
+        <item quantity="one">%1$s app</item>
+        <item quantity="other">%1$s apps</item>
+    </plurals>
+    <string name="settings_bypass_lan">Local network skips the VPN</string>
+    <string name="settings_bypass_lan_hint">Printers, TVs and your router stay reachable</string>
+    <string name="apps_body_only">Only the apps you tick use the VPN.</string>
+    <string name="apps_body_except">The apps you tick skip the VPN.</string>
+    <string name="apps_search">Search apps</string>
+
+    <!-- Settings: share over Wi-Fi -->
+    <string name="settings_share">Share over Wi-Fi</string>
+    <string name="settings_share_toggle">Share this connection</string>
+    <string name="settings_share_hint">Devices on your Wi-Fi or hotspot can use ZeroNet through a proxy</string>
+    <string name="settings_share_permission_denied">Android didn’t allow access to the local network, so sharing stays off.</string>
+    <string name="settings_share_live">Sharing now</string>
+    <string name="settings_share_when_connected">Starts when you connect</string>
+    <string name="settings_share_no_network">Join a Wi-Fi network or turn on the hotspot to share.</string>
+    <string name="settings_share_auth">Password protection</string>
+    <string name="settings_share_auth_hint">Optional. Other devices need it to use the proxy.</string>
+    <string name="settings_share_user">Username</string>
+    <string name="settings_share_pass">Password</string>
+    <string name="settings_share_http_off">HTTP sharing is off while a password is set</string>
+    <string name="settings_share_address">Address on this network</string>
+    <string name="settings_share_socks">SOCKS5</string>
+    <string name="settings_share_http">HTTP</string>
+    <string name="settings_share_port">Port %1$s</string>
+    <string name="settings_share_qr_description">QR code for the proxy at %1$s</string>
+    <string name="settings_share_qr_hint">Scan it on the other device with any proxy app.</string>
+
+    <!-- Settings: anti-censorship -->
+    <string name="settings_evasion">Anti-censorship</string>
+    <string name="settings_evasion_level">Strength</string>
+    <string name="settings_evasion_strong">Strong</string>
+    <string name="settings_evasion_off_hint">Plain connections. Fastest, but easier to block.</string>
+    <string name="settings_evasion_auto_hint">Disguises traffic only when a server gets blocked</string>
+    <string name="settings_evasion_strong_hint">Always disguises traffic. A little slower, much harder to block.</string>
+    <string name="settings_block_quic">Block QUIC</string>
+    <string name="settings_block_quic_hint">Apps fall back to TCP instead of stalling</string>
+    <string name="settings_remote_dns">DNS for blocked sites</string>
+    <string name="settings_remote_dns_hint">Asked through the tunnel, so your ISP can’t see or change the answer</string>
+    <string name="settings_custom_dns_hint">Custom resolver (e.g. 8.8.8.8)</string>
+    <string name="settings_custom_dns_note">Leave empty to use a provider above. Accepts an IP, tls://…, or https://…/dns-query.</string>
+    <string name="settings_block_ads">Block ads and trackers</string>
+    <string name="settings_block_ads_hint">Filters known ad domains for every app</string>
+
+    <!-- Settings: appearance -->
+    <string name="settings_appearance">Appearance</string>
+    <string name="settings_palette">Theme</string>
+    <string name="settings_palette_dynamic_note">Wallpaper colours are on, so the theme only sets the connection colours</string>
+    <string name="settings_theme_mode">Light or dark</string>
+    <string name="settings_theme_light">Light</string>
+    <string name="settings_theme_dark">Dark</string>
+    <string name="settings_amoled">Pure black</string>
+    <string name="settings_amoled_hint">Saves power on OLED screens</string>
+    <string name="settings_dynamic">Wallpaper colours</string>
+    <string name="settings_dynamic_hint">Material You colours from your wallpaper</string>
+    <string name="settings_language">Language</string>
+    <string name="settings_motion">Motion</string>
+    <string name="settings_motion_full">Full</string>
+    <string name="settings_motion_reduced">Reduced</string>
+    <string name="settings_motion_full_hint">Springs and live animation</string>
+    <string name="settings_motion_reduced_hint">Simple fades. Nothing moves on its own.</string>
+    <string name="palette_golden">Golden</string>
+    <string name="palette_nightshade">Nightshade</string>
+    <string name="palette_arctic">Arctic</string>
+    <string name="palette_sakura">Sakura</string>
+    <string name="palette_paper">Paper</string>
+    <string name="palette_contrast">Contrast</string>
+
+    <!-- Settings: data & privacy -->
+    <string name="settings_privacy">Data &amp; privacy</string>
+    <string name="settings_logs">Save logs</string>
+    <string name="settings_logs_hint">Off by default. Logs never leave this phone.</string>
+    <string name="settings_clear_history">Clear discovered servers</string>
+    <string name="settings_clear_history_hint">Forget public servers and test results. Servers you added stay.</string>
+    <plurals name="clear_history_body">
+        <item quantity="one">Forget %1$s discovered server and its test results? Servers you added stay.</item>
+        <item quantity="other">Forget %1$s discovered servers and their test results? Servers you added stay.</item>
+    </plurals>
+    <string name="clear_history_nothing">There are no discovered servers to clear.</string>
+
+    <!-- Settings: about -->
+    <string name="settings_about">About</string>
+    <string name="settings_version">Version</string>
+    <string name="settings_engine">Engine</string>
+    <string name="settings_engine_hint">The open-source core that runs the tunnel</string>
+    <string name="settings_licences">Open-source licences</string>
+    <string name="settings_licences_hint">ZeroNet is free software under GPL-3.0</string>
+    <string name="licences_body">ZeroNet is built on these projects.</string>
+
+    <!-- Settings search keywords: extra words that find each card (both languages are searched). -->
+    <string name="kw_connection">vpn proxy auto connect reconnect always-on kill switch lockdown mtu ipv6 network</string>
+    <string name="kw_sources">sources subscription feed list github country countries refresh update</string>
+    <string name="kw_split">split bypass per-app apps exclude route routing iran local lan</string>
+    <string name="kw_share">share lan wifi hotspot tether socks http proxy port qr password</string>
+    <string name="kw_evasion">censorship filtering fragment dpi sni dns doh quic ads adblock tracker</string>
+    <string name="kw_appearance">theme colour color dark light amoled black language persian english farsi animation motion</string>
+    <string name="kw_privacy">logs history delete clear data privacy</string>
+    <string name="kw_about">version licence license source code open source engine zray</string>
+
+    <!-- Onboarding -->
+    <string name="onboarding_skip">Skip</string>
+    <string name="onboarding_next">Continue</string>
+    <string name="onboarding_allow">Allow and start</string>
+    <string name="onboarding_later">Not now</string>
+    <string name="onboarding_page">%1$s of %2$s</string>
+    <string name="onboarding_1_title">Open internet, one tap</string>
+    <string name="onboarding_1_body">ZeroNet finds a working server and connects for you. No configs to hunt for, nothing to set up.</string>
+    <string name="onboarding_2_title">It searches, so you don’t have to</string>
+    <string name="onboarding_2_body">Each time you connect, ZeroNet checks public server lists, tests them on your own network and keeps the fastest. What worked is remembered for next time.</string>
+    <string name="onboarding_3_title">Two quick permissions</string>
+    <string name="onboarding_3_body">Android asks for these once. You can change them any time in system settings.</string>
+    <string name="onboarding_perm_vpn">VPN connection</string>
+    <string name="onboarding_perm_vpn_body">Lets ZeroNet carry your apps’ traffic through the tunnel.</string>
+    <string name="onboarding_perm_notif">Notifications</string>
+    <string name="onboarding_perm_notif_body">Shows the connection status and a one-tap Disconnect.</string>
+</resources>

@@ -1,0 +1,41 @@
+# Dependency policy for Zray-Core (PLAN-01 phase 0).
+# Keep this file deliberately explicit: a new license or source must be
+# reviewed instead of silently entering the release graph.
+
+[advisories]
+unmaintained = "workspace"
+unsound = "all"
+yanked = "deny"
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+allow-wildcard-paths = true
+highlight = "all"
+deny = [
+  { name = "v2ray-rust" },
+  { name = "sing-box" },
+]
+
+[licenses]
+confidence-threshold = 0.8
+allow = [
+  "Apache-2.0",
+  "0BSD",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "CDLA-Permissive-2.0",
+  "CC0-1.0",
+  "ISC",
+  "MIT",
+  "MPL-2.0",
+  "OpenSSL",
+  "Unicode-DFS-2016",
+  "Unicode-3.0",
+  "Zlib",
+]
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = ["https://github.com/aimalygin/shaped-rustls"]

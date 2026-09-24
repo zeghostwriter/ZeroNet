@@ -1,0 +1,14 @@
+name = "zray-edge"
+main = "src/worker.js"
+compatibility_date = "2026-09-01"
+# `connect()` from `cloudflare:sockets` needs the Node.js compatibility layer.
+compatibility_flags = ["nodejs_compat"]
+
+# UUID and PATH are deliberately NOT set here. They are credentials, and this
+# file is committed. Set them as secrets:
+#
+#   wrangler secret put UUID
+#   wrangler secret put PATH
+#
+# A UUID written into wrangler.toml is a UUID in your git history, and a
+# published Worker with a known UUID is an open proxy attributed to you.

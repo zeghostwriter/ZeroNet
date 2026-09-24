@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 7.x (no adaptive icons): the mark on a round dark badge. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp"
+    android:height="48dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path android:pathData="M54,4 A50,50 0 1,1 54,104 A50,50 0 1,1 54,4" android:fillColor="#FF0D0F12" />
+    <path android:pathData="M54,30 A24,24 0 1,1 54,78 A24,24 0 1,1 54,30" android:strokeColor="#FFF59E0B" android:strokeWidth="3.6" android:fillColor="#00000000" />
+    <path android:pathData="M54,34.8 A19.2,19.2 0 1,1 54,73.2 A19.2,19.2 0 1,1 54,34.8" android:strokeColor="#A6F59E0B" android:strokeWidth="2.4" android:fillColor="#00000000" />
+    <path android:pathData="M54,39.1 A14.9,14.9 0 1,1 54,68.9 A14.9,14.9 0 1,1 54,39.1" android:strokeColor="#73F59E0B" android:strokeWidth="2" android:fillColor="#00000000" />
+    <path android:pathData="M54,30 A24,24 0 0,1 78,54" android:strokeColor="#FFFDE68A" android:strokeWidth="3.6" android:strokeLineCap="round" android:fillColor="#00000000" />
+    <path android:pathData="M54,47 A7,7 0 1,1 54,61 A7,7 0 1,1 54,47" android:fillColor="#FFFBBF24" />
+</vector>

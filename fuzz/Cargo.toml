@@ -1,0 +1,51 @@
+[package]
+name = "zray-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+# A standalone package, not a member of the main workspace: cargo-fuzz builds it
+# with a nightly toolchain and libFuzzer sanitizer flags that should not leak
+# into ordinary `cargo build` of the runtime.
+[workspace]
+
+[dependencies]
+libfuzzer-sys = "0.4"
+serde_json = "1"
+zero-config = { path = "../crates/zero-config" }
+zero-core = { path = "../crates/zero-core" }
+zero-protocol = { path = "../crates/zero-protocol" }
+
+[[bin]]
+name = "parse_config_array"
+path = "fuzz_targets/parse_config_array.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "parse_link"
+path = "fuzz_targets/parse_link.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "parse_subscription"
+path = "fuzz_targets/parse_subscription.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "shadowsocks2022_header"
+path = "fuzz_targets/shadowsocks2022_header.rs"
+test = false
+doc = false
+bench = false
+
+[profile.release]
+debug = 1

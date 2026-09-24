@@ -1,0 +1,38 @@
+# Gradle / Android Studio
+.gradle/
+build/
+captures/
+.idea/
+*.iml
+.externalNativeBuild/
+.cxx/
+local.properties
+
+# Signing material and secrets — never commit
+*.jks
+*.keystore
+keystore.properties
+signing.properties
+
+# Build outputs
+*.apk
+*.aab
+*.aar
+app/release/output.json
+
+# Native libraries produced from Zray-Core by the cargo-ndk Gradle task
+app/src/main/jniLibs/
+
+# Rust (if Zray-Core is checked out here as a submodule)
+target/
+
+# OS / desktop noise
+.DS_Store
+.directory
+
+# feed-eval outputs (contain third-party config credentials)
+tools/feed-eval/*.txt
+tools/feed-eval/*.json
+tools/feed-eval/plain/
+tools/feed-eval/cfg/
+tools/feed-eval/__pycache__/

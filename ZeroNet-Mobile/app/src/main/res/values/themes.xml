@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Framework base (no AppCompat/MDC dependency): Compose draws everything.
+         Edge-to-edge with transparent system bars; icon contrast is set at
+         runtime from the theme the user picked. -->
+    <style name="Theme.ZeroNet" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/zn_window_bg</item>
+        <item name="android:colorBackground">@color/zn_window_bg</item>
+        <item name="android:colorAccent">@color/zn_accent</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowDrawsSystemBarBackgrounds">true</item>
+        <item name="android:windowLightStatusBar">@bool/zn_light_bars</item>
+    </style>
+</resources>

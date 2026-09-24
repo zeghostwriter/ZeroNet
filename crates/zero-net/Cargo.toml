@@ -1,0 +1,29 @@
+[package]
+name = "zero-net"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+zero-core = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+socket2 = { workspace = true }
+futures = { workspace = true }
+tokio-rustls = { workspace = true }
+rustls = { workspace = true }
+rustls-pki-types = { workspace = true }
+webpki-roots = { workspace = true }
+httparse = { workspace = true }
+url = { workspace = true }
+thiserror = { workspace = true }
+# Inflates gzip-encoded text bodies (`FetchOptions::accept_gzip`).
+flate2 = { workspace = true }
+
+# TCP_CONGESTION has no socket2 wrapper; it is set with a raw setsockopt on
+# the platforms that have the sockopt at all.
+[target.'cfg(any(target_os = "linux", target_os = "android"))'.dependencies]
+libc = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "time", "io-util"] }

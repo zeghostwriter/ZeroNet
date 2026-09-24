@@ -1,0 +1,37 @@
+[package]
+name = "zray-mobile"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+# `cdylib` for Android, which loads a .so through JNI; `staticlib` for iOS,
+# where an app extension links the archive. `rlib` so the crate's own tests can
+# exercise the boundary in-process.
+crate-type = ["cdylib", "staticlib", "rlib"]
+
+[features]
+# The Android JNI surface (`src/android.rs`): `ZrayNative` natives, the
+# discovery/scan jobs, logcat and file logging. Off by default so the plain C
+# ABI builds and tests without a JVM anywhere in sight.
+jni = ["dep:jni", "dep:zero-discovery", "dep:futures", "dep:serde"]
+
+[dependencies]
+zero-core = { workspace = true }
+zero-config = { workspace = true }
+zero-runtime = { workspace = true }
+zero-tun = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+serde_json = { workspace = true }
+jni = { version = "0.21.1", optional = true, default-features = false }
+zero-discovery = { workspace = true, optional = true }
+futures = { workspace = true, optional = true }
+serde = { workspace = true, optional = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "io-util", "net", "time"] }
+# The handover test creates the TUN interface itself, standing in for the
+# platform, so it needs the ioctl the library would otherwise own.
+libc = { workspace = true }

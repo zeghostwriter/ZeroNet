@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Quick-settings tile and notification icon: the orb mark (two rings and
+     a core) as a single white silhouette. The system tints it. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:tint="#FFFFFFFF"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- Outer ring (r 9.5, width 2). -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:fillType="evenOdd"
+        android:pathData="M12,1.5a10.5,10.5 0,1 1,0 21a10.5,10.5 0,1 1,0 -21ZM12,3.5a8.5,8.5 0,1 0,0 17a8.5,8.5 0,1 0,0 -17Z" />
+    <!-- Middle ring (r 6.3, width 1.6). -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:fillType="evenOdd"
+        android:pathData="M12,5.2a6.8,6.8 0,1 1,0 13.6a6.8,6.8 0,1 1,0 -13.6ZM12,6.8a5.2,5.2 0,1 0,0 10.4a5.2,5.2 0,1 0,0 -10.4Z" />
+    <!-- Core. -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M12,8.6a3.4,3.4 0,1 1,0 6.8a3.4,3.4 0,1 1,0 -6.8Z" />
+</vector>

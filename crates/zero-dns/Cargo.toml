@@ -1,0 +1,28 @@
+[package]
+name = "zero-dns"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+zero-config = { workspace = true }
+zero-core = { workspace = true }
+tokio = { workspace = true }
+tokio-rustls = { workspace = true }
+rustls = { workspace = true }
+rustls-pki-types = { workspace = true }
+tracing = { workspace = true }
+webpki-roots = { workspace = true }
+thiserror = { workspace = true }
+rand = { workspace = true }
+url = { workspace = true }
+regex = { workspace = true }
+h2 = { workspace = true }
+h3 = { workspace = true }
+h3-quinn = { workspace = true }
+quinn = { workspace = true }
+http = { workspace = true }
+bytes = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "io-util", "net", "time"] }

@@ -1,0 +1,163 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+# A second push to the same branch makes the first run's answer irrelevant.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  build:
+    name: build and test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+
+      - name: formatting
+        run: cargo fmt --all -- --check
+
+      - name: clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: tests
+        run: cargo test --workspace --all-targets
+
+      # Doc examples are not covered by --all-targets and are the easiest place
+      # for a stale API to survive unnoticed.
+      - name: doc tests
+        run: cargo test --workspace --doc
+
+      - name: release build
+        run: cargo build --workspace --release
+
+  minimum-toolchain:
+    name: minimum supported Rust
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: read rust-version
+        id: msrv
+        run: echo "version=$(grep -m1 '^rust-version' Cargo.toml | cut -d'"' -f2)" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.msrv.outputs.version }}
+      - uses: Swatinem/rust-cache@v2
+      # Declaring an MSRV that the workspace does not actually build under is
+      # worse than declaring none, because downstream trusts the number.
+      - run: cargo check --workspace --all-targets
+
+  policy:
+    name: dependency and provenance policy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check
+
+      # A lockfile that changes during a build means the audited dependency set
+      # is not the one being shipped.
+      - name: lockfile is current
+        run: cargo metadata --locked --format-version 1 > /dev/null
+
+  cross:
+    name: cross-platform check
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            target: aarch64-apple-darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+      # The TUN and raw-socket paths drift per platform, so every desktop
+      # target is compiled even where the tests cannot run.
+      - run: cargo check --workspace --target ${{ matrix.target }}
+
+  mobile:
+    name: mobile platform boundary
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+      - uses: Swatinem/rust-cache@v2
+
+      # `ring`, `aws-lc-sys` and `zstd-sys` all build C, so the shipped
+      # library cannot be produced without the NDK toolchain. The runner has
+      # one; pointing cargo at it is what turns "the Rust compiles" into "the
+      # .so an app would load links".
+      - name: point cargo at the NDK toolchain
+        run: |
+          toolchain="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          test -d "$toolchain" || { echo "no NDK at $ANDROID_NDK_HOME"; exit 1; }
+          api=24
+          {
+            echo "CC_aarch64_linux_android=$toolchain/aarch64-linux-android$api-clang"
+            echo "AR_aarch64_linux_android=$toolchain/llvm-ar"
+            echo "CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=$toolchain/aarch64-linux-android$api-clang"
+          } >> "$GITHUB_ENV"
+
+      # The shared library an Android VpnService loads through JNI.
+      - name: build the Android library
+        run: cargo build -p zray-mobile --target aarch64-linux-android --release
+
+      - name: confirm the exported symbols are present
+        run: |
+          toolchain="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          so=target/aarch64-linux-android/release/libzray_mobile.so
+          test -f "$so"
+          for symbol in zray_start zray_stop zray_set_tun_descriptor \
+                        zray_set_protect_callback zray_last_error; do
+            "$toolchain/llvm-nm" --defined-only --extern-only "$so" \
+              | grep -q " $symbol$" || { echo "missing export: $symbol"; exit 1; }
+          done
+
+  apple:
+    name: Apple platform boundary
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios
+      - uses: Swatinem/rust-cache@v2
+
+      # iOS links the static archive into a NEPacketTunnelProvider extension.
+      - name: build the iOS static library
+        run: cargo build -p zray-mobile --target aarch64-apple-ios --release
+
+      - name: confirm the exported symbols are present
+        run: |
+          archive=target/aarch64-apple-ios/release/libzray_mobile.a
+          test -f "$archive"
+          for symbol in zray_start zray_stop zray_set_tun_descriptor \
+                        zray_set_protect_callback zray_last_error; do
+            nm -gU "$archive" 2>/dev/null | grep -q "_$symbol$" \
+              || { echo "missing export: $symbol"; exit 1; }
+          done
+
+      # macOS is a desktop target for the same crate set, and its utun and
+      # ifconfig/route paths are the ones the cross job only type-checks.
+      - name: macOS unit tests
+        run: cargo test -p zero-tun -p zero-core

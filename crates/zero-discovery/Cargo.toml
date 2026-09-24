@@ -1,0 +1,33 @@
+[package]
+name = "zero-discovery"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Config discovery for mobile hosts: feed fetching, link parsing, staged liveness tests, CDN edge scans and ready-to-run config building."
+
+[dependencies]
+zero-core = { workspace = true }
+zero-config = { workspace = true }
+zero-net = { workspace = true }
+zero-runtime = { workspace = true }
+# Only the scan engine: the terminal front end (and its ratatui/crossterm/clap
+# graph) stays out of the mobile build.
+zero-scanner = { path = "../zero-scanner", version = "0.1.0", default-features = false }
+tokio = { workspace = true }
+tokio-util = { version = "0.7", default-features = false }
+futures = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+blake3 = { workspace = true }
+base64 = { workspace = true }
+rand = { workspace = true }
+tracing = { workspace = true }
+url = { workspace = true }
+tokio-rustls = { workspace = true }
+rustls = { workspace = true }
+rustls-pki-types = { workspace = true }
+webpki-roots = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "io-util", "net", "time", "test-util"] }
+flate2 = { workspace = true }
