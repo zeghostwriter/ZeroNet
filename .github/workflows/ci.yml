@@ -188,8 +188,11 @@ jobs:
           # Its default list includes the legacy "tools" package, which the
           # SDK repository no longer carries, failing the step.
           packages: platform-tools
-      - name: SDK platform and build tools
-        run: sdkmanager "platforms;android-37" "build-tools;37.0.0"
+      # The Android Gradle plugin installs the platform and build tools that
+      # compileSdk names (licences were accepted above), so no package names
+      # are hard-coded here; this only records what the repository offers.
+      - name: available SDK platforms
+        run: sdkmanager --list 2>/dev/null | grep -E "platforms;android-3[6-9]|build-tools;3[6-9]" | sort -u || true
       - uses: gradle/actions/setup-gradle@v4
       # The Rust library has its own jobs above; this one checks the Kotlin
       # and renders every screen (Robolectric + Roborazzi) on the JVM.
