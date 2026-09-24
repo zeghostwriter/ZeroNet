@@ -30,6 +30,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
@@ -278,9 +279,9 @@ fun ConnectGlobe(
                 val radius = size.minDimension / 2f * 0.84f
                 val center = Offset(size.width / 2f, size.height / 2f)
                 val thin = Stroke(0.8.dp.toPx())
-                val coastStroke = Stroke(1.4.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
+                val coastStroke = Stroke((if (c.isDark) 1.4 else 1.1).dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
                 val coastGlow = Stroke(4.5.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
-                val rim = Stroke(1.5.dp.toPx())
+                val rim = Stroke((if (c.isDark) 1.5 else 1.0).dp.toPx())
                 val arcCore = Stroke(2.6.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
                 val arcGlow = Stroke(9.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
                 val broken = Stroke(
@@ -308,13 +309,33 @@ fun ConnectGlobe(
                 var lastClock = -1f
                 val bracket = Stroke(2.2.dp.toPx(), cap = StrokeCap.Square)
                 val speedLine = Stroke(2.dp.toPx(), cap = StrokeCap.Round)
-                val body = Brush.radialGradient(
-                    0f to lerp(c.bg, c.accent, if (c.isDark) 0.10f else 0.06f),
-                    0.75f to lerp(c.bg, c.surface, 0.5f),
-                    1f to c.bg,
-                    center = center - Offset(radius * 0.3f, radius * 0.35f),
-                    radius = radius * 1.4f,
+                // Light mode is ink on paper: a white sphere shaded toward a
+                // neutral grey at the limb, not an orange-tinted disc.
+                val body = if (c.isDark) {
+                    Brush.radialGradient(
+                        0f to lerp(c.bg, c.accent, 0.10f),
+                        0.75f to lerp(c.bg, c.surface, 0.5f),
+                        1f to c.bg,
+                        center = center - Offset(radius * 0.3f, radius * 0.35f),
+                        radius = radius * 1.4f,
+                    )
+                } else {
+                    Brush.radialGradient(
+                        0f to c.surface,
+                        0.55f to lerp(c.surface, c.bg, 0.6f),
+                        1f to lerp(c.bg, c.text, 0.07f),
+                        center = center - Offset(radius * 0.32f, radius * 0.38f),
+                        radius = radius * 1.35f,
+                    )
+                }
+                val shadow = Brush.radialGradient(
+                    0f to c.text.copy(alpha = 0.10f),
+                    0.6f to c.text.copy(alpha = 0.04f),
+                    1f to Color.Transparent,
+                    center = center + Offset(0f, radius * 0.9f),
+                    radius = radius * 0.95f,
                 )
+                val ink = lerp(c.accent, c.text, 0.55f)
 
                 onDrawBehind {
                     val t = clock.floatValue
@@ -329,7 +350,8 @@ fun ConnectGlobe(
                     camera.lookAt(swayLat + (focusLat - swayLat) * f, lerpLongitude(swayLon, focusLon, f))
 
                     // ---- atmosphere and body
-                    val glowAlpha = (if (c.isDark) 0.30f else 0.18f) * (0.8f + 0.2f * press.value) *
+                    if (!c.isDark) drawOval(shadow, topLeft = center + Offset(-radius * 0.95f, radius * 0.72f), size = Size(radius * 1.9f, radius * 0.42f))
+                    val glowAlpha = (if (c.isDark) 0.30f else 0.07f) * (0.8f + 0.2f * press.value) *
                         (if (p == OrbPhase.Connected) 1.25f else 1f)
                     drawCircle(
                         Brush.radialGradient(
@@ -359,9 +381,14 @@ fun ConnectGlobe(
                     if (d != null) {
                         project(d.graticule, camera, center, radius, frontGrid, backGrid)
                         project(d.coast, camera, center, radius, frontCoast, backCoast)
-                        drawPath(backGrid, tint.copy(alpha = 0.07f), style = thin)
-                        drawPath(backCoast, tint.copy(alpha = 0.12f), style = thin)
-                        drawPath(frontGrid, tint.copy(alpha = if (c.isDark) 0.30f else 0.38f), style = thin)
+                        if (c.isDark) {
+                            drawPath(backGrid, tint.copy(alpha = 0.07f), style = thin)
+                            drawPath(backCoast, tint.copy(alpha = 0.12f), style = thin)
+                            drawPath(frontGrid, tint.copy(alpha = 0.30f), style = thin)
+                        } else {
+                            // The far side showing through reads as smudges on white.
+                            drawPath(frontGrid, c.text.copy(alpha = 0.09f), style = thin)
+                        }
                         // Chromatic split while the gaming burst runs.
                         val b = boost.value
                         if (b < 0.5f) {
@@ -369,10 +396,15 @@ fun ConnectGlobe(
                             translate(-jitter, 0f) { drawPath(frontCoast, Color(0xFFFF2BD6).copy(alpha = 0.55f), style = coastStroke) }
                             translate(jitter, jitter * 0.3f) { drawPath(frontCoast, Color(0xFF22E3FF).copy(alpha = 0.55f), style = coastStroke) }
                         }
-                        drawPath(frontCoast, tint.copy(alpha = 0.16f), style = coastGlow)
-                        drawPath(frontCoast, lerp(tint, c.text, 0.25f), style = coastStroke)
+                        if (c.isDark) {
+                            drawPath(frontCoast, tint.copy(alpha = 0.16f), style = coastGlow)
+                            drawPath(frontCoast, lerp(tint, c.text, 0.25f), style = coastStroke)
+                        } else {
+                            // Idle: dark ink; connected/failed: the state colour, still inked down.
+                            drawPath(frontCoast, if (p == OrbPhase.Idle || p == OrbPhase.Busy) ink else lerp(tint, c.text, 0.35f), style = coastStroke)
+                        }
                     }
-                    drawCircle(tint.copy(alpha = 0.75f), radius = radius, center = center, style = rim)
+                    drawCircle(if (c.isDark) tint.copy(alpha = 0.75f) else lerp(tint, c.text, 0.4f).copy(alpha = 0.45f), radius = radius, center = center, style = rim)
 
                     // ---- route
                     val r = route

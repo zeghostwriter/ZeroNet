@@ -26,6 +26,8 @@ data class Server(
     val lastTestedAt: Long = 0,
     val aliveCount: Int = 0,
     val failCount: Int = 0,
+    /** Why the last test failed, as the core reported it; null after a success. */
+    val lastError: String? = null,
 ) {
     val isUser: Boolean get() = source == SOURCE_USER || source.startsWith(SOURCE_SUB_PREFIX)
 

@@ -103,6 +103,7 @@
     <string name="unit_gb_value">%1$s GB</string>
     <string name="delay_ms">%1$s ms</string>
     <string name="delay_unknown">—</string>
+    <string name="delay_failed">Failed</string>
     <string name="ago_never">Never</string>
     <string name="ago_now">Just now</string>
     <string name="ago_minutes">%1$s min ago</string>
@@ -159,6 +160,7 @@
 
     <!-- Server detail sheet -->
     <string name="detail_delay">Delay</string>
+    <string name="detail_error">Why it failed</string>
     <string name="detail_last_tested">Last tested</string>
     <string name="detail_protocol">Protocol</string>
     <string name="detail_transport">Transport</string>
@@ -174,6 +176,11 @@
 
     <!-- Import sheet -->
     <string name="import_title">Add configs</string>
+    <string name="scan_qr">Scan a QR code</string>
+    <string name="scan_from_photo">From a photo</string>
+    <string name="scan_hint">Point the camera at a config or subscription QR code.</string>
+    <string name="scan_no_camera">No camera access. You can still pick a photo or screenshot of the code.</string>
+    <string name="scan_not_found">No QR code found in that picture.</string>
     <string name="import_body">Paste one or more config links, or a subscription link.</string>
     <string name="import_links">Links</string>
     <string name="import_subscription">Subscription</string>

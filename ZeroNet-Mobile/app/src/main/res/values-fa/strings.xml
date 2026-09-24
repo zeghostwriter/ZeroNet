@@ -101,6 +101,7 @@
     <!-- Isolated LTR so "۱۴۰ ms" never renders as "ms ۱۴۰" inside Persian text. -->
     <string name="delay_ms">⁦%1$s ms⁩</string>
     <string name="delay_unknown">—</string>
+    <string name="delay_failed">ناموفق</string>
     <string name="ago_never">هرگز</string>
     <string name="ago_now">همین حالا</string>
     <string name="ago_minutes">%1$s دقیقه پیش</string>
@@ -157,6 +158,7 @@
 
     <!-- Server detail sheet -->
     <string name="detail_delay">تأخیر</string>
+    <string name="detail_error">دلیل خطا</string>
     <string name="detail_last_tested">آخرین تست</string>
     <string name="detail_protocol">پروتکل</string>
     <string name="detail_transport">انتقال</string>
@@ -172,6 +174,11 @@
 
     <!-- Import sheet -->
     <string name="import_title">افزودن کانفیگ</string>
+    <string name="scan_qr">اسکن کد QR</string>
+    <string name="scan_from_photo">از روی عکس</string>
+    <string name="scan_hint">دوربین را روی کد QR کانفیگ یا اشتراک بگیرید.</string>
+    <string name="scan_no_camera">به دوربین دسترسی نیست. هنوز می‌توانید عکس یا اسکرین‌شات کد را انتخاب کنید.</string>
+    <string name="scan_not_found">در این عکس کد QRی پیدا نشد.</string>
     <string name="import_body">یک یا چند لینک کانفیگ، یا لینک اشتراک را اینجا بچسبانید.</string>
     <string name="import_links">لینک</string>
     <string name="import_subscription">اشتراک</string>

@@ -52,6 +52,7 @@ import com.zeronet.mobile.ui.components.Hairline
 import com.zeronet.mobile.ui.components.IconAction
 import com.zeronet.mobile.ui.components.PrimaryButton
 import com.zeronet.mobile.ui.components.QrCode
+import com.zeronet.mobile.ui.components.QrScanner
 import com.zeronet.mobile.ui.components.Segmented
 import com.zeronet.mobile.ui.components.TonalButton
 import com.zeronet.mobile.ui.components.ZeroSheet
@@ -70,6 +71,7 @@ import com.zeronet.mobile.ui.theme.ZeroTheme
 import com.zeronet.mobile.ui.util.Num
 import com.zeronet.mobile.ui.util.currentLocale
 import com.zeronet.mobile.ui.util.formatAgo
+import com.zeronet.mobile.ui.util.formatServerDelay
 import com.zeronet.mobile.ui.util.formatDelay
 import kotlinx.coroutines.launch
 
@@ -168,7 +170,18 @@ private fun ColumnScope.DetailContent(
         AnimatedVisibility(!sharing, enter = fadeIn(ZeroMotion.quick()) + expandVertically(ZeroMotion.quickSize()), exit = fadeOut(ZeroMotion.quick()) + shrinkVertically(ZeroMotion.quickSize())) {
             Column {
                 Spacer(Modifier.height(20.dp))
-                DetailRow(stringResource(R.string.detail_delay), formatDelay(context, s.delayMs, locale), c.delayColor(s.delayMs))
+                DetailRow(stringResource(R.string.detail_delay), formatServerDelay(context, s, locale), c.delayColor(s.delayMs))
+                val error = s.lastError
+                if (s.delayMs < 0 && error != null) {
+                    // What the core said, so a failing config can be diagnosed.
+                    Column(Modifier.fillMaxWidth().padding(bottom = 10.dp)) {
+                        Text(stringResource(R.string.detail_error), style = MaterialTheme.typography.bodyMedium, color = c.muted)
+                        Spacer(Modifier.height(4.dp))
+                        SelectionContainer {
+                            Text(com.zeronet.mobile.ui.util.ltr(error), style = MaterialTheme.typography.bodySmall, color = c.err)
+                        }
+                    }
+                }
                 Hairline()
                 DetailRow(stringResource(R.string.detail_last_tested), formatAgo(context, s.lastTestedAt, now, locale))
                 Hairline()
@@ -284,6 +297,22 @@ fun ImportSheet(
         var busy by remember { mutableStateOf(false) }
         var result by remember { mutableStateOf<ImportResult?>(null) }
         var urlError by remember { mutableStateOf(false) }
+        var scanning by rememberSaveable { mutableStateOf(false) }
+        // A subscription link goes to the subscription form; config links
+        // join whatever is already in the links box.
+        fun takeScan(raw: String) {
+            val t = raw.trim()
+            scanning = false
+            result = null
+            if (t.lines().size == 1 && (t.startsWith("https://") || t.startsWith("http://"))) {
+                mode = ImportMode.Subscription
+                subUrl = t
+                urlError = false
+            } else {
+                mode = ImportMode.Links
+                text = if (text.isBlank()) t else text.trimEnd() + "\n" + t
+            }
+        }
         LaunchedEffect(initialText) {
             if (!initialText.isNullOrBlank()) {
                 val t = initialText.trim()
@@ -307,111 +336,122 @@ fun ImportSheet(
             Spacer(Modifier.height(4.dp))
             Text(stringResource(R.string.import_body), style = MaterialTheme.typography.bodyMedium, color = c.muted)
             Spacer(Modifier.height(16.dp))
-            Segmented(
-                options = ImportMode.entries,
-                selected = mode,
-                onSelect = { mode = it; result = null },
-                label = { stringResource(if (it == ImportMode.Links) R.string.import_links else R.string.import_subscription) },
-            )
-            Spacer(Modifier.height(16.dp))
-            if (mode == ImportMode.Links) {
-                ZeroTextField(
-                    value = text,
-                    onValueChange = { text = it; result = null },
-                    placeholder = stringResource(R.string.import_links_placeholder),
-                    singleLine = false,
-                    minLines = 4,
-                    maxLines = 8,
-                    imeAction = ImeAction.Default,
-                    clearLabel = stringResource(R.string.action_clear),
-                    textStyle = MaterialTheme.typography.bodyMedium,
+            if (scanning) {
+                QrScanner(onResult = { takeScan(it) }, onCancel = { scanning = false })
+            } else {
+                Segmented(
+                    options = ImportMode.entries,
+                    selected = mode,
+                    onSelect = { mode = it; result = null },
+                    label = { stringResource(if (it == ImportMode.Links) R.string.import_links else R.string.import_subscription) },
                 )
                 Spacer(Modifier.height(12.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    TonalButton(
-                        stringResource(R.string.action_paste),
-                        { text = readClipboard().trim(); result = null },
-                        Modifier.weight(1f),
-                        icon = ZeroIcons.Paste,
+                TonalButton(
+                    stringResource(R.string.scan_qr),
+                    { scanning = true },
+                    Modifier.fillMaxWidth(),
+                    icon = ZeroIcons.Qr,
+                )
+                Spacer(Modifier.height(12.dp))
+                if (mode == ImportMode.Links) {
+                    ZeroTextField(
+                        value = text,
+                        onValueChange = { text = it; result = null },
+                        placeholder = stringResource(R.string.import_links_placeholder),
+                        singleLine = false,
+                        minLines = 4,
+                        maxLines = 8,
+                        imeAction = ImeAction.Default,
+                        clearLabel = stringResource(R.string.action_clear),
+                        textStyle = MaterialTheme.typography.bodyMedium,
                     )
-                    PrimaryButton(
-                        stringResource(R.string.action_add),
-                        {
-                            busy = true
-                            scope.launch {
-                                result = onImport(text)
-                                busy = false
-                                if (result?.let { it.added > 0 && it.error == null } == true) text = ""
-                            }
-                        },
-                        Modifier.weight(1f),
-                        icon = ZeroIcons.Plus,
-                        enabled = text.isNotBlank(),
-                        loading = busy,
-                    )
-                }
-                result?.let { r ->
                     Spacer(Modifier.height(12.dp))
-                    val ok = r.error == null && r.added > 0
-                    val msg = when {
-                        r.error != null -> stringResource(R.string.import_error, r.error)
-                        else -> stringResource(
-                            R.string.import_result,
-                            Num.int(r.added, locale),
-                            Num.int(r.duplicates, locale),
-                            Num.int(r.rejected, locale),
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TonalButton(
+                            stringResource(R.string.action_paste),
+                            { text = readClipboard().trim(); result = null },
+                            Modifier.weight(1f),
+                            icon = ZeroIcons.Paste,
+                        )
+                        PrimaryButton(
+                            stringResource(R.string.action_add),
+                            {
+                                busy = true
+                                scope.launch {
+                                    result = onImport(text)
+                                    busy = false
+                                    if (result?.let { it.added > 0 && it.error == null } == true) text = ""
+                                }
+                            },
+                            Modifier.weight(1f),
+                            icon = ZeroIcons.Plus,
+                            enabled = text.isNotBlank(),
+                            loading = busy,
                         )
                     }
-                    Text(msg, style = MaterialTheme.typography.bodyMedium, color = if (ok) c.ok else if (r.error != null) c.err else c.warn)
-                }
-            } else {
-                ZeroTextField(
-                    value = subUrl,
-                    onValueChange = { subUrl = it.trim(); urlError = false },
-                    placeholder = stringResource(R.string.import_sub_url),
-                    leading = ZeroIcons.Link,
-                    keyboardType = KeyboardType.Uri,
-                    imeAction = ImeAction.Next,
-                    clearLabel = stringResource(R.string.action_clear),
-                )
-                Spacer(Modifier.height(10.dp))
-                ZeroTextField(
-                    value = subName,
-                    onValueChange = { subName = it },
-                    placeholder = stringResource(R.string.import_sub_name),
-                )
-                if (urlError) {
+                    result?.let { r ->
+                        Spacer(Modifier.height(12.dp))
+                        val ok = r.error == null && r.added > 0
+                        val msg = when {
+                            r.error != null -> stringResource(R.string.import_error, r.error)
+                            else -> stringResource(
+                                R.string.import_result,
+                                Num.int(r.added, locale),
+                                Num.int(r.duplicates, locale),
+                                Num.int(r.rejected, locale),
+                            )
+                        }
+                        Text(msg, style = MaterialTheme.typography.bodyMedium, color = if (ok) c.ok else if (r.error != null) c.err else c.warn)
+                    }
+                } else {
+                    ZeroTextField(
+                        value = subUrl,
+                        onValueChange = { subUrl = it.trim(); urlError = false },
+                        placeholder = stringResource(R.string.import_sub_url),
+                        leading = ZeroIcons.Link,
+                        keyboardType = KeyboardType.Uri,
+                        imeAction = ImeAction.Next,
+                        clearLabel = stringResource(R.string.action_clear),
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    ZeroTextField(
+                        value = subName,
+                        onValueChange = { subName = it },
+                        placeholder = stringResource(R.string.import_sub_name),
+                    )
+                    if (urlError) {
+                        Spacer(Modifier.height(8.dp))
+                        Text(stringResource(R.string.import_sub_invalid), style = MaterialTheme.typography.bodySmall, color = c.err)
+                    }
+                    Spacer(Modifier.height(12.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TonalButton(
+                            stringResource(R.string.action_paste),
+                            { subUrl = readClipboard().trim(); urlError = false },
+                            Modifier.weight(1f),
+                            icon = ZeroIcons.Paste,
+                        )
+                        PrimaryButton(
+                            stringResource(R.string.action_add),
+                            {
+                                val url = subUrl.trim()
+                                val valid = (url.startsWith("https://") || url.startsWith("http://")) && url.substringAfter("://").isNotBlank()
+                                if (!valid) {
+                                    urlError = true
+                                } else {
+                                    onAddSubscription(subName.trim().ifBlank { url.substringAfter("://").substringBefore('/') }, url)
+                                    subUrl = ""
+                                    subName = ""
+                                }
+                            },
+                            Modifier.weight(1f),
+                            icon = ZeroIcons.Plus,
+                            enabled = subUrl.isNotBlank(),
+                        )
+                    }
                     Spacer(Modifier.height(8.dp))
-                    Text(stringResource(R.string.import_sub_invalid), style = MaterialTheme.typography.bodySmall, color = c.err)
+                    Text(stringResource(R.string.import_sub_hint), style = MaterialTheme.typography.bodySmall, color = c.muted)
                 }
-                Spacer(Modifier.height(12.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    TonalButton(
-                        stringResource(R.string.action_paste),
-                        { subUrl = readClipboard().trim(); urlError = false },
-                        Modifier.weight(1f),
-                        icon = ZeroIcons.Paste,
-                    )
-                    PrimaryButton(
-                        stringResource(R.string.action_add),
-                        {
-                            val url = subUrl.trim()
-                            val valid = (url.startsWith("https://") || url.startsWith("http://")) && url.substringAfter("://").isNotBlank()
-                            if (!valid) {
-                                urlError = true
-                            } else {
-                                onAddSubscription(subName.trim().ifBlank { url.substringAfter("://").substringBefore('/') }, url)
-                                subUrl = ""
-                                subName = ""
-                            }
-                        },
-                        Modifier.weight(1f),
-                        icon = ZeroIcons.Plus,
-                        enabled = subUrl.isNotBlank(),
-                    )
-                }
-                Spacer(Modifier.height(8.dp))
-                Text(stringResource(R.string.import_sub_hint), style = MaterialTheme.typography.bodySmall, color = c.muted)
             }
             Spacer(Modifier.height(16.dp))
         }

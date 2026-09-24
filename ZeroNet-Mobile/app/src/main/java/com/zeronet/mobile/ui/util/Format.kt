@@ -99,6 +99,10 @@ fun formatDuration(millis: Long, locale: Locale): String {
 fun formatDelay(context: Context, ms: Int, locale: Locale): String =
     if (ms < 0) context.getString(R.string.delay_unknown) else context.getString(R.string.delay_ms, Num.int(ms, locale))
 
+/** A server's delay, or "Failed" when it was tested and did not answer (rather than a bare dash). */
+fun formatServerDelay(context: Context, server: com.zeronet.mobile.model.Server, locale: Locale): String =
+    if (server.delayMs < 0 && server.lastTestedAt > 0) context.getString(R.string.delay_failed) else formatDelay(context, server.delayMs, locale)
+
 /** "just now", "5 min ago", "3 h ago", "2 days ago", "never". */
 fun formatAgo(context: Context, at: Long, now: Long, locale: Locale): String {
     if (at <= 0) return context.getString(R.string.ago_never)
