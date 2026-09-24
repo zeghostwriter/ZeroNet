@@ -172,6 +172,11 @@
 
     <!-- Import sheet -->
     <string name="import_title">افزودن کانفیگ</string>
+    <string name="scan_qr">اسکن کد QR</string>
+    <string name="scan_from_photo">از روی عکس</string>
+    <string name="scan_hint">دوربین را روی کد QR کانفیگ یا اشتراک بگیرید.</string>
+    <string name="scan_no_camera">به دوربین دسترسی نیست. هنوز می‌توانید عکس یا اسکرین‌شات کد را انتخاب کنید.</string>
+    <string name="scan_not_found">در این عکس کد QRی پیدا نشد.</string>
     <string name="import_body">یک یا چند لینک کانفیگ، یا لینک اشتراک را اینجا بچسبانید.</string>
     <string name="import_links">لینک</string>
     <string name="import_subscription">اشتراک</string>

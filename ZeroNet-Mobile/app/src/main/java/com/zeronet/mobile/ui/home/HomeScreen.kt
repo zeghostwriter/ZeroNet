@@ -136,7 +136,7 @@ fun HomeScreen(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.SpaceBetween,
             ) {
-                HomeHeader()
+                Spacer(Modifier.height(24.dp))
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     val gaming = state.profile == ConnectionProfile.Gaming
                     ConnectGlobe(
@@ -220,29 +220,6 @@ private fun orbStateText(state: HomeState): String {
         ConnState.Disconnecting -> stringResource(R.string.stage_disconnecting)
         else -> stringResource(R.string.state_connecting)
     }
-}
-
-@Composable
-private fun HomeHeader() {
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .heightIn(min = 56.dp)
-            .padding(horizontal = 20.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        BrandMark(Modifier.size(22.dp))
-    }
-}
-
-/** The ZeroNet logo, as in the launcher icon. */
-@Composable
-fun BrandMark(modifier: Modifier = Modifier) {
-    androidx.compose.foundation.Image(
-        painter = androidx.compose.ui.res.painterResource(R.drawable.zeronet_logo),
-        contentDescription = null,
-        modifier = modifier.clip(androidx.compose.foundation.shape.RoundedCornerShape(22)),
-    )
 }
 
 @Composable
