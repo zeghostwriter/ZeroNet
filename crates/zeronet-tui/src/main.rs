@@ -56,6 +56,7 @@ use zeronet_tui::toast::{ToastKind, ToastManager};
 use zeronet_tui::ui::{ActiveTab, UiRenderer};
 
 mod app_tasks;
+mod launcher;
 
 /// Frame spacing while something animates (~30 fps).
 const FRAME_INTERVAL: Duration = Duration::from_millis(33);
@@ -165,8 +166,18 @@ fn main() -> Result<()> {
     if std::env::args().any(|arg| arg == elevate::HELPER_FLAG) {
         std::process::exit(elevate::run_helper());
     }
+    // Double-clicked from a file manager, an app menu or a `.app` bundle:
+    // there is no terminal yet, so open one and continue in it.
+    if let launcher::Launch::Relaunched = launcher::ensure_terminal() {
+        return Ok(());
+    }
     zero_runtime::tune_allocator();
-    client_main()
+    let result = client_main();
+    if let Err(err) = &result {
+        let _ = writeln!(std::io::stderr(), "ZeroNet could not start: {err:?}");
+        launcher::hold_window_on_error();
+    }
+    result
 }
 
 #[tokio::main]
@@ -211,6 +222,8 @@ async fn client_main() -> Result<()> {
     enable_raw_mode()?;
     let mut out = stdout();
     execute!(out, EnterAlternateScreen, EnableMouseCapture)?;
+    // The window's title bar and taskbar entry read "ZeroNet", like an app.
+    let _ = execute!(out, crossterm::terminal::SetTitle("ZeroNet"));
     // Best effort, each on its own: not every terminal (or the legacy
     // Windows console) supports them, and a refusal must not stop the app.
     // Bracketed paste is what makes a pasted share link arrive as one

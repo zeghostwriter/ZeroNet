@@ -411,12 +411,79 @@ where
         })
         .ok_or_else(|| format!("cannot determine destination from {request_line:?}"))?;
 
+    // The request, head included, must reach the origin — but as the origin
+    // expects it, not as a proxy does. See [`origin_form_head`].
+    let mut prefix = origin_form_head(&head).into_bytes();
+    prefix.extend_from_slice(&buf[head_end..]);
     Ok(Accepted {
         destination,
-        // The whole request, head included, must reach the origin.
-        prefix: buf.to_vec(),
+        prefix,
         kind: InboundKind::HttpForward,
     })
+}
+
+/// Rewrite a forward-proxy request head into what an origin server expects.
+///
+/// A browser talking to an HTTP proxy sends `GET http://host/path HTTP/1.1`.
+/// Handed on verbatim, that absolute form makes many origins answer 404 or
+/// 400 — which is what "the system proxy works for HTTPS sites but not plain
+/// HTTP ones" in Firefox was. So, as Xray does:
+///
+/// * the request target becomes origin form (`/path?query`);
+/// * proxy-only headers (`Proxy-Connection`, `Proxy-Authorization`) are
+///   dropped, and a `Host` header is added if the client left it out;
+/// * `Connection: close` is forced. Only this first request is rewritten,
+///   so a kept-alive connection would carry the browser's next request —
+///   possibly for a different site — to this origin, untouched.
+fn origin_form_head(head: &str) -> String {
+    let mut lines = head.split("\r\n");
+    let request_line = lines.next().unwrap_or("");
+    let mut parts = request_line.splitn(3, ' ');
+    let method = parts.next().unwrap_or("");
+    let target = parts.next().unwrap_or("");
+    let version = parts.next().unwrap_or("HTTP/1.1");
+
+    let (authority, path) = match target.split_once("://") {
+        Some((_, rest)) => match rest.find('/') {
+            Some(slash) => (Some(&rest[..slash]), &rest[slash..]),
+            None => match rest.find('?') {
+                Some(q) => (Some(&rest[..q]), &rest[q..]),
+                None => (Some(rest), "/"),
+            },
+        },
+        None => (None, target),
+    };
+    let path = if path.starts_with('?') {
+        format!("/{path}")
+    } else {
+        path.to_string()
+    };
+
+    let mut out = format!("{method} {path} {version}\r\n");
+    let mut has_host = false;
+    for line in lines {
+        if line.is_empty() {
+            continue;
+        }
+        let name = line.split(':').next().unwrap_or("").trim();
+        if name.eq_ignore_ascii_case("proxy-connection")
+            || name.eq_ignore_ascii_case("proxy-authorization")
+            || name.eq_ignore_ascii_case("connection")
+            || name.eq_ignore_ascii_case("keep-alive")
+        {
+            continue;
+        }
+        has_host |= name.eq_ignore_ascii_case("host");
+        out.push_str(line);
+        out.push_str("\r\n");
+    }
+    if !has_host {
+        if let Some(authority) = authority {
+            out.push_str(&format!("Host: {authority}\r\n"));
+        }
+    }
+    out.push_str("Connection: close\r\n\r\n");
+    out
 }
 
 fn find_head_end(buf: &[u8]) -> Option<usize> {
@@ -430,7 +497,7 @@ fn parse_absolute_target(target: &str) -> Option<Destination> {
         "https" => 443,
         _ => return None,
     };
-    let authority = rest.split('/').next()?;
+    let authority = rest.split(['/', '?', '#']).next()?;
     parse_authority(authority, default_port)
 }
 
@@ -637,7 +704,31 @@ mod tests {
         assert_eq!(a.destination.port, 80);
         assert_eq!(a.destination.address.as_domain(), Some("example.com"));
         // The origin must receive the request it would have received directly.
-        assert_eq!(a.prefix, raw.to_vec());
+        assert_eq!(
+            String::from_utf8(a.prefix).unwrap(),
+            "GET /path HTTP/1.1\r\nHost: example.com\r\nConnection: close\r\n\r\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn http_forward_strips_proxy_headers_and_keeps_the_body() {
+        let (mut client, mut server) = duplex(4096);
+        let raw = b"POST http://example.com:8080?q=1 HTTP/1.1\r\n\
+Proxy-Connection: keep-alive\r\nProxy-Authorization: Basic eA==\r\n\
+Content-Length: 4\r\n\r\nbody";
+        tokio::spawn(async move {
+            client.write_all(raw).await.unwrap();
+        });
+
+        let mut first = [0u8; 1];
+        server.read_exact(&mut first).await.unwrap();
+        let a = accept_http(&mut server, first[0]).await.unwrap();
+        assert_eq!(a.destination.port, 8080);
+        assert_eq!(
+            String::from_utf8(a.prefix).unwrap(),
+            "POST /?q=1 HTTP/1.1\r\nContent-Length: 4\r\nHost: example.com:8080\r\n\
+Connection: close\r\n\r\nbody"
+        );
     }
 
     #[tokio::test]

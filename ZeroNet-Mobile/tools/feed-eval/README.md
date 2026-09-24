@@ -2,7 +2,7 @@
 
 Measures which GitHub config feeds actually work **from the network it runs
 on**. Run it from inside Iran; results from anywhere else say nothing about
-Iranian users. PLAN.md §3 was produced with these scripts on 2026-09-23.
+Iranian users. docs/design/ZeroNet-Mobile-PLAN.md §3 was produced with these scripts on 2026-09-23.
 
 Requirements: Python 3.11+, `curl`, a `zray` binary built from Zray-Core,
 and optionally the Xray oracle (`../scripts/fetch-xray-oracle.sh` in

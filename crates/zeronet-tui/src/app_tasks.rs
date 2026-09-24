@@ -432,6 +432,12 @@ impl App<'_> {
                     "System proxy → {} ({backend}) · {detail}",
                     mode.label()
                 ));
+                // Qt applications on Linux — Telegram Desktop above all —
+                // read the proxy from their environment once, at start-up.
+                if cfg!(target_os = "linux") && mode == SystemProxyMode::Manual {
+                    self.toasts
+                        .info("Fully quit and reopen Telegram so it picks up the system proxy");
+                }
             }
             (requested, Ok(Applied::Restored(backend))) => {
                 self.system_proxy = SystemProxyMode::Unmanaged;

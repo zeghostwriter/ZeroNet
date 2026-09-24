@@ -3,6 +3,7 @@ name = "zeronet-tui"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+build = "build.rs"
 
 [[bin]]
 name = "zeronet-tui"
@@ -56,3 +57,8 @@ arboard = { version = "3", default-features = false }
 # Per-process CPU and memory for the Activity page. Only the process/system
 # probes: no disks, networks, users, or the rayon thread pool.
 sysinfo = { version = "0.39", default-features = false, features = ["system"] }
+
+[build-dependencies]
+# Icon and version resource for the Windows executable; only runs when
+# targeting Windows.
+winresource = "0.1"

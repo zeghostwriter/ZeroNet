@@ -8,7 +8,7 @@ An Android VPN client for people in Iran. Tap the orb:
    [Zray-Core](../) (Rust).
 4. It keeps looking in the background and balances across the best few.
 
-- Design and measurements: [PLAN.md](PLAN.md).
+- Design and measurements: [docs/design/ZeroNet-Mobile-PLAN.md](../docs/design/ZeroNet-Mobile-PLAN.md).
 - Kotlin ↔ Rust boundary: [docs/native-contract.md](docs/native-contract.md).
 
 ## Architecture

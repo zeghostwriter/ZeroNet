@@ -36,7 +36,7 @@
 //! which also primes sudo's own timestamp, so a reconnect inside the ticket
 //! window needs no second prompt.
 
-#![cfg_attr(not(unix), allow(dead_code))]
+#![cfg_attr(not(unix), allow(dead_code, unused_imports))]
 
 use std::io;
 
