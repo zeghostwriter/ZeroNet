@@ -268,51 +268,54 @@ object Engine {
     fun applySettings(next: Settings) {
         val previous = settings
         settings = next
+        // Still searching: start over, so the search itself follows the new mode.
+        if (!running && previous.profile != next.profile && connectJob?.isActive == true) {
+            profileJob?.cancel()
+            profileJob = scope.launch {
+                delay(PROFILE_SETTLE_MS)
+                reconnect()
+            }
+            return
+        }
         if (!running) return
         when {
             // Zray's hot reload keeps the inbound set fixed, so listener
             // changes (LAN sharing, credentials, ports) need a quick restart.
             topology(previous) != topology(next) -> scope.launch { mutex.withLock { restartCore() } }
             previous.profile != next.profile -> {
+                // A mode is more than a few settings: it decides which servers
+                // qualify and how many, so switching reconnects from scratch.
                 // Tapping through the modes quickly: only the last choice
-                // counts. The previous reaction is cancelled (its search with
-                // it) and this one waits a moment for the taps to settle.
+                // counts, once the taps have settled.
                 profileJob?.cancel()
                 profileJob = scope.launch {
                     delay(PROFILE_SETTLE_MS)
-                    mutex.withLock { adoptProfile(next) }
+                    reconnect()
                 }
             }
             routing(previous) != routing(next) -> scope.launch { mutex.withLock { reloadPool() } }
         }
     }
 
-    /** Keep the servers that suit [next]'s profile, or search for some with the tunnel up. */
-    private suspend fun adoptProfile(next: Settings) {
-        // A config the user chose stays, whatever the mode: only its
-        // settings (fragmentation, QUIC) follow the profile.
-        if (target is ConnectTarget.Specific) {
-            reloadPool()
-            return
+    /**
+     * Drop the current connection and connect again to the same target with
+     * the current settings. The foreground service and its notification stay
+     * up throughout; in VPN mode the new interface replaces the old one.
+     */
+    private fun reconnect() {
+        refreshJob?.cancel()
+        connectJob?.cancel()
+        monitorJob?.cancel()
+        connectJob = scope.launch {
+            mutex.withLock {
+                withContext(NonCancellable) { teardown() }
+                runConnection()
+            }
+            if (!running && state.value is ConnState.Failed) {
+                this@Engine.host?.finish()
+                this@Engine.host = null
+            }
         }
-        val kept = pool.filter { suits(it.server, next.profile) }
-        val network = NetworkIdentity.current(app)
-        if (kept.isNotEmpty() || network == null) {
-            if (kept.isNotEmpty()) { pool.clear(); pool.addAll(kept) }
-            reloadPool()
-            return
-        }
-        // If nothing suitable turns up, or the search is cancelled by a newer
-        // change, carry on with what worked: an empty pool would read as
-        // "every server died" to the health check.
-        val old = pool.toList()
-        pool.clear()
-        try {
-            findReplacements(network, excludeKeys = emptySet())
-        } finally {
-            if (pool.isEmpty()) pool.addAll(old)
-        }
-        reloadPool()
     }
 
     /**
