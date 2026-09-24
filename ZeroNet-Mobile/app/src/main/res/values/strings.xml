@@ -396,4 +396,14 @@
     <string name="onboarding_perm_vpn_body">Needed to send your apps’ traffic through the tunnel.</string>
     <string name="onboarding_perm_notif">Notifications</string>
     <string name="onboarding_perm_notif_body">Shows whether you’re connected, with a Disconnect button.</string>
+
+    <!-- Connection profiles -->
+    <string name="profile_normal">Normal</string>
+    <string name="profile_fast">Fast</string>
+    <string name="profile_gaming">Gaming</string>
+    <string name="profile_normal_hint">Encrypted servers only, with backups ready</string>
+    <string name="profile_fast_hint">Connects to the first server that works</string>
+    <string name="profile_gaming_hint">Lowest ping, UDP on, no server switching mid-game</string>
+    <string name="gaming_title">GAME MODE</string>
+    <string name="gaming_ping">PING %1$s ms</string>
 </resources>

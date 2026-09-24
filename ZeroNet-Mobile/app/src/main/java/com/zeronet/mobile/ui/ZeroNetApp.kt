@@ -15,6 +15,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.zeronet.mobile.model.ConnectionProfile
 import com.zeronet.mobile.model.MotionLevel
 import com.zeronet.mobile.ui.components.rememberGlassAllowed
 import com.zeronet.mobile.ui.home.HomeRoute
@@ -54,6 +55,7 @@ fun ZeroNetApp(
         amoled = settings.amoled,
         reducedMotion = settings.motion == MotionLevel.Reduced || systemReduced,
         glass = rememberGlassAllowed(),
+        gaming = settings.profile == ConnectionProfile.Gaming,
     ) {
         val dark = ZeroTheme.colors.isDark
         SideEffect { onThemeResolved(dark) }

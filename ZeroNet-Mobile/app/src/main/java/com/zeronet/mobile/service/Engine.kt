@@ -12,6 +12,7 @@ import com.zeronet.mobile.data.Subscription
 import com.zeronet.mobile.model.ConnState
 import com.zeronet.mobile.model.ConnectTarget
 import com.zeronet.mobile.model.ConnectionMode
+import com.zeronet.mobile.model.ConnectionProfile
 import com.zeronet.mobile.model.DiscoveryProgress
 import com.zeronet.mobile.model.DiscoveryStage
 import com.zeronet.mobile.model.EvasionLevel
@@ -73,6 +74,54 @@ object Engine {
     private const val WANT_ALIVE = 5
     /** Connected with this many servers (the one in use plus backups): stop searching. */
     private const val STOP_DISCOVERY_AT = 3
+
+    // ------------------------------------------------------------ profiles
+    //
+    // Three ways to connect, each shaped by what breaks in Iran:
+    //
+    // Normal — encrypted servers only (TLS or REALITY: the handshake looks
+    //   like ordinary HTTPS and the payload is encrypted end to end), a pool
+    //   of backups behind a balancer, anti-censorship as set, QUIC blocked so
+    //   everything rides the disguised TCP path. The safe default.
+    //
+    // Fast — the first server that works, nothing more. History for this
+    //   network is tried first, so it is usually instant; any protocol goes,
+    //   no ClientHello fragmentation (it costs round trips), no backups, no
+    //   background search. The health check still replaces a dead server.
+    //
+    // Gaming — online games need low ping, UDP and a path that never changes
+    //   mid-match (a server switch drops the game session). So: lowest
+    //   measured delay wins; CDN-fronted configs are skipped (the CDN hop adds
+    //   latency and most cannot carry UDP); QUIC/UDP 443 is allowed; no
+    //   fragmentation; exactly one server, swapped only if it dies. Iranian
+    //   destinations (including domestic game servers) still go direct.
+
+    private fun wantAlive(p: ConnectionProfile) = when (p) {
+        ConnectionProfile.Normal -> WANT_ALIVE
+        ConnectionProfile.Fast -> 1
+        ConnectionProfile.Gaming -> 3
+    }
+
+    private fun stopDiscoveryAt(p: ConnectionProfile) = when (p) {
+        ConnectionProfile.Normal -> STOP_DISCOVERY_AT
+        ConnectionProfile.Fast -> 1
+        ConnectionProfile.Gaming -> 2
+    }
+
+    /** How many pool members go into the config: the rest are standby for the health check. */
+    private fun linksInConfig(p: ConnectionProfile) = when (p) {
+        ConnectionProfile.Normal -> WANT_ALIVE
+        ConnectionProfile.Fast, ConnectionProfile.Gaming -> 1
+    }
+
+    /** Whether a discovered or stored server suits the profile. A server the user picked always does. */
+    private fun suits(server: Server, p: ConnectionProfile): Boolean = when (p) {
+        ConnectionProfile.Normal -> server.security == "tls" || server.security == "reality" ||
+            server.protocol == "hysteria2" || server.protocol == "tuic"
+        ConnectionProfile.Fast -> true
+        ConnectionProfile.Gaming -> server.kind != com.zeronet.mobile.model.ServerKind.Cdn &&
+            server.transport !in setOf("ws", "httpupgrade", "xhttp", "splithttp")
+    }
     private const val HEALTH_INTERVAL_MS = 45_000L
     private const val PROBE_URL = "http://cp.cloudflare.com/generate_204"
 
@@ -201,6 +250,26 @@ object Engine {
             // Zray's hot reload keeps the inbound set fixed, so listener
             // changes (LAN sharing, credentials, ports) need a quick restart.
             topology(previous) != topology(next) -> scope.launch { mutex.withLock { restartCore() } }
+            previous.profile != next.profile -> scope.launch {
+                mutex.withLock {
+                    // Keep only servers that suit the new profile.
+                    val kept = pool.filter { suits(it.server, next.profile) }
+                    val network = NetworkIdentity.current(app)
+                    if (kept.isNotEmpty() || network == null) {
+                        if (kept.isNotEmpty()) { pool.clear(); pool.addAll(kept) }
+                        reloadPool()
+                    } else {
+                        // Search with the tunnel still up; if nothing suitable
+                        // turns up, carry on with what worked.
+                        val old = pool.toList()
+                        pool.clear()
+                        runCatching { discover(network, excludeKeys = emptySet()) }
+                            .onFailure { if (it is CancellationException) throw it }
+                        if (pool.isEmpty()) pool.addAll(old)
+                        reloadPool()
+                    }
+                }
+            }
             routing(previous) != routing(next) -> scope.launch { mutex.withLock { reloadPool() } }
         }
     }
@@ -277,7 +346,7 @@ object Engine {
             .put("priority_links", JSONArray(withContext(Dispatchers.IO) { store.historyLinks(network, 12) }))
             .put("extra_links", JSONArray(withContext(Dispatchers.IO) { store.userServers().map { it.link } }))
             .put("exclude_keys", JSONArray(excludeKeys.toList()))
-            .put("want_alive", WANT_ALIVE)
+            .put("want_alive", wantAlive(settings.profile))
             .put("max_seconds", 75)
             .put("tcp_concurrency", 256).put("tcp_timeout_ms", 1500).put("tcp_stop_after_open", 1500)
             .put("real_concurrency", 64).put("real_timeout_ms", 3000)
@@ -314,6 +383,8 @@ object Engine {
                         store.recordResult(server.key, delay, network)
                     }
                     serversChanged.tryEmit(Unit)
+                    // Remembered either way; used only if it suits the profile.
+                    if (!suits(server, settings.profile)) return@collect
                     // Feeds list one server under many links; balance across servers, not links.
                     if (pool.none { it.server.key == server.key || (it.server.host == server.host && it.server.port == server.port) }) {
                         pool += Alive(server, delay)
@@ -322,8 +393,12 @@ object Engine {
                     // the end: re-sorting would make it the server every new
                     // connection uses, switching servers under the user's
                     // feet on the strength of one probe.
-                    if (!running) pool.sortBy { if (it.delayMs < 0) Int.MAX_VALUE else it.delayMs }
-                    if (running && pool.size >= STOP_DISCOVERY_AT) enough = true
+                    // Gaming is the exception: in the few seconds after connecting,
+                    // before a match starts, the lowest ping is worth one switch.
+                    if (!running || settings.profile == ConnectionProfile.Gaming) {
+                        pool.sortBy { if (it.delayMs < 0) Int.MAX_VALUE else it.delayMs }
+                    }
+                    if (running && pool.size >= stopDiscoveryAt(settings.profile)) enough = true
                     if (!running) {
                         publish(ConnState.Connecting(server))
                         if (!bringUp()) throw BringUpFailed()
@@ -345,7 +420,9 @@ object Engine {
     }
 
     /** Test stored candidates (country / refresh) and bring up on the first alive one. */
-    private suspend fun testAndCollect(candidates: List<Server>, network: String) {
+    private suspend fun testAndCollect(all: List<Server>, network: String) {
+        // Prefer servers that suit the profile; if none of them do, any will.
+        val candidates = all.filter { suits(it, settings.profile) }.ifEmpty { all }
         val byKey = candidates.associateBy { it.key }
         val request = JSONObject()
             .put("links", JSONArray(candidates.take(200).map { it.link }))
@@ -362,7 +439,7 @@ object Engine {
             if (!running) {
                 publish(ConnState.Connecting(server))
                 if (!bringUp()) throw BringUpFailed()
-            } else if (pool.size <= WANT_ALIVE) {
+            } else if (pool.size <= linksInConfig(settings.profile)) {
                 reloadPool()
             }
         }
@@ -419,13 +496,16 @@ object Engine {
     private fun buildConfig(failOnError: Boolean = true): String? {
         val s = settings
         val request = JSONObject()
-            .put("links", JSONArray(pool.take(WANT_ALIVE).map { it.server.link }))
+            .put("links", JSONArray(pool.take(linksInConfig(s.profile)).map { it.server.link }))
             .put("mode", if (s.mode == ConnectionMode.Vpn) "vpn" else "proxy")
             .put("tun", JSONObject().put("mtu", s.mtu).put("ipv6", s.ipv6))
             .put("socks_port", s.socksPort).put("http_port", s.httpPort)
             .put("lan", JSONObject().put("enabled", s.lanShare).put("listen", "0.0.0.0").put("user", s.lanUser).put("pass", s.lanPass))
-            .put("iran_direct", s.iranDirect).put("block_ads", s.blockAds).put("block_quic", s.blockQuic)
-            .put("evasion", when (s.evasion) { EvasionLevel.Off -> "off"; EvasionLevel.Auto -> "auto"; EvasionLevel.Strong -> "strong" })
+            // Games and voice run over UDP: Gaming never blocks it.
+            .put("iran_direct", s.iranDirect).put("block_ads", s.blockAds)
+            .put("block_quic", s.blockQuic && s.profile != ConnectionProfile.Gaming)
+            // Fragmenting the ClientHello costs round trips; Fast and Gaming skip it.
+            .put("evasion", if (s.profile != ConnectionProfile.Normal) "off" else when (s.evasion) { EvasionLevel.Off -> "off"; EvasionLevel.Auto -> "auto"; EvasionLevel.Strong -> "strong" })
             .put("dns", JSONObject().put("remote", s.remoteDns.name.lowercase()).put("custom", s.customDns.trim()).put("local", "google").put("fakedns", s.fakeDns))
             .put("clean_ips", JSONArray(scan.value.results.take(10).map { "${it.ip}:${it.port}" }))
             .put("log_level", if (s.logs) "info" else "warning")
@@ -516,7 +596,11 @@ object Engine {
                 if (network != null) discover(network, excludeKeys = before.toSet())
                 if (pool.isEmpty()) publish(ConnState.Reconnecting("searching")) else reloadPool()
             }
-            pool.map { it.server.key } != before -> reloadPool()
+            // Only the members that are in the config matter: a standby that
+            // died or recovered needs no reload (and in Gaming a reload for
+            // nothing is still a reload in the middle of a match).
+            pool.take(linksInConfig(settings.profile)).map { it.server.key } !=
+                before.take(linksInConfig(settings.profile)) -> reloadPool()
             else -> publishConnected()
         }
     }

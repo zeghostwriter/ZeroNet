@@ -1,6 +1,8 @@
 package com.zeronet.mobile.ui.theme
 
 import android.os.Build
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ColorScheme
@@ -13,8 +15,10 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.ReadOnlyComposable
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
@@ -57,6 +61,7 @@ fun ZeroTheme(
     amoled: Boolean = false,
     reducedMotion: Boolean = false,
     glass: Boolean = false,
+    gaming: Boolean = false,
     content: @Composable () -> Unit,
 ) {
     val dark = when (themeMode) {
@@ -75,14 +80,58 @@ fun ZeroTheme(
             base
         }
     }
-    val scheme = remember(colors) { colors.toColorScheme() }
+    val shown = animateAccents(if (gaming) colors.gaming() else colors, reducedMotion)
+    val scheme = remember(shown) { shown.toColorScheme() }
     CompositionLocalProvider(
-        LocalZeroColors provides colors,
+        LocalZeroColors provides shown,
         LocalReducedMotion provides reducedMotion,
         LocalGlassEnabled provides glass,
     ) {
         MaterialTheme(colorScheme = scheme, typography = ZeroTypography, shapes = ZeroShapes, content = content)
     }
+}
+
+/**
+ * Gaming mode's neon: cyan and magenta accents over the user's own surfaces,
+ * with a hotter green for "connected".
+ */
+fun ZeroColors.gaming(): ZeroColors = if (isDark) {
+    copy(
+        accent = Color(0xFF22E3FF),
+        accentBright = Color(0xFF8CF6FF),
+        accentDim = Color(0xFF0B4854),
+        accentHot = Color(0xFFFF2BD6),
+        onAccent = Color(0xFF00161A),
+        ok = Color(0xFF3DFF9A),
+        info = Color(0xFFC77DFF),
+    )
+} else {
+    copy(
+        accent = Color(0xFF0891B2),
+        accentBright = Color(0xFF06B6D4),
+        accentDim = Color(0xFFCFFAFE),
+        accentHot = Color(0xFFC026D3),
+        onAccent = Color.White,
+        ok = Color(0xFF059669),
+        info = Color(0xFF7C3AED),
+    )
+}
+
+/** Cross-fade the accent colours when they change (entering or leaving gaming mode). */
+@Composable
+private fun animateAccents(target: ZeroColors, reduced: Boolean): ZeroColors {
+    val spec = tween<Color>(if (reduced) ZeroMotion.ms(150) else ZeroMotion.ms(700))
+    val accent by animateColorAsState(target.accent, spec, label = "accent")
+    val accentBright by animateColorAsState(target.accentBright, spec, label = "accentBright")
+    val accentDim by animateColorAsState(target.accentDim, spec, label = "accentDim")
+    val accentHot by animateColorAsState(target.accentHot, spec, label = "accentHot")
+    val onAccent by animateColorAsState(target.onAccent, spec, label = "onAccent")
+    val ok by animateColorAsState(target.ok, spec, label = "ok")
+    val info by animateColorAsState(target.info, spec, label = "info")
+    return target.copy(
+        accent = accent, accentBright = accentBright, accentDim = accentDim, accentHot = accentHot,
+        onAccent = onAccent, ok = ok, info = info,
+    )
 }
 
 /** Material You: take surfaces and accent from the wallpaper, keep the semantic ok/err/warn. */

@@ -58,6 +58,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.zeronet.mobile.R
 import com.zeronet.mobile.model.ConnState
+import com.zeronet.mobile.model.ConnectionProfile
 import com.zeronet.mobile.model.ConnectTarget
 import com.zeronet.mobile.model.DiscoveryStage
 import com.zeronet.mobile.model.FailReason
@@ -98,6 +99,7 @@ data class HomeState(
     val targetCountryDelay: Int = -1,
     /** Wall clock used for the session timer; tests pin it. */
     val now: Long = 0L,
+    val profile: ConnectionProfile = ConnectionProfile.Normal,
 )
 
 @Composable
@@ -107,6 +109,7 @@ fun HomeScreen(
     onRetry: () -> Unit,
     onPickServer: () -> Unit,
     modifier: Modifier = Modifier,
+    onProfile: (ConnectionProfile) -> Unit = {},
 ) {
     val c = ZeroTheme.colors
     val conn = state.conn
@@ -117,7 +120,7 @@ fun HomeScreen(
         else -> OrbPhase.Busy
     }
     Box(modifier.fillMaxSize()) {
-        StateBackdrop(phase)
+        StateBackdrop(phase, gaming = state.profile == ConnectionProfile.Gaming)
         BoxWithConstraints(Modifier.fillMaxSize()) {
             val orbSize = minOf(maxWidth - 64.dp, maxHeight * 0.44f, 320.dp).coerceAtLeast(180.dp)
             Column(
@@ -132,11 +135,18 @@ fun HomeScreen(
             ) {
                 HomeHeader()
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    ConnectOrb(
+                    val gaming = state.profile == ConnectionProfile.Gaming
+                    ConnectGlobe(
                         phase = phase,
                         label = stringResource(orbLabel(conn)),
                         actionLabel = stringResource(if (conn.isActive) R.string.orb_action_disconnect else R.string.orb_action_connect),
                         stateText = orbStateText(state),
+                        destination = routeDestination(state),
+                        gaming = gaming,
+                        gamingTitle = stringResource(R.string.gaming_title),
+                        hudText = (conn as? ConnState.Connected)?.takeIf { gaming && it.delayMs >= 0 }?.let {
+                            stringResource(R.string.gaming_ping, Num.int(it.delayMs, currentLocale()))
+                        },
                         onClick = onOrbClick,
                         modifier = Modifier.size(orbSize),
                     )
@@ -148,6 +158,8 @@ fun HomeScreen(
                         .fillMaxWidth()
                         .padding(horizontal = 16.dp),
                 ) {
+                    ProfileSelector(state.profile, onProfile)
+                    Spacer(Modifier.height(12.dp))
                     ServerCard(state, onPickServer)
                     AnimatedVisibility(
                         visible = conn is ConnState.Connected,
@@ -171,6 +183,20 @@ fun HomeScreen(
 @Composable
 private fun WindowInsetsTop() = androidx.compose.foundation.layout.WindowInsets.statusBars
     .let { with(androidx.compose.ui.platform.LocalDensity.current) { it.getTop(this).toDp() } }
+
+/** The country the route on the globe ends in: the live server, else the chosen target. */
+private fun routeDestination(state: HomeState): String? {
+    val code = when (val conn = state.conn) {
+        is ConnState.Connected -> conn.server.country
+        is ConnState.Connecting -> conn.server?.country
+        else -> null
+    } ?: when (val t = state.target) {
+        is ConnectTarget.Specific -> state.targetServer?.country
+        is ConnectTarget.Country -> t.code
+        else -> null
+    }
+    return code?.takeIf { it.length == 2 }
+}
 
 private fun orbLabel(conn: ConnState): Int = when (conn) {
     ConnState.Idle -> R.string.orb_connect
@@ -494,7 +520,7 @@ fun Sparkline(down: List<Long>, up: List<Long>, modifier: Modifier = Modifier) {
  * moves forces the blurred bars to redraw every frame.
  */
 @Composable
-private fun StateBackdrop(phase: OrbPhase) {
+private fun StateBackdrop(phase: OrbPhase, gaming: Boolean) {
     val c = ZeroTheme.colors
     val reduced = LocalReducedMotion.current
     val target = when (phase) {
@@ -519,4 +545,63 @@ private fun StateBackdrop(phase: OrbPhase) {
                 }
             },
     )
+    // Gaming: a neon perspective floor rolling toward the viewer.
+    val floor = remember { androidx.compose.animation.core.Animatable(if (gaming) 1f else 0f) }
+    LaunchedEffect(gaming, reduced) {
+        floor.animateTo(if (gaming) 1f else 0f, tween(ZeroMotion.ms(if (reduced) 150 else 900)))
+    }
+    if (gaming || floor.value > 0.001f) {
+        val clock = rememberAmbientClock(gaming && !reduced)
+        Box(
+            Modifier
+                .fillMaxSize()
+                .drawWithCache {
+                    val thin = 1.dp.toPx()
+                    onDrawBehind {
+                        val shown = floor.value
+                        val horizon = size.height * 0.60f
+                        val bottom = size.height
+                        val vanishX = size.width / 2f
+                        val depth = bottom - horizon
+                        val lineColor = c.accentHot
+                        // Horizon glow.
+                        drawRect(
+                            Brush.verticalGradient(
+                                0f to Color.Transparent,
+                                0.5f to lineColor.copy(alpha = 0.22f * shown),
+                                1f to Color.Transparent,
+                                startY = horizon - 40.dp.toPx(),
+                                endY = horizon + 40.dp.toPx(),
+                            ),
+                            topLeft = Offset(0f, horizon - 40.dp.toPx()),
+                            size = androidx.compose.ui.geometry.Size(size.width, 80.dp.toPx()),
+                        )
+                        // Rows: evenly spaced in depth, projected, scrolling toward the viewer.
+                        val scroll = (clock.floatValue / 1400f) % 1f
+                        for (k in 0 until 14) {
+                            val z = 1f + (k + 1f - scroll) * 0.9f
+                            val y = horizon + depth / z
+                            if (y > bottom) continue
+                            val fade = ((y - horizon) / depth).coerceIn(0f, 1f)
+                            drawLine(lineColor.copy(alpha = 0.40f * fade * shown), Offset(0f, y), Offset(size.width, y), strokeWidth = thin)
+                        }
+                        // Columns converging on the vanishing point.
+                        for (k in -10..10) {
+                            val xBottom = vanishX + k * size.width * 0.16f
+                            drawLine(
+                                Brush.verticalGradient(
+                                    0f to Color.Transparent,
+                                    1f to c.accent.copy(alpha = 0.45f * shown),
+                                    startY = horizon,
+                                    endY = bottom,
+                                ),
+                                Offset(vanishX + k * size.width * 0.012f, horizon),
+                                Offset(xBottom, bottom),
+                                strokeWidth = thin,
+                            )
+                        }
+                    }
+                },
+        )
+    }
 }

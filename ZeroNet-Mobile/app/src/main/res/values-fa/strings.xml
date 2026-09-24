@@ -394,4 +394,14 @@
     <string name="onboarding_perm_vpn_body">برای اینکه ترافیک برنامه‌ها از VPN رد شود.</string>
     <string name="onboarding_perm_notif">اعلان‌ها</string>
     <string name="onboarding_perm_notif_body">وضعیت اتصال را همراه دکمه‌ی قطع نشان می‌دهد.</string>
+
+    <!-- Connection profiles -->
+    <string name="profile_normal">معمولی</string>
+    <string name="profile_fast">سریع</string>
+    <string name="profile_gaming">گیمینگ</string>
+    <string name="profile_normal_hint">فقط سرورهای رمزگذاری‌شده، با سرور پشتیبان</string>
+    <string name="profile_fast_hint">به اولین سروری که کار کند وصل می‌شود</string>
+    <string name="profile_gaming_hint">کمترین پینگ، UDP روشن، سرور وسط بازی عوض نمی‌شود</string>
+    <string name="gaming_title">حالت گیمینگ</string>
+    <string name="gaming_ping">پینگ %1$s ms</string>
 </resources>

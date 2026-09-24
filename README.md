@@ -66,6 +66,11 @@ Zray در همه‌ی تست‌ها CPU کمتری مصرف کرد. تنها م�
 2. روی دکمه‌ی اتصال کلیک کنید. همه‌چیز با موس کار می‌کند، مثل یک برنامه‌ی معمولی.
 3. در تنظیمات، **System Proxy** را روی **SET SYSTEM** بگذارید (یا آن‌قدر **Ctrl+P** بزنید تا SET SYSTEM شود) تا بقیه‌ی برنامه‌ها هم از آن استفاده کنند.
 
+**سه حالت اتصال** (روی صفحه‌ی اصلی اپ اندروید):
+- **معمولی:** فقط سرورهای رمزگذاری‌شده (TLS یا REALITY) که مثل HTTPS معمولی دیده می‌شوند، همراه چند سرور پشتیبان. بهترین انتخاب برای استفاده‌ی روزمره.
+- **سریع:** به اولین سروری که کار کند وصل می‌شود، بدون جست‌وجوی اضافه. سریع‌ترین راه برای وصل شدن.
+- **گیمینگ:** کمترین پینگ، UDP روشن (برای بازی‌ها و تماس صوتی)، بدون سرورهای پشت CDN، و سرور وسط بازی عوض نمی‌شود. سایت‌ها و سرورهای بازی ایرانی مستقیم می‌روند.
+
 **تلگرام:** Settings ← Advanced ← Connection type ← **Use system proxy**. در لینوکس بعد از روشن‌کردن پروکسی، تلگرام را کامل ببندید و دوباره باز کنید.
 **فایرفاکس:** Settings ← Network Settings ← **Use system proxy settings**.
 
@@ -134,6 +139,11 @@ On macOS it runs in Terminal.app, so double-clicking always works.
 2. Click connect.
 3. In Settings, set **System Proxy** to **SET SYSTEM** (or press **Ctrl+P**
    until it shows SET SYSTEM) so other apps use it too.
+
+**Three connection modes** (on the Android home screen):
+- **Normal:** encrypted servers only (TLS or REALITY, which look like ordinary HTTPS), with backups ready. The everyday choice.
+- **Fast:** connects to the first server that works, nothing more. The quickest way to get online.
+- **Gaming:** lowest ping, UDP allowed (games and voice need it), no CDN-fronted servers, and the server is never switched mid-match. Iranian sites and game servers still go direct.
 
 - **Telegram:** Settings → Advanced → Connection type → **Use system proxy**.
   On Linux, Telegram reads the proxy only when it starts, so fully quit it
