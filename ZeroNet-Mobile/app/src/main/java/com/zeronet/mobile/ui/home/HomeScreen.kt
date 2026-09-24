@@ -50,7 +50,6 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
@@ -225,7 +224,6 @@ private fun orbStateText(state: HomeState): String {
 
 @Composable
 private fun HomeHeader() {
-    val c = ZeroTheme.colors
     Row(
         Modifier
             .fillMaxWidth()
@@ -234,13 +232,6 @@ private fun HomeHeader() {
         verticalAlignment = Alignment.CenterVertically,
     ) {
         BrandMark(Modifier.size(22.dp))
-        Spacer(Modifier.width(10.dp))
-        Text(
-            stringResource(R.string.brand_name),
-            style = MaterialTheme.typography.titleMedium,
-            color = c.text,
-            modifier = Modifier.weight(1f).semantics { heading() },
-        )
     }
 }
 
