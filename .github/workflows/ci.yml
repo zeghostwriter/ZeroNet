@@ -129,18 +129,28 @@ jobs:
           test -f "$so"
           for symbol in zray_start zray_stop zray_set_tun_descriptor \
                         zray_set_protect_callback zray_last_error; do
-            "$toolchain/llvm-nm" --defined-only --extern-only "$so" \
+            # -D: the release profile strips the static symbol table; the
+            # exports a loader resolves live in the dynamic one.
+            "$toolchain/llvm-nm" -D --defined-only --extern-only "$so" \
               | grep -q " $symbol$" || { echo "missing export: $symbol"; exit 1; }
           done
 
   apple:
     name: Apple platform boundary
     runs-on: macos-latest
+    env:
+      # Rust's default iOS target (10.0) predates `___chkstk_darwin`, which
+      # the C dependencies (zstd) reference when built with a current SDK.
+      # Packet tunnel extensions need iOS 15 or later anyway.
+      IPHONEOS_DEPLOYMENT_TARGET: "15.0"
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-apple-ios
+          # llvm-nm matching rustc's LLVM: Xcode's nm can lag behind it and
+          # then reads nothing from the archive.
+          components: llvm-tools
       - uses: Swatinem/rust-cache@v2
 
       # iOS links the static archive into a NEPacketTunnelProvider extension.
@@ -151,9 +161,11 @@ jobs:
         run: |
           archive=target/aarch64-apple-ios/release/libzray_mobile.a
           test -f "$archive"
+          nm_tool="$(ls "$(rustc --print sysroot)"/lib/rustlib/*/bin/llvm-nm | head -n 1)"
+          "$nm_tool" -g --defined-only "$archive" > symbols.txt
           for symbol in zray_start zray_stop zray_set_tun_descriptor \
                         zray_set_protect_callback zray_last_error; do
-            nm -gU "$archive" 2>/dev/null | grep -q "_$symbol$" \
+            grep -q " _$symbol$" symbols.txt \
               || { echo "missing export: $symbol"; exit 1; }
           done
 

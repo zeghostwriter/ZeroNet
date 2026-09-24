@@ -138,12 +138,7 @@ pub async fn fetch_with(
         if remaining.is_zero() {
             return Err(FetchError::Timeout(limits.timeout));
         }
-        match timeout(
-            remaining,
-            fetch_once(&current, limits, validators, options),
-        )
-        .await
-        {
+        match timeout(remaining, fetch_once(&current, limits, validators, options)).await {
             Err(_) => return Err(FetchError::Timeout(limits.timeout)),
             Ok(Err(error)) => return Err(error),
             Ok(Ok(Outcome::Done(fetched))) => return Ok(fetched),
@@ -485,8 +480,11 @@ where
 /// having allocated at most the limit.
 fn inflate_gzip(body: &[u8], max_bytes: usize) -> Result<Vec<u8>, FetchError> {
     use std::io::Read as _;
-    let mut decoder = flate2::read::MultiGzDecoder::new(body)
-        .take(u64::try_from(max_bytes).unwrap_or(u64::MAX).saturating_add(1));
+    let mut decoder = flate2::read::MultiGzDecoder::new(body).take(
+        u64::try_from(max_bytes)
+            .unwrap_or(u64::MAX)
+            .saturating_add(1),
+    );
     let mut out = Vec::with_capacity(body.len().saturating_mul(4).min(max_bytes));
     decoder
         .read_to_end(&mut out)
@@ -734,7 +732,9 @@ mod tests {
         )
         .await
         .unwrap();
-        assert!(matches!(fetched, Fetched::Body { ref body, .. } if body == b"vless://one\nvless://two\n"));
+        assert!(
+            matches!(fetched, Fetched::Body { ref body, .. } if body == b"vless://one\nvless://two\n")
+        );
         assert!(request.await.unwrap().contains("Accept-Encoding: gzip"));
 
         // The plain entry point still asks for identity.

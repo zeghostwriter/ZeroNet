@@ -159,7 +159,10 @@ pub const TLS_CONFIRM_HOST: &str = "www.gstatic.com";
 /// server, a CDN worker, a middlebox. A full TLS handshake with certificate
 /// verification against the real host cannot be faked that way, and it is
 /// what the user's browser needs anyway.
-pub async fn tls_confirm(outbound: &zero_config::Outbound, timeout: Duration) -> Result<Duration, String> {
+pub async fn tls_confirm(
+    outbound: &zero_config::Outbound,
+    timeout: Duration,
+) -> Result<Duration, String> {
     let started = Instant::now();
     let attempt = async {
         let destination = Destination::tcp(Address::parse_host(TLS_CONFIRM_HOST), 443);
@@ -178,7 +181,9 @@ pub async fn tls_confirm(outbound: &zero_config::Outbound, timeout: Duration) ->
         tls.write_all(request.as_bytes())
             .await
             .map_err(|error| format!("write: {error}"))?;
-        tls.flush().await.map_err(|error| format!("write: {error}"))?;
+        tls.flush()
+            .await
+            .map_err(|error| format!("write: {error}"))?;
         read_status(&mut tls).await?;
         Ok(started.elapsed())
     };
@@ -188,7 +193,8 @@ pub async fn tls_confirm(outbound: &zero_config::Outbound, timeout: Duration) ->
 }
 
 fn tls_config() -> std::sync::Arc<rustls::ClientConfig> {
-    static CONFIG: std::sync::OnceLock<std::sync::Arc<rustls::ClientConfig>> = std::sync::OnceLock::new();
+    static CONFIG: std::sync::OnceLock<std::sync::Arc<rustls::ClientConfig>> =
+        std::sync::OnceLock::new();
     std::sync::Arc::clone(CONFIG.get_or_init(|| {
         let roots = rustls::RootCertStore {
             roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),

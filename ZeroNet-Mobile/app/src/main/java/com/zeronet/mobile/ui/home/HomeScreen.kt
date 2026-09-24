@@ -28,7 +28,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -100,8 +99,6 @@ data class HomeState(
     val targetServer: Server? = null,
     /** Best known delay in the target country, or -1. */
     val targetCountryDelay: Int = -1,
-    /** "Wi-Fi", "Irancell"… or "". */
-    val network: String = "",
     /** Wall clock used for the session timer; tests pin it. */
     val now: Long = 0L,
 )
@@ -136,7 +133,7 @@ fun HomeScreen(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.SpaceBetween,
             ) {
-                HomeHeader(state.network)
+                HomeHeader()
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     ConnectOrb(
                         phase = phase,
@@ -200,7 +197,7 @@ private fun orbStateText(state: HomeState): String {
 }
 
 @Composable
-private fun HomeHeader(network: String) {
+private fun HomeHeader() {
     val c = ZeroTheme.colors
     Row(
         Modifier
@@ -217,37 +214,16 @@ private fun HomeHeader(network: String) {
             color = c.text,
             modifier = Modifier.weight(1f).semantics { heading() },
         )
-        if (network.isNotBlank()) {
-            Row(
-                Modifier
-                    .clip(CircleShape)
-                    .background(c.surface)
-                    .padding(horizontal = 12.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Icon(ZeroIcons.Signal, null, tint = c.muted, modifier = Modifier.size(14.dp))
-                Spacer(Modifier.width(6.dp))
-                Text(network, style = MaterialTheme.typography.labelMedium, color = c.muted, maxLines = 1)
-            }
-        }
     }
 }
 
-/** The ZeroNet mark: three rings and a core, as in the launcher icon. */
+/** The ZeroNet logo, as in the launcher icon. */
 @Composable
 fun BrandMark(modifier: Modifier = Modifier) {
-    val c = ZeroTheme.colors
-    Box(
-        modifier.drawWithCache {
-            val r = size.minDimension / 2f
-            val stroke = androidx.compose.ui.graphics.drawscope.Stroke(r * 0.15f)
-            val thin = androidx.compose.ui.graphics.drawscope.Stroke(r * 0.1f)
-            onDrawBehind {
-                drawCircle(c.accent, r * 0.92f, style = stroke)
-                drawCircle(c.accent.copy(alpha = 0.6f), r * 0.62f, style = thin)
-                drawCircle(c.accent, r * 0.3f)
-            }
-        },
+    androidx.compose.foundation.Image(
+        painter = androidx.compose.ui.res.painterResource(R.drawable.zeronet_logo),
+        contentDescription = null,
+        modifier = modifier.clip(androidx.compose.foundation.shape.RoundedCornerShape(22)),
     )
 }
 

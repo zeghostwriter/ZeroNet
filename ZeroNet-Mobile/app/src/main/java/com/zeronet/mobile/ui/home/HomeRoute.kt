@@ -1,9 +1,5 @@
 package com.zeronet.mobile.ui.home
 
-import android.content.Context
-import android.net.ConnectivityManager
-import android.net.Network
-import android.net.NetworkCapabilities
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
@@ -21,7 +17,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
@@ -40,7 +35,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.zeronet.mobile.R
-import com.zeronet.mobile.data.NetworkIdentity
 import com.zeronet.mobile.model.ConnState
 import com.zeronet.mobile.model.ConnectTarget
 import com.zeronet.mobile.model.FailReason
@@ -76,7 +70,6 @@ fun HomeRoute() {
     }
     val targetServer = remember(target, servers) { (target as? ConnectTarget.Specific)?.let { t -> servers.firstOrNull { it.key == t.key } } }
     val countryDelay = remember(target, groups) { (target as? ConnectTarget.Country)?.let { t -> groups.firstOrNull { it.code == t.code }?.bestDelay } ?: -1 }
-    val network = rememberNetworkLabel()
     var picker by rememberSaveable { mutableStateOf(false) }
 
     HomeScreen(
@@ -86,7 +79,6 @@ fun HomeRoute() {
             target = target,
             targetServer = targetServer,
             targetCountryDelay = countryDelay,
-            network = network,
         ),
         onOrbClick = controller::toggle,
         onRetry = {
@@ -108,26 +100,6 @@ fun HomeRoute() {
         onDismiss = { picker = false },
     )
 }
-
-/** "Wi-Fi" / carrier name, following the default network live. */
-@Composable
-private fun rememberNetworkLabel(): String {
-    val context = LocalContext.current
-    var label by remember { mutableStateOf(NetworkIdentity.label(context)) }
-    DisposableEffect(context) {
-        val cm = context.getSystemService(ConnectivityManager::class.java)
-        val callback = object : ConnectivityManager.NetworkCallback() {
-            override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) { label = safeLabel(context) }
-            override fun onLost(network: Network) { label = safeLabel(context) }
-            override fun onAvailable(network: Network) { label = safeLabel(context) }
-        }
-        val registered = runCatching { cm?.registerDefaultNetworkCallback(callback) }.isSuccess && cm != null
-        onDispose { if (registered) runCatching { cm.unregisterNetworkCallback(callback) } }
-    }
-    return label
-}
-
-private fun safeLabel(context: Context): String = runCatching { NetworkIdentity.label(context) }.getOrDefault("")
 
 /** Fastest / favourites / countries. Choosing one saves it as the target and connects. */
 @Composable

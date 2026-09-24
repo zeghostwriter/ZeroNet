@@ -14,7 +14,7 @@
         <item name="android:enforceStatusBarContrast">false</item>
         <item name="android:enforceNavigationBarContrast">false</item>
         <item name="android:windowSplashScreenBackground">@color/zn_window_bg</item>
-        <item name="android:windowSplashScreenAnimatedIcon">@drawable/ic_splash</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/ic_launcher_foreground</item>
         <item name="android:windowSplashScreenIconBackgroundColor">@color/ic_launcher_background</item>
     </style>
 </resources>

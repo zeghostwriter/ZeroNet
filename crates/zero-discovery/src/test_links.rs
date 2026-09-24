@@ -107,7 +107,8 @@ pub async fn test_links(
                             let key = candidate.info.key.clone();
                             let outcome = match &target {
                                 Some(target) => {
-                                    real_test(&candidate.outbound, target, timeout, request_confirm).await
+                                    real_test(&candidate.outbound, target, timeout, request_confirm)
+                                        .await
                                 }
                                 None if candidate.is_udp_based() => {
                                     Err("tcp: not applicable to a UDP-based protocol".to_string())

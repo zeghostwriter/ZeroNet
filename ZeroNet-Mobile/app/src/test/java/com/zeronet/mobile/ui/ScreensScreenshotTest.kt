@@ -64,7 +64,6 @@ class ScreensScreenshotTest {
         conn = conn,
         stats = if (conn is ConnState.Connected) Fixtures.stats else com.zeronet.mobile.model.TrafficStats(),
         target = ConnectTarget.Fastest,
-        network = "Irancell",
         now = Fixtures.NOW,
     )
 

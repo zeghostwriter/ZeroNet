@@ -926,6 +926,23 @@ impl TunDevice {
         })
     }
 
+    /// Windows has no descriptor handover: nothing ever registers one
+    /// through [`inherited`], so this only keeps the shared engine code
+    /// portable.
+    ///
+    /// # Safety
+    ///
+    /// Always refuses; there is nothing unsafe to uphold.
+    #[cfg(not(unix))]
+    pub unsafe fn from_raw_fd(
+        _fd: i32,
+        config: TunConfig,
+        _header_len: usize,
+    ) -> Result<Self, TunError> {
+        config.validate()?;
+        Err(TunError::UnsupportedPlatform)
+    }
+
     /// Bytes of platform framing this device puts in front of each packet.
     pub fn header_len(&self) -> usize {
         self.header_len

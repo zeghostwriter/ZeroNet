@@ -804,8 +804,10 @@ mod tests {
                 held.push(stream);
             }
         });
-        let tier1: &'static str = Box::leak(format!("{}\n", ss_link(silent_addr, "silent")).into_boxed_str());
-        let tier2: &'static str = Box::leak(format!("{}\n", ss_link(relay, "live")).into_boxed_str());
+        let tier1: &'static str =
+            Box::leak(format!("{}\n", ss_link(silent_addr, "silent")).into_boxed_str());
+        let tier2: &'static str =
+            Box::leak(format!("{}\n", ss_link(relay, "live")).into_boxed_str());
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let origin = listener.local_addr().unwrap();
         tokio::spawn(async move {
@@ -813,7 +815,11 @@ mod tests {
                 let mut request = [0u8; 2048];
                 let n = stream.read(&mut request).await.unwrap_or(0);
                 let text = String::from_utf8_lossy(&request[..n]).to_string();
-                let body = if text.starts_with("GET /tier1") { tier1 } else { tier2 };
+                let body = if text.starts_with("GET /tier1") {
+                    tier1
+                } else {
+                    tier2
+                };
                 let head = format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n", body.len());
                 let _ = stream.write_all(head.as_bytes()).await;
                 let _ = stream.write_all(body.as_bytes()).await;
@@ -825,8 +831,16 @@ mod tests {
         discover(
             DiscoverRequest {
                 sources: vec![
-                    FeedSource { id: "one".into(), url: format!("http://{origin}/tier1"), tier: 1 },
-                    FeedSource { id: "two".into(), url: format!("http://{origin}/tier2"), tier: 2 },
+                    FeedSource {
+                        id: "one".into(),
+                        url: format!("http://{origin}/tier1"),
+                        tier: 1,
+                    },
+                    FeedSource {
+                        id: "two".into(),
+                        url: format!("http://{origin}/tier2"),
+                        tier: 2,
+                    },
                 ],
                 want_alive: 1,
                 next_tier_if_alive_below: 1,
@@ -843,9 +857,17 @@ mod tests {
         )
         .await;
         flusher.await.unwrap();
-        let ids: Vec<String> = collected.of("source").iter().map(|e| e["id"].as_str().unwrap().to_string()).collect();
+        let ids: Vec<String> = collected
+            .of("source")
+            .iter()
+            .map(|e| e["id"].as_str().unwrap().to_string())
+            .collect();
         assert_eq!(ids, vec!["one", "two"]);
-        assert_eq!(collected.of("alive").len(), 1, "tier 2's live relay must be tested");
+        assert_eq!(
+            collected.of("alive").len(),
+            1,
+            "tier 2's live relay must be tested"
+        );
         assert_eq!(collected.of("done")[0]["reason"], "enough");
     }
 }

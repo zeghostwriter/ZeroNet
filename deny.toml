@@ -6,6 +6,13 @@
 unmaintained = "workspace"
 unsound = "all"
 yanked = "deny"
+ignore = [
+  # lru 0.12 is pinned by ratatui 0.29 (the TUI's layout cache), and the
+  # fixed releases are semver-incompatible with it. Both advisories concern
+  # APIs ratatui never calls: its only use is `LruCache::get_or_insert`.
+  { id = "RUSTSEC-2026-0002", reason = "IterMut is not used by ratatui 0.29" },
+  { id = "RUSTSEC-2026-0253", reason = "LruCache::pop is not used by ratatui 0.29" },
+]
 
 [bans]
 multiple-versions = "warn"
@@ -24,6 +31,9 @@ allow = [
   "0BSD",
   "BSD-2-Clause",
   "BSD-3-Clause",
+  # Boost: permissive, OSI approved. clipboard-win / error-code, via arboard
+  # (the TUI's clipboard on Windows).
+  "BSL-1.0",
   "CDLA-Permissive-2.0",
   "CC0-1.0",
   "ISC",

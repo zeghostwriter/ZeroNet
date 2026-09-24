@@ -1,0 +1,206 @@
+name: release
+
+# Push a tag like `v0.2.0` and every download people need lands on the
+# GitHub Releases page: the desktop app for Windows, Linux and macOS, and the
+# Android APKs. Running it by hand builds the same files as workflow
+# artifacts without publishing a release.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  windows:
+    name: Windows (x64)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release -p zeronet-tui
+      - name: package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist, pkg | Out-Null
+          Copy-Item target/release/zeronet-tui.exe pkg/ZeroNet.exe
+          # TUN mode on Windows needs WireGuard's Wintun driver next to the
+          # executable. Its prebuilt, signed DLL may be redistributed as is.
+          Invoke-WebRequest https://www.wintun.net/builds/wintun-0.14.1.zip -OutFile wintun.zip
+          Expand-Archive wintun.zip -DestinationPath wintun
+          Copy-Item wintun/wintun/bin/amd64/wintun.dll pkg/
+          Copy-Item wintun/wintun/LICENSE.txt pkg/wintun-LICENSE.txt
+          Compress-Archive -Path pkg/* -DestinationPath dist/ZeroNet-Windows-x64.zip
+          Copy-Item target/release/zeronet-tui.exe dist/ZeroNet-Windows-x64.exe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: dist/*
+
+  linux:
+    name: Linux (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-22.04
+          - arch: aarch64
+            runner: ubuntu-22.04-arm
+    # The oldest supported runner: glibc is forward compatible only, so
+    # building here keeps the binary running on older distributions.
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release -p zeronet-tui
+      - name: AppImage and tarball
+        env:
+          ARCH: ${{ matrix.arch }}
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+        run: |
+          mkdir -p dist
+          app=ZeroNet.AppDir
+          install -Dm755 target/release/zeronet-tui "$app/usr/bin/zeronet-tui"
+          install -Dm644 packaging/linux/zeronet.desktop "$app/zeronet.desktop"
+          install -Dm644 packaging/icons/zeronet.png "$app/zeronet.png"
+          install -Dm644 packaging/icons/zeronet.png "$app/usr/share/icons/hicolor/512x512/apps/zeronet.png"
+          ln -s usr/bin/zeronet-tui "$app/AppRun"
+          curl -fsSL -o appimagetool \
+            "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-${ARCH}.AppImage"
+          chmod +x appimagetool
+          ./appimagetool --no-appstream "$app" "dist/ZeroNet-Linux-${ARCH}.AppImage"
+
+          # The plain binary, with the desktop entry and icon, for people
+          # who prefer to install it themselves. A tarball keeps the
+          # executable bit that a browser download would drop.
+          pkg="ZeroNet-Linux-${ARCH}"
+          mkdir -p "$pkg"
+          cp target/release/zeronet-tui packaging/linux/zeronet.desktop packaging/icons/zeronet.png "$pkg/"
+          tar -czf "dist/$pkg.tar.gz" "$pkg"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-${{ matrix.arch }}
+          path: dist/*
+
+  macos:
+    name: macOS (universal)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin, x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+      - run: |
+          cargo build --release -p zeronet-tui --target aarch64-apple-darwin
+          cargo build --release -p zeronet-tui --target x86_64-apple-darwin
+      - name: app bundle
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          [[ "$GITHUB_REF_TYPE" == tag ]] || version=0.0.0
+          app=dist/ZeroNet.app
+          mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
+          lipo -create -output "$app/Contents/MacOS/zeronet-tui" \
+            target/aarch64-apple-darwin/release/zeronet-tui \
+            target/x86_64-apple-darwin/release/zeronet-tui
+          sed "s/@VERSION@/$version/g" packaging/macos/Info.plist > "$app/Contents/Info.plist"
+          cp packaging/icons/zeronet.icns "$app/Contents/Resources/zeronet.icns"
+          # Ad-hoc signature: Apple Silicon refuses to run unsigned code.
+          codesign --force --deep --sign - "$app"
+          (cd dist && ditto -c -k --keepParent ZeroNet.app ZeroNet-macOS-universal.zip)
+          rm -rf "$app"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: dist/*
+
+  android:
+    name: Android
+    runs-on: ubuntu-latest
+    env:
+      HAS_KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: android-actions/setup-android@v3
+      - name: SDK, build tools and NDK
+        run: sdkmanager "platforms;android-37" "build-tools;37.0.0" "ndk;29.0.14206865"
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android, armv7-linux-androideabi, x86_64-linux-android
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo install cargo-ndk --locked
+      # Optional: a real signing key from repository secrets, so installed
+      # copies can be updated in place. Without it the APKs are signed with
+      # a throwaway debug key.
+      - name: signing key
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        if: env.HAS_KEYSTORE == 'true'
+        working-directory: ZeroNet-Mobile
+        run: |
+          echo "$KEYSTORE_BASE64" | base64 -d > release.jks
+          {
+            echo "storeFile=release.jks"
+            echo "storePassword=$KEYSTORE_PASSWORD"
+            echo "keyAlias=$KEY_ALIAS"
+            echo "keyPassword=$KEY_PASSWORD"
+          } > keystore.properties
+      - name: build APKs
+        working-directory: ZeroNet-Mobile
+        run: |
+          export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/29.0.14206865"
+          ./gradlew --no-daemon assembleRelease
+      - name: collect
+        run: |
+          mkdir -p dist
+          out=ZeroNet-Mobile/app/build/outputs/apk/release
+          cp "$out/app-universal-release.apk"   dist/ZeroNet-Android-universal.apk
+          cp "$out/app-arm64-v8a-release.apk"   dist/ZeroNet-Android-arm64-v8a.apk
+          cp "$out/app-armeabi-v7a-release.apk" dist/ZeroNet-Android-armeabi-v7a.apk
+          cp "$out/app-x86_64-release.apk"      dist/ZeroNet-Android-x86_64.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android
+          path: dist/*
+
+  publish:
+    name: publish release
+    if: github.ref_type == 'tag'
+    needs: [windows, linux, macos, android]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: checksums
+        run: cd dist && sha256sum * > SHA256SUMS.txt
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
+          body: |
+            ## دانلود / Download
+
+            | | |
+            |---|---|
+            | 🪟 Windows | `ZeroNet-Windows-x64.zip` — extract, double-click `ZeroNet.exe` |
+            | 🐧 Linux | `ZeroNet-Linux-x86_64.AppImage` — make executable, double-click |
+            | 🍎 macOS | `ZeroNet-macOS-universal.zip` — unzip, right-click `ZeroNet.app` → Open |
+            | 🤖 Android | `ZeroNet-Android-universal.apk` (or the one for your phone's CPU) |
+
+            راهنمای کامل فارسی در [README](https://github.com/${{ github.repository }}#readme).

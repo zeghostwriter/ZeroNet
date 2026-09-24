@@ -203,6 +203,153 @@ fn which(binary: &str) -> Option<std::path::PathBuf> {
         .find(|candidate| candidate.is_file())
 }
 
+// ------------------------------------------------------ desktop session
+
+/// The desktop session the proxy settings belong to.
+///
+/// Desktop proxy settings are per user and reach applications over that
+/// user's session bus. Two ordinary situations broke that link, and every
+/// write then "succeeded" into a store nobody reads:
+///
+/// * the client was started with `sudo` (the obvious way to get TUN), so
+///   `gsettings` wrote root's dconf and `systemctl --user` spoke to root's
+///   manager, while the user's Firefox and Telegram saw nothing;
+/// * the client was started from somewhere without `DBUS_SESSION_BUS_ADDRESS`
+///   (a TTY, `ssh`, some terminal launchers), so GLib silently fell back to
+///   its in-memory settings backend.
+///
+/// Both are fixed by pointing every tool at the real user's session bus,
+/// and running it as that user.
+#[derive(Debug, Clone)]
+struct SessionTarget {
+    /// Present when running as root on behalf of another user.
+    #[cfg_attr(not(unix), allow(dead_code))]
+    ids: Option<(u32, u32)>,
+    home: Option<std::path::PathBuf>,
+    runtime_dir: Option<std::path::PathBuf>,
+}
+
+fn session_target() -> &'static SessionTarget {
+    static TARGET: std::sync::OnceLock<SessionTarget> = std::sync::OnceLock::new();
+    TARGET.get_or_init(detect_session_target)
+}
+
+#[cfg(unix)]
+fn detect_session_target() -> SessionTarget {
+    let env_home = std::env::var_os("HOME").map(std::path::PathBuf::from);
+    // SAFETY: geteuid has no preconditions.
+    let euid = unsafe { libc::geteuid() };
+    let invoking_uid = ["SUDO_UID", "PKEXEC_UID", "DOAS_UID"]
+        .iter()
+        .find_map(|var| std::env::var(var).ok()?.parse::<u32>().ok())
+        .filter(|uid| *uid != 0);
+
+    let (ids, home, uid) = match (euid, invoking_uid) {
+        (0, Some(uid)) => {
+            let (gid, home) = passwd_entry(uid).unwrap_or((uid, None));
+            (Some((uid, gid)), home.or(env_home), uid)
+        }
+        _ => (None, env_home, euid),
+    };
+    let runtime_dir = std::path::PathBuf::from(format!("/run/user/{uid}"));
+    SessionTarget {
+        ids,
+        home,
+        runtime_dir: runtime_dir.is_dir().then_some(runtime_dir),
+    }
+}
+
+#[cfg(not(unix))]
+fn detect_session_target() -> SessionTarget {
+    SessionTarget {
+        ids: None,
+        home: std::env::var_os("HOME").map(std::path::PathBuf::from),
+        runtime_dir: None,
+    }
+}
+
+/// Group id and home directory of `uid`, from the password database.
+#[cfg(unix)]
+fn passwd_entry(uid: u32) -> Option<(u32, Option<std::path::PathBuf>)> {
+    use std::ffi::CStr;
+    let mut entry: libc::passwd = unsafe { std::mem::zeroed() };
+    let mut buffer = vec![0u8; 16 * 1024];
+    let mut result: *mut libc::passwd = std::ptr::null_mut();
+    // SAFETY: every pointer refers to live, correctly sized storage.
+    let rc = unsafe {
+        libc::getpwuid_r(
+            uid,
+            &mut entry,
+            buffer.as_mut_ptr().cast(),
+            buffer.len(),
+            &mut result,
+        )
+    };
+    if rc != 0 || result.is_null() {
+        return None;
+    }
+    let home = (!entry.pw_dir.is_null()).then(|| {
+        // SAFETY: getpwuid_r succeeded, so pw_dir is a C string in `buffer`.
+        let dir = unsafe { CStr::from_ptr(entry.pw_dir) };
+        std::path::PathBuf::from(dir.to_string_lossy().into_owned())
+    });
+    Some((entry.pw_gid, home))
+}
+
+/// A command for a desktop-settings tool, aimed at the user's session.
+fn tool(binary: &str) -> Command {
+    let mut command = Command::new(binary);
+    if !cfg!(target_os = "linux") {
+        return command;
+    }
+    let target = session_target();
+    if let Some(runtime_dir) = &target.runtime_dir {
+        let bus = runtime_dir.join("bus");
+        let bus_missing = std::env::var_os("DBUS_SESSION_BUS_ADDRESS").is_none();
+        if (target.ids.is_some() || bus_missing) && bus.exists() {
+            command.env(
+                "DBUS_SESSION_BUS_ADDRESS",
+                format!("unix:path={}", bus.display()),
+            );
+        }
+        if target.ids.is_some() || std::env::var_os("XDG_RUNTIME_DIR").is_none() {
+            command.env("XDG_RUNTIME_DIR", runtime_dir);
+        }
+    }
+    #[cfg(unix)]
+    if let Some((uid, gid)) = target.ids {
+        use std::os::unix::process::CommandExt;
+        command.uid(uid).gid(gid);
+        if let Some(home) = &target.home {
+            command.env("HOME", home);
+        }
+    }
+    command
+}
+
+/// The home directory of the session user.
+fn session_home() -> Option<std::path::PathBuf> {
+    session_target().home.clone()
+}
+
+/// Hand a file this process created back to the session user, so a file
+/// written while running under sudo is not left owned by root in their home.
+fn session_chown(path: &std::path::Path) {
+    #[cfg(unix)]
+    if let Some((uid, gid)) = session_target().ids {
+        use std::os::unix::ffi::OsStrExt;
+        let Ok(c_path) = std::ffi::CString::new(path.as_os_str().as_bytes()) else {
+            return;
+        };
+        // SAFETY: c_path is a valid NUL-terminated string.
+        unsafe {
+            libc::chown(c_path.as_ptr(), uid, gid);
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = path;
+}
+
 /// The desktop's proxy configuration as it was found.
 ///
 /// Opaque on purpose: what needs preserving differs per backend, and callers
@@ -611,30 +758,41 @@ fn set_pac(backend: Backend, url: &str) -> Result<(), String> {
 
 fn apply_linux_manual(endpoints: ProxyEndpoints) -> Result<(), String> {
     let host = "127.0.0.1";
+    let mut applied: Vec<&str> = Vec::new();
+    let mut first_error: Option<String> = None;
 
-    // 1. KDE kioslaverc (for Qt/KDE applications like Telegram)
-    if which("kwriteconfig6").is_some() || which("kwriteconfig5").is_some() {
-        let _ = kwriteconfig(&["--key", "ProxyType", "1"]);
-        let _ = kwriteconfig(&[
-            "--key",
-            "httpProxy",
-            &format!("http://{host} {}", endpoints.http_port),
-        ]);
-        let _ = kwriteconfig(&[
-            "--key",
-            "httpsProxy",
-            &format!("http://{host} {}", endpoints.http_port),
-        ]);
-        let _ = kwriteconfig(&[
-            "--key",
-            "socksProxy",
-            &format!("socks://{host} {}", endpoints.socks_port),
-        ]);
-        let _ = kwriteconfig(&["--key", "NoProxyFor", "localhost,127.0.0.1,::1"]);
+    // 1. KDE kioslaverc (Dolphin, Konqueror and other KIO applications).
+    if kde_tool_present() {
+        let written = [
+            kwriteconfig(&["--key", "ProxyType", "1"]),
+            kwriteconfig(&[
+                "--key",
+                "httpProxy",
+                &format!("http://{host} {}", endpoints.http_port),
+            ]),
+            kwriteconfig(&[
+                "--key",
+                "httpsProxy",
+                &format!("http://{host} {}", endpoints.http_port),
+            ]),
+            kwriteconfig(&[
+                "--key",
+                "socksProxy",
+                &format!("socks://{host} {}", endpoints.socks_port),
+            ]),
+            kwriteconfig(&["--key", "NoProxyFor", "localhost,127.0.0.1,::1"]),
+        ];
         notify_kde();
+        match written.into_iter().find_map(Result::err) {
+            None => applied.push("KDE"),
+            Some(e) => {
+                first_error.get_or_insert(e);
+            }
+        }
     }
 
-    // 2. GNOME gsettings (for Firefox, Chromium, Google Chrome, Brave, GTK apps)
+    // 2. GSettings — what Firefox, Chromium, Brave and every GTK application
+    //    read for "use system proxy settings", on KDE as well as GNOME.
     if which("gsettings").is_some() {
         let _ = gsettings(&["set", "org.gnome.system.proxy", "mode", "'manual'"]);
         for (schema, port) in [
@@ -651,27 +809,55 @@ fn apply_linux_manual(endpoints: ProxyEndpoints) -> Result<(), String> {
             "ignore-hosts",
             "['localhost', '127.0.0.0/8', '::1', '10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16']",
         ]);
+        match verify_gsettings("'manual'") {
+            Ok(()) => applied.push("GSettings"),
+            Err(e) => {
+                first_error.get_or_insert(e);
+            }
+        }
     }
 
-    // 3. Environment variables (for terminal, curl, git, python, etc.)
+    // 3. Environment variables. Telegram Desktop (Qt without libproxy) and
+    //    terminal tools only ever read these, and only at start-up.
     set_linux_env(endpoints);
 
+    if applied.is_empty() {
+        return Err(first_error.unwrap_or_else(unsupported_message));
+    }
     Ok(())
 }
 
 fn apply_linux_pac(url: &str) -> Result<(), String> {
+    let mut applied = false;
+    let mut first_error: Option<String> = None;
     if which("gsettings").is_some() {
         let _ = gsettings(&["set", "org.gnome.system.proxy", "mode", "'auto'"]);
         let _ = gsettings(&["set", "org.gnome.system.proxy", "autoconfig-url", url]);
+        match verify_gsettings("'auto'") {
+            Ok(()) => applied = true,
+            Err(e) => first_error = Some(e),
+        }
     }
-    if which("kwriteconfig6").is_some() || which("kwriteconfig5").is_some() {
-        let _ = kwriteconfig(&["--key", "ProxyType", "2"]);
-        let _ = kwriteconfig(&["--key", "Proxy Config Script", url]);
+    if kde_tool_present() {
+        let written = [
+            kwriteconfig(&["--key", "ProxyType", "2"]),
+            kwriteconfig(&["--key", "Proxy Config Script", url]),
+        ];
         notify_kde();
+        match written.into_iter().find_map(Result::err) {
+            None => applied = true,
+            Some(e) => {
+                first_error.get_or_insert(e);
+            }
+        }
     }
-    let _ = Command::new("systemctl")
+    let _ = tool("systemctl")
         .args(["--user", "set-environment", &format!("auto_proxy={url}")])
         .output();
+    update_activation_env(&[format!("auto_proxy={url}")]);
+    if !applied {
+        return Err(first_error.unwrap_or_else(unsupported_message));
+    }
     Ok(())
 }
 
@@ -679,7 +865,7 @@ fn clear_linux(backend: Backend) -> Result<Backend, String> {
     if which("gsettings").is_some() {
         let _ = gsettings(&["set", "org.gnome.system.proxy", "mode", "'none'"]);
     }
-    if which("kwriteconfig6").is_some() || which("kwriteconfig5").is_some() {
+    if kde_tool_present() {
         let _ = kwriteconfig(&["--key", "ProxyType", "0"]);
         notify_kde();
     }
@@ -687,42 +873,102 @@ fn clear_linux(backend: Backend) -> Result<Backend, String> {
     Ok(backend)
 }
 
-fn set_linux_env(endpoints: ProxyEndpoints) {
+/// Read the GNOME proxy mode back and make sure the write stuck.
+///
+/// `gsettings set` exits 0 even when it had nowhere to write: with no
+/// session bus, or no dconf installed (common on KDE and minimal desktops),
+/// GLib silently falls back to its in-memory backend and the value vanishes
+/// the moment the tool exits. Firefox then keeps reading "none", which is
+/// exactly the "system proxy does nothing" report this check exists for.
+fn verify_gsettings(expected: &str) -> Result<(), String> {
+    let actual = gsettings_read("org.gnome.system.proxy", "mode");
+    if actual == expected {
+        Ok(())
+    } else {
+        Err(format!(
+            "GSettings did not keep the proxy (mode is {}); install dconf \
+             (dconf-service / dconf-gsettings-backend) so Firefox and GTK apps \
+             can see it",
+            if actual.is_empty() {
+                "unreadable"
+            } else {
+                &actual
+            }
+        ))
+    }
+}
+
+/// The proxy environment in `KEY=value` form.
+fn proxy_env_pairs(endpoints: ProxyEndpoints) -> Vec<String> {
     let host = "127.0.0.1";
     let http_val = format!("http://{host}:{}", endpoints.http_port);
     let socks_val = format!("socks5://{host}:{}", endpoints.socks_port);
     let no_proxy_val = "localhost,127.0.0.1,::1";
+    vec![
+        format!("http_proxy={http_val}"),
+        format!("https_proxy={http_val}"),
+        format!("all_proxy={socks_val}"),
+        format!("HTTP_PROXY={http_val}"),
+        format!("HTTPS_PROXY={http_val}"),
+        format!("ALL_PROXY={socks_val}"),
+        format!("no_proxy={no_proxy_val}"),
+        format!("NO_PROXY={no_proxy_val}"),
+    ]
+}
 
-    let _ = Command::new("systemctl")
-        .args([
-            "--user",
-            "set-environment",
-            &format!("http_proxy={http_val}"),
-            &format!("https_proxy={http_val}"),
-            &format!("all_proxy={socks_val}"),
-            &format!("HTTP_PROXY={http_val}"),
-            &format!("HTTPS_PROXY={http_val}"),
-            &format!("ALL_PROXY={socks_val}"),
-            &format!("no_proxy={no_proxy_val}"),
-            &format!("NO_PROXY={no_proxy_val}"),
-        ])
+fn set_linux_env(endpoints: ProxyEndpoints) {
+    let pairs = proxy_env_pairs(endpoints);
+
+    // The systemd user manager: services and anything it starts.
+    let _ = tool("systemctl")
+        .args(["--user", "set-environment"])
+        .args(&pairs)
         .output();
+    // The D-Bus activation environment: applications the desktop starts
+    // through D-Bus (Telegram's .desktop entry is DBusActivatable) inherit
+    // this, so a freshly started Telegram picks the proxy up without a
+    // re-login.
+    update_activation_env(&pairs);
 
-    if let Some(home) = std::env::var_os("HOME") {
-        let env_d = std::path::PathBuf::from(home).join(".config/environment.d");
+    // environment.d: the next login session, for everything else.
+    if let Some(home) = session_home() {
+        let env_d = home.join(".config/environment.d");
         let _ = std::fs::create_dir_all(&env_d);
         let conf_file = env_d.join("10-zeronet-proxy.conf");
-        let content = format!(
-            "http_proxy=\"{http_val}\"\nhttps_proxy=\"{http_val}\"\nall_proxy=\"{socks_val}\"\nHTTP_PROXY=\"{http_val}\"\nHTTPS_PROXY=\"{http_val}\"\nALL_PROXY=\"{socks_val}\"\nno_proxy=\"{no_proxy_val}\"\nNO_PROXY=\"{no_proxy_val}\"\n"
-        );
-        let _ = std::fs::write(conf_file, content);
+        let content: String = pairs
+            .iter()
+            .filter_map(|pair| pair.split_once('='))
+            .map(|(key, value)| format!("{key}=\"{value}\"\n"))
+            .collect();
+        if std::fs::write(&conf_file, content).is_ok() {
+            session_chown(&env_d.join(".."));
+            session_chown(&env_d);
+            session_chown(&conf_file);
+        }
     }
+}
+
+/// Push `KEY=value` pairs into the D-Bus activation environment (and the
+/// systemd one, which `--systemd` also updates). An empty value is the only
+/// way to "unset" through this tool, and every reader treats it as unset.
+fn update_activation_env(pairs: &[String]) {
+    if pairs.is_empty() || which("dbus-update-activation-environment").is_none() {
+        return;
+    }
+    let _ = tool("dbus-update-activation-environment")
+        .arg("--systemd")
+        .args(pairs)
+        .output();
 }
 
 fn clear_linux_env() {
     // `auto_proxy` included: PAC mode sets it, and leaving it behind pointed
-    // applications at a PAC server that no longer exists.
-    let _ = Command::new("systemctl")
+    // applications at a PAC server that no longer exists. The activation
+    // environment goes first because its `--systemd` flag writes empties
+    // into systemd, which the unset below then removes properly.
+    let empties: Vec<String> = ENV_KEYS.iter().map(|key| format!("{key}=")).collect();
+    update_activation_env(&empties);
+    let _ = tool("systemctl")
         .arg("--user")
         .arg("unset-environment")
         .args(ENV_KEYS)
@@ -731,16 +977,15 @@ fn clear_linux_env() {
 }
 
 fn remove_env_file() {
-    if let Some(home) = std::env::var_os("HOME") {
-        let conf_file =
-            std::path::PathBuf::from(home).join(".config/environment.d/10-zeronet-proxy.conf");
+    if let Some(home) = session_home() {
+        let conf_file = home.join(".config/environment.d/10-zeronet-proxy.conf");
         let _ = std::fs::remove_file(conf_file);
     }
 }
 
 /// The proxy variables currently set in the systemd user manager.
 fn systemd_env_read() -> Vec<(String, Option<String>)> {
-    let Ok(output) = Command::new("systemctl")
+    let Ok(output) = tool("systemctl")
         .args(["--user", "show-environment"])
         .output()
     else {
@@ -780,14 +1025,20 @@ fn restore_linux_env(captured: &[(String, Option<String>)]) {
             _ => unset.push(key),
         }
     }
+    let activation: Vec<String> = set
+        .iter()
+        .cloned()
+        .chain(unset.iter().map(|key| format!("{key}=")))
+        .collect();
+    update_activation_env(&activation);
     if !unset.is_empty() {
-        let _ = Command::new("systemctl")
+        let _ = tool("systemctl")
             .args(["--user", "unset-environment"])
             .args(&unset)
             .output();
     }
     if !set.is_empty() {
-        let _ = Command::new("systemctl")
+        let _ = tool("systemctl")
             .args(["--user", "set-environment"])
             .args(&set)
             .output();
@@ -833,7 +1084,7 @@ fn kde_read_binary() -> &'static str {
 }
 
 fn kde_read(key: &str) -> String {
-    let output = Command::new(kde_read_binary())
+    let output = tool(kde_read_binary())
         .args([
             "--file",
             "kioslaverc",
@@ -860,9 +1111,7 @@ fn kde_write(key: &str, value: &str) -> Result<(), String> {
 }
 
 fn gsettings_read(schema: &str, key: &str) -> String {
-    let output = Command::new("gsettings")
-        .args(["get", schema, key])
-        .output();
+    let output = tool("gsettings").args(["get", schema, key]).output();
     match output {
         Ok(out) => String::from_utf8_lossy(&out.stdout).trim().to_string(),
         Err(_) => String::new(),
@@ -904,7 +1153,7 @@ fn networksetup(args: &[&str]) -> Result<(), String> {
 /// Network services that are actually present, so a machine without Wi-Fi is
 /// not reported as a failure.
 fn macos_services() -> Result<Vec<String>, String> {
-    let output = Command::new("networksetup")
+    let output = tool("networksetup")
         .arg("-listallnetworkservices")
         .output()
         .map_err(|e| format!("cannot run networksetup: {e}"))?;
@@ -921,7 +1170,34 @@ fn macos_services() -> Result<Vec<String>, String> {
     Ok(services)
 }
 
+/// Hosts that must never go through the proxy on Windows, in WinINET's
+/// `ProxyOverride` syntax. `<local>` covers plain host names.
+const WINDOWS_BYPASS: &str = "localhost;127.*;10.*;172.16.*;172.17.*;172.18.*;172.19.*;\
+172.20.*;172.21.*;172.22.*;172.23.*;172.24.*;172.25.*;172.26.*;172.27.*;172.28.*;\
+172.29.*;172.30.*;172.31.*;192.168.*;<local>";
+
+/// Point Windows at a manual proxy, a PAC URL, or nothing.
+///
+/// The per-connection WinINET API is the primary path: it writes the
+/// `DefaultConnectionSettings` blob that WinHTTP reads (Qt, and so Telegram's
+/// "use system proxy"), and then broadcasts the change so running browsers —
+/// Firefox with "use system proxy settings", Chrome, Edge — switch at once.
+/// Writing only the `ProxyEnable`/`ProxyServer` registry values, as before,
+/// updated neither: those applications kept going direct until a restart,
+/// and WinHTTP-based ones never noticed at all.
 fn windows_set(manual: Option<&str>, pac: Option<&str>) -> Result<(), String> {
+    let registry = windows_set_registry(manual, pac);
+    #[cfg(windows)]
+    {
+        match wininet::apply(manual, pac, WINDOWS_BYPASS) {
+            Ok(()) => return Ok(()),
+            Err(error) => tracing::warn!(%error, "WinINET refused the proxy; registry only"),
+        }
+    }
+    registry
+}
+
+fn windows_set_registry(manual: Option<&str>, pac: Option<&str>) -> Result<(), String> {
     const KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings";
 
     let enable = if manual.is_some() { "1" } else { "0" };
@@ -941,20 +1217,36 @@ fn windows_set(manual: Option<&str>, pac: Option<&str>) -> Result<(), String> {
     )?;
 
     match manual {
-        Some(server) => run(
-            "reg",
-            &[
-                "add",
-                KEY,
-                "/v",
-                "ProxyServer",
-                "/t",
-                "REG_SZ",
-                "/d",
-                server,
-                "/f",
-            ],
-        )?,
+        Some(server) => {
+            run(
+                "reg",
+                &[
+                    "add",
+                    KEY,
+                    "/v",
+                    "ProxyServer",
+                    "/t",
+                    "REG_SZ",
+                    "/d",
+                    server,
+                    "/f",
+                ],
+            )?;
+            run(
+                "reg",
+                &[
+                    "add",
+                    KEY,
+                    "/v",
+                    "ProxyOverride",
+                    "/t",
+                    "REG_SZ",
+                    "/d",
+                    WINDOWS_BYPASS,
+                    "/f",
+                ],
+            )?;
+        }
         None => {
             let _ = run("reg", &["delete", KEY, "/v", "ProxyServer", "/f"]);
         }
@@ -981,8 +1273,150 @@ fn windows_set(manual: Option<&str>, pac: Option<&str>) -> Result<(), String> {
     Ok(())
 }
 
+/// The WinINET per-connection proxy API, declared by hand: three calls do
+/// not justify a bindings crate.
+#[cfg(windows)]
+mod wininet {
+    use std::ffi::c_void;
+
+    const INTERNET_OPTION_REFRESH: u32 = 37;
+    const INTERNET_OPTION_SETTINGS_CHANGED: u32 = 39;
+    const INTERNET_OPTION_PER_CONNECTION_OPTION: u32 = 75;
+
+    const INTERNET_PER_CONN_FLAGS: u32 = 1;
+    const INTERNET_PER_CONN_PROXY_SERVER: u32 = 2;
+    const INTERNET_PER_CONN_PROXY_BYPASS: u32 = 3;
+    const INTERNET_PER_CONN_AUTOCONFIG_URL: u32 = 4;
+
+    const PROXY_TYPE_DIRECT: u32 = 0x1;
+    const PROXY_TYPE_PROXY: u32 = 0x2;
+    const PROXY_TYPE_AUTO_PROXY_URL: u32 = 0x4;
+
+    /// `INTERNET_PER_CONN_OPTIONW`. The value is a union of a DWORD, a
+    /// string pointer and a FILETIME; a pointer-sized field with 8-byte
+    /// alignment has the same size and layout on both 32- and 64-bit.
+    #[repr(C)]
+    struct Option_ {
+        option: u32,
+        value: OptionValue,
+    }
+
+    #[repr(C)]
+    union OptionValue {
+        dword: u32,
+        string: *mut u16,
+        _filetime: u64,
+    }
+
+    /// `INTERNET_PER_CONN_OPTION_LISTW`.
+    #[repr(C)]
+    struct OptionList {
+        size: u32,
+        connection: *mut u16,
+        count: u32,
+        error: u32,
+        options: *mut Option_,
+    }
+
+    #[link(name = "wininet")]
+    extern "system" {
+        fn InternetSetOptionW(
+            internet: *mut c_void,
+            option: u32,
+            buffer: *mut c_void,
+            length: u32,
+        ) -> i32;
+    }
+
+    fn wide(text: &str) -> Vec<u16> {
+        text.encode_utf16().chain(std::iter::once(0)).collect()
+    }
+
+    pub(super) fn apply(
+        manual: Option<&str>,
+        pac: Option<&str>,
+        bypass: &str,
+    ) -> Result<(), String> {
+        let mut server = wide(manual.unwrap_or(""));
+        let mut bypass = wide(bypass);
+        let mut url = wide(pac.unwrap_or(""));
+
+        let flags = match (manual, pac) {
+            (Some(_), _) => PROXY_TYPE_DIRECT | PROXY_TYPE_PROXY,
+            (None, Some(_)) => PROXY_TYPE_DIRECT | PROXY_TYPE_AUTO_PROXY_URL,
+            (None, None) => PROXY_TYPE_DIRECT,
+        };
+        let mut options = vec![Option_ {
+            option: INTERNET_PER_CONN_FLAGS,
+            value: OptionValue { dword: flags },
+        }];
+        if manual.is_some() {
+            options.push(Option_ {
+                option: INTERNET_PER_CONN_PROXY_SERVER,
+                value: OptionValue {
+                    string: server.as_mut_ptr(),
+                },
+            });
+            options.push(Option_ {
+                option: INTERNET_PER_CONN_PROXY_BYPASS,
+                value: OptionValue {
+                    string: bypass.as_mut_ptr(),
+                },
+            });
+        }
+        if pac.is_some() {
+            options.push(Option_ {
+                option: INTERNET_PER_CONN_AUTOCONFIG_URL,
+                value: OptionValue {
+                    string: url.as_mut_ptr(),
+                },
+            });
+        }
+
+        let mut list = OptionList {
+            size: std::mem::size_of::<OptionList>() as u32,
+            // Null is the LAN connection, which is what every modern Windows
+            // uses for Wi-Fi and Ethernet alike.
+            connection: std::ptr::null_mut(),
+            count: options.len() as u32,
+            error: 0,
+            options: options.as_mut_ptr(),
+        };
+
+        // SAFETY: `list` and everything it points at outlive the calls, and
+        // the sizes are the ones the API documents for these structures.
+        unsafe {
+            let ok = InternetSetOptionW(
+                std::ptr::null_mut(),
+                INTERNET_OPTION_PER_CONNECTION_OPTION,
+                (&mut list as *mut OptionList).cast(),
+                list.size,
+            );
+            if ok == 0 {
+                return Err(format!(
+                    "InternetSetOption failed: {}",
+                    std::io::Error::last_os_error()
+                ));
+            }
+            InternetSetOptionW(
+                std::ptr::null_mut(),
+                INTERNET_OPTION_SETTINGS_CHANGED,
+                std::ptr::null_mut(),
+                0,
+            );
+            InternetSetOptionW(
+                std::ptr::null_mut(),
+                INTERNET_OPTION_REFRESH,
+                std::ptr::null_mut(),
+                0,
+            );
+        }
+        Ok(())
+    }
+}
+
 fn run(binary: &str, args: &[&str]) -> Result<(), String> {
-    let output = Command::new(binary)
+    let output = tool(binary)
         .args(args)
         .output()
         .map_err(|e| format!("cannot run {binary}: {e}"))?;
