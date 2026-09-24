@@ -216,16 +216,12 @@ class ScreensScreenshotTest {
 
     // ---------------------------------------------------------------- Onboarding
 
-    @Test fun onboarding_1_dark() = compose.shot("onboarding_1_dark", bar = false) { OnboardingScreen(onAllow = {}, onLater = {}) }
+    @Test fun onboarding_dark() = compose.shot("onboarding_dark", bar = false) { OnboardingScreen(onAllow = {}, onLater = {}) }
 
-    @Test fun onboarding_1_light() = compose.shot("onboarding_1_light", dark = false, bar = false) { OnboardingScreen(onAllow = {}, onLater = {}) }
-
-    @Test fun onboarding_2_dark() = compose.shot("onboarding_2_dark", bar = false) { OnboardingScreen(onAllow = {}, onLater = {}, initialPage = 1) }
-
-    @Test fun onboarding_3_dark() = compose.shot("onboarding_3_dark", bar = false) { OnboardingScreen(onAllow = {}, onLater = {}, initialPage = 2) }
+    @Test fun onboarding_light() = compose.shot("onboarding_light", dark = false, bar = false) { OnboardingScreen(onAllow = {}, onLater = {}) }
 
     @Config(qualifiers = "$FA-$PHONE")
-    @Test fun onboarding_1_fa_dark() = compose.shot("onboarding_1_fa_dark", bar = false) { OnboardingScreen(onAllow = {}, onLater = {}) }
+    @Test fun onboarding_fa_dark() = compose.shot("onboarding_fa_dark", bar = false) { OnboardingScreen(onAllow = {}, onLater = {}) }
 }
 
 /**

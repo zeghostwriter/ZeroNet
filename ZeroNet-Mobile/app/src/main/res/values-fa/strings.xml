@@ -382,21 +382,10 @@
     <string name="kw_about">نسخه مجوز لایسنس کد منبع متن‌باز موتور</string>
 
     <!-- Onboarding -->
-    <string name="onboarding_skip">رد شدن</string>
-    <string name="onboarding_next">ادامه</string>
+    <string name="onboarding_perm_title">زیرونت به دو دسترسی نیاز دارد</string>
+    <string name="onboarding_perm_text">دسترسی VPN برای اینکه ترافیک برنامه‌ها از تونل رد شود، و اعلان برای اینکه ببینید وصل هستید یا نه. اندروید هر کدام را فقط یک بار می‌پرسد و بعداً از تنظیمات گوشی می‌توانید عوضشان کنید.</string>
     <string name="onboarding_allow">اجازه دادن</string>
     <string name="onboarding_later">فعلاً نه</string>
-    <string name="onboarding_page">%1$s از %2$s</string>
-    <string name="onboarding_1_title">با یک لمس وصل شوید</string>
-    <string name="onboarding_1_body">زیرونت خودش سروری پیدا می‌کند که روی اینترنت شما کار کند و به آن وصل می‌شود.</string>
-    <string name="onboarding_2_title">سرورها از کجا می‌آیند</string>
-    <string name="onboarding_2_body">زیرونت فهرست‌های عمومی سرور را می‌گیرد، روی اینترنت شما تستشان می‌کند و سریع‌ترها را نگه می‌دارد. دفعه‌ی بعد اول سراغ سرورهایی می‌رود که قبلاً جواب داده‌اند.</string>
-    <string name="onboarding_3_title">دو دسترسی</string>
-    <string name="onboarding_3_body">اندروید فقط یک بار این‌ها را می‌پرسد. بعداً هم می‌توانید از تنظیمات گوشی عوضشان کنید.</string>
-    <string name="onboarding_perm_vpn">اتصال VPN</string>
-    <string name="onboarding_perm_vpn_body">برای اینکه ترافیک برنامه‌ها از VPN رد شود.</string>
-    <string name="onboarding_perm_notif">اعلان‌ها</string>
-    <string name="onboarding_perm_notif_body">وضعیت اتصال را همراه دکمه‌ی قطع نشان می‌دهد.</string>
 
     <!-- Connection profiles -->
     <string name="profile_normal">معمولی</string>

@@ -384,21 +384,10 @@
     <string name="kw_about">version licence license source code open source engine zray</string>
 
     <!-- Onboarding -->
-    <string name="onboarding_skip">Skip</string>
-    <string name="onboarding_next">Continue</string>
+    <string name="onboarding_perm_title">ZeroNet needs two permissions</string>
+    <string name="onboarding_perm_text">VPN, so your apps\' traffic can go through the tunnel, and notifications, so you can see whether you\'re connected. Android asks for each once, and you can change them later in system settings.</string>
     <string name="onboarding_allow">Allow</string>
     <string name="onboarding_later">Not now</string>
-    <string name="onboarding_page">%1$s of %2$s</string>
-    <string name="onboarding_1_title">Connect with one tap</string>
-    <string name="onboarding_1_body">ZeroNet finds a server that works on your network and connects to it.</string>
-    <string name="onboarding_2_title">Where the servers come from</string>
-    <string name="onboarding_2_body">ZeroNet downloads public server lists, tests them on your connection and keeps the fastest. Servers that worked are tried first next time.</string>
-    <string name="onboarding_3_title">Two permissions</string>
-    <string name="onboarding_3_body">Android asks for these once. You can change them later in system settings.</string>
-    <string name="onboarding_perm_vpn">VPN connection</string>
-    <string name="onboarding_perm_vpn_body">Needed to send your apps’ traffic through the tunnel.</string>
-    <string name="onboarding_perm_notif">Notifications</string>
-    <string name="onboarding_perm_notif_body">Shows whether you’re connected, with a Disconnect button.</string>
 
     <!-- Connection profiles -->
     <string name="profile_normal">Normal</string>
