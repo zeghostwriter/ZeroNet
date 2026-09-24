@@ -103,6 +103,7 @@
     <string name="unit_gb_value">%1$s GB</string>
     <string name="delay_ms">%1$s ms</string>
     <string name="delay_unknown">—</string>
+    <string name="delay_failed">Failed</string>
     <string name="ago_never">Never</string>
     <string name="ago_now">Just now</string>
     <string name="ago_minutes">%1$s min ago</string>
@@ -159,6 +160,7 @@
 
     <!-- Server detail sheet -->
     <string name="detail_delay">Delay</string>
+    <string name="detail_error">Why it failed</string>
     <string name="detail_last_tested">Last tested</string>
     <string name="detail_protocol">Protocol</string>
     <string name="detail_transport">Transport</string>

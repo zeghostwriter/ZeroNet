@@ -48,7 +48,8 @@ class ServerStore private constructor(context: Context) :
                 tested_at INTEGER NOT NULL DEFAULT 0,
                 alive_count INTEGER NOT NULL DEFAULT 0,
                 fail_count INTEGER NOT NULL DEFAULT 0,
-                first_seen INTEGER NOT NULL
+                first_seen INTEGER NOT NULL,
+                last_error TEXT
             )""",
         )
         db.execSQL("CREATE INDEX servers_country ON servers(country)")
@@ -76,7 +77,8 @@ class ServerStore private constructor(context: Context) :
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-        // Version 1 is the first schema; future migrations go here, step by step.
+        // Step by step, so any older version reaches the current one.
+        if (oldVersion < 2) db.execSQL("ALTER TABLE servers ADD COLUMN last_error TEXT")
     }
 
     // ------------------------------------------------------------------ reads
@@ -160,15 +162,18 @@ class ServerStore private constructor(context: Context) :
         }
     }
 
-    /** Record a test result, and credit/debit the per-network history. */
-    fun recordResult(key: String, delayMs: Int, network: String?) {
+    /**
+     * Record a test result, and credit/debit the per-network history. [error]
+     * is why a failed test failed, shown in the server's details.
+     */
+    fun recordResult(key: String, delayMs: Int, network: String?, error: String? = null) {
         val db = writableDatabase
         val now = System.currentTimeMillis()
         db.beginTransaction()
         try {
             if (delayMs >= 0) {
                 db.execSQL(
-                    "UPDATE servers SET delay_ms = ?, tested_at = ?, alive_count = alive_count + 1 WHERE key = ?",
+                    "UPDATE servers SET delay_ms = ?, tested_at = ?, alive_count = alive_count + 1, last_error = NULL WHERE key = ?",
                     arrayOf<Any>(delayMs, now, key),
                 )
                 if (network != null) {
@@ -190,8 +195,8 @@ class ServerStore private constructor(context: Context) :
                 }
             } else {
                 db.execSQL(
-                    "UPDATE servers SET delay_ms = -1, tested_at = ?, fail_count = fail_count + 1 WHERE key = ?",
-                    arrayOf<Any>(now, key),
+                    "UPDATE servers SET delay_ms = -1, tested_at = ?, fail_count = fail_count + 1, last_error = ? WHERE key = ?",
+                    arrayOf<Any?>(now, error?.take(300), key),
                 )
                 if (network != null) {
                     db.execSQL("UPDATE history SET score = score * 0.25 WHERE network = ? AND key = ?", arrayOf(network, key))
@@ -289,6 +294,7 @@ class ServerStore private constructor(context: Context) :
         val tested = c.getColumnIndexOrThrow("tested_at")
         val alive = c.getColumnIndexOrThrow("alive_count")
         val fail = c.getColumnIndexOrThrow("fail_count")
+        val error = c.getColumnIndexOrThrow("last_error")
 
         fun read(c: Cursor) = Server(
             key = c.getString(key), link = c.getString(link), name = c.getString(name),
@@ -296,12 +302,13 @@ class ServerStore private constructor(context: Context) :
             host = c.getString(host), port = c.getInt(port), country = c.getString(country), source = c.getString(source),
             favorite = c.getInt(favorite) != 0, delayMs = c.getInt(delay), lastTestedAt = c.getLong(tested),
             aliveCount = c.getInt(alive), failCount = c.getInt(fail),
+            lastError = if (c.isNull(error)) null else c.getString(error),
         )
     }
 
     companion object {
         private const val DB_NAME = "servers.db"
-        private const val DB_VERSION = 1
+        private const val DB_VERSION = 2
         const val MAX_DISCOVERED = 2000
 
         /** Faster answers earn more; any success earns at least 1. */

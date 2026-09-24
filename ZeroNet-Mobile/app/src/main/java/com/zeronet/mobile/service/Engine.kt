@@ -136,6 +136,8 @@ object Engine {
             server.transport !in setOf("ws", "httpupgrade", "xhttp", "splithttp")
     }
     private const val HEALTH_INTERVAL_MS = 45_000L
+    /** Test timeout for the user's own configs; see [testServers]. */
+    private const val OWN_TIMEOUT_MS = 10_000
     private const val PROBE_URL = "http://cp.cloudflare.com/generate_204"
 
     private lateinit var app: Context
@@ -478,21 +480,47 @@ object Engine {
         withContext(Dispatchers.IO) { store.prune() }
     }
 
+    /**
+     * Test [servers] through the core, one [onResult] per server.
+     *
+     * The user's own configs (imported or from their subscriptions) are tested
+     * first, with a longer timeout and without the TLS confirmation. That
+     * confirmation exists to weed out public-feed servers that answer the
+     * plain probe without really relaying; for a config the user chose, its
+     * second connection only adds a way to fail on a slow link, and a working
+     * REALITY config showed no ping at all.
+     */
+    private suspend fun testServers(
+        servers: List<Server>,
+        timeoutMs: Int,
+        concurrency: Int,
+        onResult: suspend (key: String, delay: Int, error: String?) -> Unit,
+    ) {
+        val (own, feed) = servers.partition { it.isUser }
+        for ((group, lenient) in listOf(own to true, feed to false)) {
+            if (group.isEmpty()) continue
+            val request = JSONObject()
+                .put("links", JSONArray(group.map { it.link }))
+                .put("concurrency", concurrency.coerceIn(1, group.size))
+                .put("timeout_ms", if (lenient) maxOf(timeoutMs, OWN_TIMEOUT_MS) else timeoutMs)
+                .put("probe_url", PROBE_URL)
+            if (lenient) request.put("confirm_tls", false)
+            nativeJob { ZrayNative.testLinks(request.toString(), it) }.collect { e ->
+                if (e.optString("t") != "result") return@collect
+                onResult(e.optString("key"), e.optInt("delay_ms", -1), e.optString("error").ifBlank { null })
+            }
+        }
+    }
+
     /** Test stored candidates (country / refresh) and bring up on the first alive one. */
     private suspend fun testAndCollect(all: List<Server>, network: String) {
         // Prefer servers that suit the profile; if none of them do, any will.
         val candidates = all.filter { suits(it, settings.profile) }.ifEmpty { all }
         val byKey = candidates.associateBy { it.key }
-        val request = JSONObject()
-            .put("links", JSONArray(candidates.take(200).map { it.link }))
-            .put("concurrency", 16).put("timeout_ms", 4000).put("probe_url", PROBE_URL)
-        nativeJob { ZrayNative.testLinks(request.toString(), it) }.collect { e ->
-            if (e.optString("t") != "result") return@collect
-            val key = e.optString("key")
-            val delay = e.optInt("delay_ms", -1)
-            withContext(Dispatchers.IO) { store.recordResult(key, delay, network) }
-            val server = byKey[key] ?: return@collect
-            if (delay < 0) return@collect
+        testServers(candidates.take(200), timeoutMs = 4000, concurrency = 16) { key, delay, error ->
+            withContext(Dispatchers.IO) { store.recordResult(key, delay, network, error) }
+            val server = byKey[key] ?: return@testServers
+            if (delay < 0) return@testServers
             pool += Alive(server.copy(delayMs = delay), delay)
             pool.sortBy { it.delayMs }
             if (!running) {
@@ -623,14 +651,13 @@ object Engine {
         if (!running) return@withLock
         val before = pool.map { it.server.key }
         if (pool.isNotEmpty()) {
-            val request = JSONObject()
-                .put("links", JSONArray(pool.map { it.server.link }))
-                .put("concurrency", pool.size).put("timeout_ms", 5000).put("probe_url", PROBE_URL)
             val results = HashMap<String, Int>()
-            nativeJob { ZrayNative.testLinks(request.toString(), it) }.collect { e ->
-                if (e.optString("t") == "result") results[e.optString("key")] = e.optInt("delay_ms", -1)
+            val errors = HashMap<String, String?>()
+            testServers(pool.map { it.server }, timeoutMs = 5000, concurrency = pool.size) { key, delay, error ->
+                results[key] = delay
+                errors[key] = error
             }
-            withContext(Dispatchers.IO) { results.forEach { (k, d) -> store.recordResult(k, d, network) } }
+            withContext(Dispatchers.IO) { results.forEach { (k, d) -> store.recordResult(k, d, network, errors[k]) } }
             val survivors = pool.mapNotNull { a -> results[a.server.key]?.takeIf { it >= 0 }?.let { a.copy(delayMs = it) } }
                 .sortedBy { it.delayMs }
                 .toMutableList()
@@ -728,13 +755,10 @@ object Engine {
             val network = NetworkIdentity.current(app)
             var done = 0
             testProgress.value = 0 to servers.size
-            val request = JSONObject().put("links", JSONArray(servers.map { it.link }))
-                .put("concurrency", 16).put("timeout_ms", 4000).put("probe_url", PROBE_URL)
             var lastEmit = 0L
             try {
-                nativeJob { ZrayNative.testLinks(request.toString(), it) }.collect { e ->
-                    if (e.optString("t") != "result") return@collect
-                    withContext(Dispatchers.IO) { store.recordResult(e.optString("key"), e.optInt("delay_ms", -1), network) }
+                testServers(servers, timeoutMs = 4000, concurrency = 16) { key, delay, error ->
+                    withContext(Dispatchers.IO) { store.recordResult(key, delay, network, error) }
                     done++
                     testProgress.value = done to servers.size
                     val now = System.currentTimeMillis()

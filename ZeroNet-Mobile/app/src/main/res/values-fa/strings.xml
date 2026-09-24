@@ -101,6 +101,7 @@
     <!-- Isolated LTR so "۱۴۰ ms" never renders as "ms ۱۴۰" inside Persian text. -->
     <string name="delay_ms">⁦%1$s ms⁩</string>
     <string name="delay_unknown">—</string>
+    <string name="delay_failed">ناموفق</string>
     <string name="ago_never">هرگز</string>
     <string name="ago_now">همین حالا</string>
     <string name="ago_minutes">%1$s دقیقه پیش</string>
@@ -157,6 +158,7 @@
 
     <!-- Server detail sheet -->
     <string name="detail_delay">تأخیر</string>
+    <string name="detail_error">دلیل خطا</string>
     <string name="detail_last_tested">آخرین تست</string>
     <string name="detail_protocol">پروتکل</string>
     <string name="detail_transport">انتقال</string>

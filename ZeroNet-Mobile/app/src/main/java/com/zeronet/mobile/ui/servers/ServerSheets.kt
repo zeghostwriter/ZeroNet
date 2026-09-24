@@ -71,6 +71,7 @@ import com.zeronet.mobile.ui.theme.ZeroTheme
 import com.zeronet.mobile.ui.util.Num
 import com.zeronet.mobile.ui.util.currentLocale
 import com.zeronet.mobile.ui.util.formatAgo
+import com.zeronet.mobile.ui.util.formatServerDelay
 import com.zeronet.mobile.ui.util.formatDelay
 import kotlinx.coroutines.launch
 
@@ -169,7 +170,18 @@ private fun ColumnScope.DetailContent(
         AnimatedVisibility(!sharing, enter = fadeIn(ZeroMotion.quick()) + expandVertically(ZeroMotion.quickSize()), exit = fadeOut(ZeroMotion.quick()) + shrinkVertically(ZeroMotion.quickSize())) {
             Column {
                 Spacer(Modifier.height(20.dp))
-                DetailRow(stringResource(R.string.detail_delay), formatDelay(context, s.delayMs, locale), c.delayColor(s.delayMs))
+                DetailRow(stringResource(R.string.detail_delay), formatServerDelay(context, s, locale), c.delayColor(s.delayMs))
+                val error = s.lastError
+                if (s.delayMs < 0 && error != null) {
+                    // What the core said, so a failing config can be diagnosed.
+                    Column(Modifier.fillMaxWidth().padding(bottom = 10.dp)) {
+                        Text(stringResource(R.string.detail_error), style = MaterialTheme.typography.bodyMedium, color = c.muted)
+                        Spacer(Modifier.height(4.dp))
+                        SelectionContainer {
+                            Text(com.zeronet.mobile.ui.util.ltr(error), style = MaterialTheme.typography.bodySmall, color = c.err)
+                        }
+                    }
+                }
                 Hairline()
                 DetailRow(stringResource(R.string.detail_last_tested), formatAgo(context, s.lastTestedAt, now, locale))
                 Hairline()

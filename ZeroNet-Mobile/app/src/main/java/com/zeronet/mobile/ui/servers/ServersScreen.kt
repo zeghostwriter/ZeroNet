@@ -94,6 +94,7 @@ import com.zeronet.mobile.ui.util.Num
 import com.zeronet.mobile.ui.util.currentLocale
 import com.zeronet.mobile.ui.util.formatAgo
 import com.zeronet.mobile.ui.util.formatDelay
+import com.zeronet.mobile.ui.util.formatServerDelay
 import com.zeronet.mobile.ui.theme.ZeroMotion
 import dev.chrisbanes.haze.hazeSource
 import dev.chrisbanes.haze.rememberHazeState
@@ -370,7 +371,7 @@ fun ServerRow(server: Server, active: Boolean, actions: ServersActions, modifier
     val title = serverTitle(context, server, locale)
     val country = countryLabel(context, server.country, locale)
     val kind = kindLabel(context, server.kind)
-    val delay = formatDelay(context, server.delayMs, locale)
+    val delay = formatServerDelay(context, server, locale)
     val favLabel = stringResource(if (server.favorite) R.string.action_unfavorite else R.string.action_favorite)
     val detailsLabel = stringResource(R.string.action_details)
     val connectLabel = stringResource(R.string.action_connect)
