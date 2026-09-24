@@ -13,6 +13,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.PressInteraction
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
@@ -538,7 +539,10 @@ private fun androidx.compose.foundation.layout.BoxScope.GamingOverlay(
             style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold, letterSpacing = latinTracking(0.12)),
             modifier = Modifier
                 .align(Alignment.TopEnd)
-                .padding(top = 2.dp, end = 4.dp)
+                // Above the HUD frame: at the box's top edge it sat right on
+                // the corner bracket's line.
+                .offset(y = (-26).dp)
+                .padding(end = 4.dp)
                 .graphicsLayer { alpha = hud.value.coerceIn(0f, 1f) },
         )
     }
