@@ -8,12 +8,18 @@ on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Publish as this tag (e.g. v0.1.0). Leave empty to only build."
+        required: false
+        default: ""
 
 permissions:
   contents: write
 
 env:
   CARGO_TERM_COLOR: always
+  RELEASE_TAG: ${{ github.ref_type == 'tag' && github.ref_name || inputs.version }}
 
 jobs:
   windows:
@@ -103,8 +109,8 @@ jobs:
           cargo build --release -p zeronet-tui --target x86_64-apple-darwin
       - name: app bundle
         run: |
-          version="${GITHUB_REF_NAME#v}"
-          [[ "$GITHUB_REF_TYPE" == tag ]] || version=0.0.0
+          version="${RELEASE_TAG#v}"
+          [[ -n "$version" ]] || version=0.0.0
           app=dist/ZeroNet.app
           mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
           lipo -create -output "$app/Contents/MacOS/zeronet-tui" \
@@ -185,7 +191,9 @@ jobs:
 
   publish:
     name: publish release
-    if: github.ref_type == 'tag'
+    # A pushed tag, or a manual run given a version: the release action then
+    # creates the tag on this commit.
+    if: github.ref_type == 'tag' || inputs.version != ''
     needs: [windows, linux, macos, android]
     runs-on: ubuntu-latest
     steps:
@@ -197,6 +205,9 @@ jobs:
         run: cd dist && sha256sum * > SHA256SUMS.txt
       - uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          target_commitish: ${{ github.sha }}
+          name: ZeroNet ${{ env.RELEASE_TAG }}
           files: dist/*
           generate_release_notes: true
           body: |
