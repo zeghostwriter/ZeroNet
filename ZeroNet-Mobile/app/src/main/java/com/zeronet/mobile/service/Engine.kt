@@ -136,6 +136,10 @@ object Engine {
             server.transport !in setOf("ws", "httpupgrade", "xhttp", "splithttp")
     }
     private const val HEALTH_INTERVAL_MS = 45_000L
+    /** When every server fails a health check, test again this much later before believing it. */
+    private const val HEALTH_RETEST_MS = 3_000L
+    /** Failed health checks in a row before a chosen config is reported as not answering. */
+    private const val CHOSEN_DOWN_AFTER = 2
     /** Test timeout for the user's own configs; see [testServers]. */
     private const val OWN_TIMEOUT_MS = 10_000
     private const val PROBE_URL = "http://cp.cloudflare.com/generate_204"
@@ -165,6 +169,8 @@ object Engine {
     private var profileJob: Job? = null
     private var scanJob: Job? = null
     private var monitorJob: Job? = null
+    /** Health checks in a row in which the chosen config failed; see [CHOSEN_DOWN_AFTER]. */
+    private var chosenFailures = 0
     private val healthNow = Channel<Unit>(Channel.CONFLATED)
 
     @Volatile private var settings = Settings()
@@ -262,51 +268,54 @@ object Engine {
     fun applySettings(next: Settings) {
         val previous = settings
         settings = next
+        // Still searching: start over, so the search itself follows the new mode.
+        if (!running && previous.profile != next.profile && connectJob?.isActive == true) {
+            profileJob?.cancel()
+            profileJob = scope.launch {
+                delay(PROFILE_SETTLE_MS)
+                reconnect()
+            }
+            return
+        }
         if (!running) return
         when {
             // Zray's hot reload keeps the inbound set fixed, so listener
             // changes (LAN sharing, credentials, ports) need a quick restart.
             topology(previous) != topology(next) -> scope.launch { mutex.withLock { restartCore() } }
             previous.profile != next.profile -> {
+                // A mode is more than a few settings: it decides which servers
+                // qualify and how many, so switching reconnects from scratch.
                 // Tapping through the modes quickly: only the last choice
-                // counts. The previous reaction is cancelled (its search with
-                // it) and this one waits a moment for the taps to settle.
+                // counts, once the taps have settled.
                 profileJob?.cancel()
                 profileJob = scope.launch {
                     delay(PROFILE_SETTLE_MS)
-                    mutex.withLock { adoptProfile(next) }
+                    reconnect()
                 }
             }
             routing(previous) != routing(next) -> scope.launch { mutex.withLock { reloadPool() } }
         }
     }
 
-    /** Keep the servers that suit [next]'s profile, or search for some with the tunnel up. */
-    private suspend fun adoptProfile(next: Settings) {
-        // A config the user chose stays, whatever the mode: only its
-        // settings (fragmentation, QUIC) follow the profile.
-        if (target is ConnectTarget.Specific) {
-            reloadPool()
-            return
+    /**
+     * Drop the current connection and connect again to the same target with
+     * the current settings. The foreground service and its notification stay
+     * up throughout; in VPN mode the new interface replaces the old one.
+     */
+    private fun reconnect() {
+        refreshJob?.cancel()
+        connectJob?.cancel()
+        monitorJob?.cancel()
+        connectJob = scope.launch {
+            mutex.withLock {
+                withContext(NonCancellable) { teardown() }
+                runConnection()
+            }
+            if (!running && state.value is ConnState.Failed) {
+                this@Engine.host?.finish()
+                this@Engine.host = null
+            }
         }
-        val kept = pool.filter { suits(it.server, next.profile) }
-        val network = NetworkIdentity.current(app)
-        if (kept.isNotEmpty() || network == null) {
-            if (kept.isNotEmpty()) { pool.clear(); pool.addAll(kept) }
-            reloadPool()
-            return
-        }
-        // If nothing suitable turns up, or the search is cancelled by a newer
-        // change, carry on with what worked: an empty pool would read as
-        // "every server died" to the health check.
-        val old = pool.toList()
-        pool.clear()
-        try {
-            findReplacements(network, excludeKeys = emptySet())
-        } finally {
-            if (pool.isEmpty()) pool.addAll(old)
-        }
-        reloadPool()
     }
 
     /**
@@ -347,6 +356,7 @@ object Engine {
 
     private suspend fun runConnection() {
         pool.clear()
+        chosenFailures = 0
         publish(ConnState.Searching(DiscoveryProgress()))
         if (nativeError != null) {
             fail(FailReason.CoreError, nativeError.orEmpty()); return
@@ -653,9 +663,18 @@ object Engine {
         if (pool.isNotEmpty()) {
             val results = HashMap<String, Int>()
             val errors = HashMap<String, String?>()
-            testServers(pool.map { it.server }, timeoutMs = 5000, concurrency = pool.size) { key, delay, error ->
+            suspend fun probe() = testServers(pool.map { it.server }, timeoutMs = 5000, concurrency = pool.size) { key, delay, error ->
                 results[key] = delay
                 errors[key] = error
+            }
+            probe()
+            // One failed probe is weak evidence on these networks: a single
+            // lost handshake would otherwise switch servers under the user,
+            // or report a working config as dead. Test again before acting.
+            if (results.values.none { it >= 0 }) {
+                delay(HEALTH_RETEST_MS)
+                if (!running) return@withLock
+                probe()
             }
             withContext(Dispatchers.IO) { results.forEach { (k, d) -> store.recordResult(k, d, network, errors[k]) } }
             val survivors = pool.mapNotNull { a -> results[a.server.key]?.takeIf { it >= 0 }?.let { a.copy(delayMs = it) } }
@@ -673,10 +692,14 @@ object Engine {
             serversChanged.tryEmit(Unit)
             // A config the user chose is never swapped for another: while it
             // is down, keep it in place and try it again on the next check.
+            // Nothing depends on this verdict but the message, so it waits
+            // for more than one failed check before saying so.
             if (target is ConnectTarget.Specific) {
                 if (survivors.isEmpty()) {
-                    publish(ConnState.Reconnecting(REASON_CHOSEN_DOWN))
+                    chosenFailures++
+                    if (chosenFailures >= CHOSEN_DOWN_AFTER) publish(ConnState.Reconnecting(REASON_CHOSEN_DOWN))
                 } else {
+                    chosenFailures = 0
                     pool.clear(); pool.addAll(survivors)
                     publishConnected()
                 }
