@@ -70,6 +70,7 @@
     <string name="stage_connecting">Starting the tunnel…</string>
     <string name="stage_connecting_to">Connecting to %1$s…</string>
     <string name="stage_reconnecting">Connection dropped. Switching server…</string>
+    <string name="stage_chosen_down">Your config isn\'t answering. Trying it again…</string>
     <string name="stage_disconnecting">Disconnecting…</string>
     <string name="stage_connected_pool">Backup servers ready: %1$s</string>
 
@@ -122,6 +123,8 @@
     <string name="picker_title">Choose a server</string>
     <string name="picker_favorites">Favourites</string>
     <string name="picker_mine">Your configs</string>
+    <string name="picker_subscriptions">Your subscriptions</string>
+    <string name="server_subscription_hint">Switches only between this subscription\'s configs</string>
     <string name="picker_countries">Countries</string>
     <string name="picker_empty">No servers yet. Connect once and ZeroNet will find some.</string>
 

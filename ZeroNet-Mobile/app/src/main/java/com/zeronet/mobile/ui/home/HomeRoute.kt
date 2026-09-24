@@ -65,12 +65,20 @@ fun HomeRoute() {
     val stats by controller.engine.stats.collectAsStateWithLifecycle()
     val settings by controller.settings.settings.collectAsStateWithLifecycle()
     val servers by controller.servers.servers.collectAsStateWithLifecycle()
+    val subscriptions by controller.servers.subscriptions.collectAsStateWithLifecycle()
     val target = remember(settings.lastTarget) { ConnectTarget.decode(settings.lastTarget) }
     val groups by produceState(emptyList<CountryGroup>(), servers) {
         value = withContext(Dispatchers.Default) { groupByCountry(servers) }
     }
     val targetServer = remember(target, servers) { (target as? ConnectTarget.Specific)?.let { t -> servers.firstOrNull { it.key == t.key } } }
     val countryDelay = remember(target, groups) { (target as? ConnectTarget.Country)?.let { t -> groups.firstOrNull { it.code == t.code }?.bestDelay } ?: -1 }
+    val subscriptionRows = remember(subscriptions, servers) {
+        subscriptions.map { sub ->
+            val own = servers.filter { it.source == Server.SOURCE_SUB_PREFIX + sub.id }
+            SubscriptionRow(sub.id, sub.name.ifBlank { null }, own.size, own.filter { it.delayMs >= 0 }.minOfOrNull { it.delayMs } ?: -1)
+        }
+    }
+    val targetSubscription = remember(target, subscriptionRows) { (target as? ConnectTarget.Subscription)?.let { t -> subscriptionRows.firstOrNull { it.id == t.id } } }
     var picker by rememberSaveable { mutableStateOf(false) }
 
     HomeScreen(
@@ -80,6 +88,8 @@ fun HomeRoute() {
             target = target,
             targetServer = targetServer,
             targetCountryDelay = countryDelay,
+            targetSubscription = targetSubscription?.name,
+            targetSubscriptionDelay = targetSubscription?.bestDelay ?: -1,
             profile = settings.profile,
         ),
         onOrbClick = controller::toggle,
@@ -95,6 +105,7 @@ fun HomeRoute() {
         visible = picker,
         target = target,
         groups = groups,
+        subscriptions = subscriptionRows,
         mine = remember(servers) { servers.filter { it.isUser } },
         favorites = remember(servers) { servers.filter { it.favorite && !it.isUser } },
         onSelect = {
@@ -105,12 +116,16 @@ fun HomeRoute() {
     )
 }
 
-/** Fastest / your configs / favourites / countries. Choosing one saves it as the target and connects. */
+/** A subscription as the picker lists it. */
+data class SubscriptionRow(val id: String, val name: String?, val count: Int, val bestDelay: Int)
+
+/** Fastest / your subscriptions / your configs / favourites / countries. Choosing one saves it as the target and connects. */
 @Composable
 fun ServerPickerSheet(
     visible: Boolean,
     target: ConnectTarget,
     groups: List<CountryGroup>,
+    subscriptions: List<SubscriptionRow>,
     mine: List<Server>,
     favorites: List<Server>,
     onSelect: (ConnectTarget) -> Unit,
@@ -140,6 +155,20 @@ fun ServerPickerSheet(
                     trailing = null,
                     onClick = { onSelect(ConnectTarget.Fastest) },
                 )
+            }
+            if (subscriptions.isNotEmpty()) {
+                item(key = "subs_title", contentType = "title") { SectionTitle(stringResource(R.string.picker_subscriptions), Modifier.padding(start = 8.dp, top = 8.dp)) }
+                items(subscriptions, key = { "sub_" + it.id }, contentType = { "row" }) { sub ->
+                    PickerRow(
+                        selected = target == ConnectTarget.Subscription(sub.id),
+                        leading = { IconBadge(ZeroIcons.Link) },
+                        title = sub.name ?: stringResource(R.string.source_subscription),
+                        subtitle = androidx.compose.ui.res.pluralStringResource(R.plurals.servers_count, sub.count, Num.int(sub.count, locale)),
+                        trailing = if (sub.bestDelay >= 0) formatDelay(context, sub.bestDelay, locale) else null,
+                        trailingColor = c.delayColor(sub.bestDelay),
+                        onClick = { onSelect(ConnectTarget.Subscription(sub.id)) },
+                    )
+                }
             }
             if (mine.isNotEmpty()) {
                 item(key = "mine_title", contentType = "title") { SectionTitle(stringResource(R.string.picker_mine), Modifier.padding(start = 8.dp, top = 8.dp)) }

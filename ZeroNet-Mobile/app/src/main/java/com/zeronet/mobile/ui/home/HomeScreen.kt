@@ -97,6 +97,10 @@ data class HomeState(
     val targetServer: Server? = null,
     /** Best known delay in the target country, or -1. */
     val targetCountryDelay: Int = -1,
+    /** The name of a [ConnectTarget.Subscription] target, when known. */
+    val targetSubscription: String? = null,
+    /** Best known delay among the target subscription's configs, or -1. */
+    val targetSubscriptionDelay: Int = -1,
     /** Wall clock used for the session timer; tests pin it. */
     val now: Long = 0L,
     val profile: ConnectionProfile = ConnectionProfile.Normal,
@@ -287,7 +291,9 @@ private fun StatusLine(state: HomeState, onRetry: () -> Unit, modifier: Modifier
             is ConnState.Connecting -> conn.server?.let {
                 stringResource(R.string.stage_connecting_to, countryLabel(context, it.country, locale))
             } ?: stringResource(R.string.stage_connecting)
-            is ConnState.Reconnecting -> stringResource(R.string.stage_reconnecting)
+            is ConnState.Reconnecting -> stringResource(
+                if (conn.reason == com.zeronet.mobile.service.Engine.REASON_CHOSEN_DOWN) R.string.stage_chosen_down else R.string.stage_reconnecting,
+            )
             ConnState.Disconnecting -> stringResource(R.string.stage_disconnecting)
             is ConnState.Connected -> if (conn.pool > 1) {
                 stringResource(R.string.stage_connected_pool, Num.int(conn.pool - 1, locale))
@@ -340,13 +346,22 @@ private fun ServerCard(state: HomeState, onClick: () -> Unit) {
             title = countryLabel(context, connected.country, locale)
             delay = conn.delayMs
             badge = kindLabel(context, connected.kind)
-            subtitle = if (state.target == ConnectTarget.Fastest) stringResource(R.string.server_fastest_picked) else serverTitle(context, connected, locale)
+            subtitle = when (state.target) {
+                ConnectTarget.Fastest -> stringResource(R.string.server_fastest_picked)
+                is ConnectTarget.Subscription -> state.targetSubscription ?: stringResource(R.string.source_subscription)
+                else -> serverTitle(context, connected, locale)
+            }
         }
         state.target is ConnectTarget.Country -> {
             country = state.target.code
             title = countryLabel(context, country, locale)
             subtitle = stringResource(R.string.server_country_best)
             delay = state.targetCountryDelay
+        }
+        state.target is ConnectTarget.Subscription -> {
+            title = state.targetSubscription ?: stringResource(R.string.source_subscription)
+            subtitle = stringResource(R.string.server_subscription_hint)
+            delay = state.targetSubscriptionDelay
         }
         state.target is ConnectTarget.Specific && state.targetServer != null -> {
             val s = state.targetServer
@@ -364,7 +379,11 @@ private fun ServerCard(state: HomeState, onClick: () -> Unit) {
     val cardLabel = stringResource(R.string.server_card_action)
     ZeroCard(onClick = onClick, onClickLabel = cardLabel, padding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp, vertical = 14.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            if (country.isEmpty() && connected == null) IconBadge(ZeroIcons.Bolt, size = 44.dp) else FlagBadge(country, size = 44.dp)
+            when {
+                connected != null || country.isNotEmpty() -> FlagBadge(country, size = 44.dp)
+                state.target is ConnectTarget.Subscription -> IconBadge(ZeroIcons.Link, size = 44.dp)
+                else -> IconBadge(ZeroIcons.Bolt, size = 44.dp)
+            }
             Spacer(Modifier.width(14.dp))
             Column(Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {

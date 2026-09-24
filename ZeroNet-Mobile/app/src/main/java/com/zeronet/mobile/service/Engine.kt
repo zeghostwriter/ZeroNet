@@ -27,6 +27,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.channels.BufferOverflow
@@ -74,6 +75,18 @@ object Engine {
     private const val WANT_ALIVE = 5
     /** Connected with this many servers (the one in use plus backups): stop searching. */
     private const val STOP_DISCOVERY_AT = 3
+    /**
+     * A search that runs with the tunnel up stops at this many servers, or
+     * after [BACKGROUND_SEARCH_MS], whichever comes first. Without a bound it
+     * kept going through thousands of candidates whenever suitable servers
+     * were scarce (Normal mode, which wants TLS/REALITY only, found two and
+     * then scanned 8,000 more looking for a third).
+     */
+    private const val BACKGROUND_WANT = 2
+    private const val BACKGROUND_SEARCH_MS = 20_000L
+    private const val PROFILE_SETTLE_MS = 600L
+    /** [ConnState.Reconnecting] reason: the config the user chose stopped answering; retrying it. */
+    const val REASON_CHOSEN_DOWN = "chosen_down"
 
     // ------------------------------------------------------------ profiles
     //
@@ -146,6 +159,8 @@ object Engine {
     private var connectJob: Job? = null
     private var refreshJob: Job? = null
     private var testJob: Job? = null
+    /** The pending reaction to a profile change; a newer change replaces it. */
+    private var profileJob: Job? = null
     private var scanJob: Job? = null
     private var monitorJob: Job? = null
     private val healthNow = Channel<Unit>(Channel.CONFLATED)
@@ -250,27 +265,59 @@ object Engine {
             // Zray's hot reload keeps the inbound set fixed, so listener
             // changes (LAN sharing, credentials, ports) need a quick restart.
             topology(previous) != topology(next) -> scope.launch { mutex.withLock { restartCore() } }
-            previous.profile != next.profile -> scope.launch {
-                mutex.withLock {
-                    // Keep only servers that suit the new profile.
-                    val kept = pool.filter { suits(it.server, next.profile) }
-                    val network = NetworkIdentity.current(app)
-                    if (kept.isNotEmpty() || network == null) {
-                        if (kept.isNotEmpty()) { pool.clear(); pool.addAll(kept) }
-                        reloadPool()
-                    } else {
-                        // Search with the tunnel still up; if nothing suitable
-                        // turns up, carry on with what worked.
-                        val old = pool.toList()
-                        pool.clear()
-                        runCatching { discover(network, excludeKeys = emptySet()) }
-                            .onFailure { if (it is CancellationException) throw it }
-                        if (pool.isEmpty()) pool.addAll(old)
-                        reloadPool()
-                    }
+            previous.profile != next.profile -> {
+                // Tapping through the modes quickly: only the last choice
+                // counts. The previous reaction is cancelled (its search with
+                // it) and this one waits a moment for the taps to settle.
+                profileJob?.cancel()
+                profileJob = scope.launch {
+                    delay(PROFILE_SETTLE_MS)
+                    mutex.withLock { adoptProfile(next) }
                 }
             }
             routing(previous) != routing(next) -> scope.launch { mutex.withLock { reloadPool() } }
+        }
+    }
+
+    /** Keep the servers that suit [next]'s profile, or search for some with the tunnel up. */
+    private suspend fun adoptProfile(next: Settings) {
+        // A config the user chose stays, whatever the mode: only its
+        // settings (fragmentation, QUIC) follow the profile.
+        if (target is ConnectTarget.Specific) {
+            reloadPool()
+            return
+        }
+        val kept = pool.filter { suits(it.server, next.profile) }
+        val network = NetworkIdentity.current(app)
+        if (kept.isNotEmpty() || network == null) {
+            if (kept.isNotEmpty()) { pool.clear(); pool.addAll(kept) }
+            reloadPool()
+            return
+        }
+        // If nothing suitable turns up, or the search is cancelled by a newer
+        // change, carry on with what worked: an empty pool would read as
+        // "every server died" to the health check.
+        val old = pool.toList()
+        pool.clear()
+        try {
+            findReplacements(network, excludeKeys = emptySet())
+        } finally {
+            if (pool.isEmpty()) pool.addAll(old)
+        }
+        reloadPool()
+    }
+
+    /**
+     * Look for working servers with the tunnel up. With a subscription chosen
+     * only its own configs are candidates; anything else searches the feeds.
+     */
+    private suspend fun findReplacements(network: String, excludeKeys: Set<String>) {
+        when (val t = target) {
+            is ConnectTarget.Subscription -> {
+                val all = withContext(Dispatchers.IO) { store.inSubscription(t.id) }
+                testAndCollect(all.filter { it.key !in excludeKeys }.ifEmpty { all }, network)
+            }
+            else -> discover(network, excludeKeys)
         }
     }
 
@@ -321,6 +368,12 @@ object Engine {
                     testAndCollect(candidates, network)
                     if (!running) { fail(FailReason.NoWorkingServer, t.code); return }
                 }
+                is ConnectTarget.Subscription -> {
+                    val candidates = withContext(Dispatchers.IO) { store.inSubscription(t.id) }
+                    if (candidates.isEmpty()) { fail(FailReason.ServerUnavailable, ""); return }
+                    testAndCollect(candidates, network)
+                    if (!running) { fail(FailReason.NoWorkingServer, ""); return }
+                }
                 ConnectTarget.Fastest -> {
                     discover(network, excludeKeys = emptySet())
                     if (!running) { fail(FailReason.NoWorkingServer, ""); return }
@@ -361,7 +414,12 @@ object Engine {
         // user is connected, it competed with their own traffic on exactly
         // the slow links it exists for (images in Telegram stalled).
         var enough = false
-        nativeJob { ZrayNative.discover(request.toString(), it) }.takeWhile { !enough }.collect { e ->
+        // When the tunnel came up (or was already up): the clock for the
+        // background part of the search.
+        var upAt = if (running) System.currentTimeMillis() else 0L
+        val target = if (running) BACKGROUND_WANT else stopDiscoveryAt(settings.profile)
+        fun overtime() = upAt > 0L && pool.isNotEmpty() && System.currentTimeMillis() - upAt > BACKGROUND_SEARCH_MS
+        nativeJob { ZrayNative.discover(request.toString(), it) }.takeWhile { !enough && !overtime() }.collect { e ->
             when (e.optString("t")) {
                 "stage" -> {
                     progress = progress.copy(stage = stageOf(e.optString("stage")))
@@ -398,11 +456,12 @@ object Engine {
                     if (!running || settings.profile == ConnectionProfile.Gaming) {
                         pool.sortBy { if (it.delayMs < 0) Int.MAX_VALUE else it.delayMs }
                     }
-                    if (running && pool.size >= stopDiscoveryAt(settings.profile)) enough = true
+                    if (running && pool.size >= target) enough = true
                     if (!running) {
                         publish(ConnState.Connecting(server))
                         if (!bringUp()) throw BringUpFailed()
                         lastReload = System.currentTimeMillis()
+                        upAt = lastReload
                     } else {
                         pendingReload = true
                         // Coalesce reloads: at most one every 2 s while results stream in.
@@ -584,16 +643,28 @@ object Engine {
                 survivors.remove(primary)
                 survivors.add(0, primary)
             }
-            pool.clear(); pool.addAll(survivors)
             serversChanged.tryEmit(Unit)
+            // A config the user chose is never swapped for another: while it
+            // is down, keep it in place and try it again on the next check.
+            if (target is ConnectTarget.Specific) {
+                if (survivors.isEmpty()) {
+                    publish(ConnState.Reconnecting(REASON_CHOSEN_DOWN))
+                } else {
+                    pool.clear(); pool.addAll(survivors)
+                    publishConnected()
+                }
+                return@withLock
+            }
+            pool.clear(); pool.addAll(survivors)
         }
         when {
+            target is ConnectTarget.Specific -> publish(ConnState.Reconnecting(REASON_CHOSEN_DOWN))
             pool.isEmpty() -> {
                 // Everything we had died (or an earlier search came back empty):
                 // search again with the tunnel still up. Runs on every health
                 // tick until something is found.
                 publish(ConnState.Reconnecting("all servers stopped answering"))
-                if (network != null) discover(network, excludeKeys = before.toSet())
+                if (network != null) findReplacements(network, excludeKeys = before.toSet())
                 if (pool.isEmpty()) publish(ConnState.Reconnecting("searching")) else reloadPool()
             }
             // Only the members that are in the config matter: a standby that
