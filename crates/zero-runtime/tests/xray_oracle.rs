@@ -1383,3 +1383,124 @@ async fn an_idle_reality_flow_with_keepalive_probes_survives_the_servers_empty_r
     tokio::time::sleep(Duration::from_secs(3)).await;
     round_trip(&mut stream, &payload(23, 4096)).await;
 }
+
+/// The app's ping through a VLESS + Vision + REALITY server.
+///
+/// The ping opens a stream the way the relay does (`outbound::connect`, then
+/// `strip_response`), sends one plain-HTTP `GET` and reads the status line
+/// back in small reads. It skipped the second step, and the VLESS response
+/// header (`\0\0`) arrived ahead of `HTTP/1.1`: every VLESS config, Vision
+/// included, failed with "http: malformed status line".
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "needs an Xray binary; see the module documentation"]
+async fn a_plain_http_request_through_vision_reads_a_clean_status_line() {
+    let binary = oracle_binary().unwrap_or_else(|reason| {
+        panic!("the oracle comparison cannot run: {reason}");
+    });
+    eprintln!("oracle: {} (Vision probe)", oracle_version(&binary));
+
+    // A web server that answers every request with an empty 204, like the
+    // real probe target.
+    let web = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let web_port = web.local_addr().unwrap().port();
+    tokio::spawn(async move {
+        while let Ok((mut stream, _)) = web.accept().await {
+            tokio::spawn(async move {
+                let mut request = Vec::new();
+                let mut chunk = [0u8; 1024];
+                while !request.windows(4).any(|w| w == b"\r\n\r\n") {
+                    match stream.read(&mut chunk).await {
+                        Ok(0) | Err(_) => return,
+                        Ok(n) => request.extend_from_slice(&chunk[..n]),
+                    }
+                }
+                let _ = stream
+                    .write_all(b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                    .await;
+            });
+        }
+    });
+
+    let relay_port = free_port();
+    let (private_key, public_key) = oracle_x25519_keypair(&binary);
+    let (mut server_settings, mut client_settings) = protocol_settings("vless", relay_port);
+    apply_flow(
+        &mut server_settings,
+        &mut client_settings,
+        Some("xtls-rprx-vision"),
+    );
+    let decoy_port = free_port();
+    let _decoy = spawn_decoy(&binary, decoy_port);
+    let decoy = SocketAddr::new("127.0.0.1".parse().unwrap(), decoy_port);
+    assert!(wait_for(decoy).await, "the REALITY decoy never listened");
+    let mut oracle_stream = transport("tcp");
+    oracle_stream["security"] = json!("reality");
+    oracle_stream["realitySettings"] = reality_server_settings(&private_key, decoy);
+    let _oracle = spawn_oracle(
+        &binary,
+        json!({
+            "log": {"loglevel": "debug"},
+            "inbounds": [{
+                "tag": "in",
+                "listen": "127.0.0.1",
+                "port": relay_port,
+                "protocol": "vless",
+                "settings": server_settings,
+                "streamSettings": oracle_stream,
+            }],
+            "outbounds": [oracle_loopback_freedom()],
+        }),
+    );
+    let relay = SocketAddr::new("127.0.0.1".parse().unwrap(), relay_port);
+    assert!(
+        wait_for(relay).await,
+        "the oracle never listened on {relay}"
+    );
+
+    // The link shape users import, with this server's keys.
+    let link = format!(
+        "vless://{UUID}@127.0.0.1:{relay_port}?security=reality&encryption=none\
+         &pbk={public_key}&headerType=none&fp=chrome&type=tcp&flow=xtls-rprx-vision\
+         &sni={REALITY_SNI}&sid={REALITY_SHORT_ID}#probe"
+    );
+    let outbound = zero_config::parse_link(&link).unwrap().outbound;
+    let destination =
+        zero_core::Destination::tcp(zero_core::Address::parse_host("127.0.0.1"), web_port);
+
+    for attempt in 0..5 {
+        let stream = zero_runtime::outbound::connect(&outbound, &destination)
+            .await
+            .unwrap_or_else(|failure| panic!("connect failed: {failure}"));
+        let mut stream = zero_runtime::outbound::strip_response(&outbound, stream);
+        stream
+            .write_all(
+                format!(
+                    "GET /generate_204 HTTP/1.1\r\nHost: 127.0.0.1:{web_port}\r\n\
+                     User-Agent: Mozilla/5.0\r\nAccept: */*\r\nConnection: close\r\n\r\n"
+                )
+                .as_bytes(),
+            )
+            .await
+            .unwrap();
+        stream.flush().await.unwrap();
+        // The probe's own read pattern: 256 bytes at a time up to the first
+        // line break.
+        let mut head = Vec::new();
+        let mut chunk = [0u8; 256];
+        while !head.contains(&b'\n') && head.len() < 512 {
+            let n = tokio::time::timeout(Duration::from_secs(10), stream.read(&mut chunk))
+                .await
+                .expect("the answer timed out")
+                .expect("read failed");
+            if n == 0 {
+                break;
+            }
+            head.extend_from_slice(&chunk[..n]);
+        }
+        assert!(
+            head.starts_with(b"HTTP/1.1 204"),
+            "attempt {attempt}: the status line came back as {:?}",
+            String::from_utf8_lossy(&head[..head.len().min(80)])
+        );
+    }
+}
