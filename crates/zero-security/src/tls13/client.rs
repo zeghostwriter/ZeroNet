@@ -884,6 +884,15 @@ impl<S: AsyncRead + AsyncWrite + Unpin> zero_evasion::KeepaliveCarrier for Tls13
             Poll::Ready(Err(e)) => Poll::Ready(Err(e)),
         }
     }
+
+    /// The server is Go's TLS stack (REALITY forks `crypto/tls`), which
+    /// closes the connection with "too many ignored records" after a run of
+    /// records that carry nothing: 16 in Go, 32 in current REALITY. Only
+    /// application data from us ends the run. Half of the smaller limit
+    /// leaves room for the peer to count something else we did not foresee.
+    fn max_probes_between_writes(&self) -> Option<u32> {
+        Some(8)
+    }
 }
 
 impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for Tls13Stream<S> {
