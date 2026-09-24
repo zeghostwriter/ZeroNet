@@ -45,7 +45,6 @@ import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
@@ -84,11 +83,9 @@ import com.zeronet.mobile.ui.util.currentLocale
 import com.zeronet.mobile.ui.util.formatDelay
 import com.zeronet.mobile.ui.util.formatDuration
 import com.zeronet.mobile.ui.util.formatRate
+import com.zeronet.mobile.ui.theme.ZeroMotion
 import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.delay
-import kotlin.math.PI
-import kotlin.math.cos
-import kotlin.math.sin
 
 @Immutable
 data class HomeState(
@@ -154,8 +151,8 @@ fun HomeScreen(
                     ServerCard(state, onPickServer)
                     AnimatedVisibility(
                         visible = conn is ConnState.Connected,
-                        enter = fadeIn(tween(220)) + expandVertically(Motion.standard()),
-                        exit = fadeOut(tween(150)) + shrinkVertically(Motion.standard()),
+                        enter = fadeIn(tween(ZeroMotion.ms(220))) + expandVertically(Motion.standard()),
+                        exit = fadeOut(tween(ZeroMotion.ms(150))) + shrinkVertically(Motion.standard()),
                     ) {
                         if (conn is ConnState.Connected) {
                             Column {
@@ -241,7 +238,8 @@ private fun StatusLine(state: HomeState, onRetry: () -> Unit, modifier: Modifier
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         val text: String = when (conn) {
-            ConnState.Idle -> stringResource(R.string.stage_idle)
+            // The orb and the line under it already say "not connected" / "connected to X".
+            ConnState.Idle -> ""
             is ConnState.Searching -> {
                 val p = conn.progress
                 when (p.stage) {
@@ -268,14 +266,14 @@ private fun StatusLine(state: HomeState, onRetry: () -> Unit, modifier: Modifier
             is ConnState.Connected -> if (conn.pool > 1) {
                 stringResource(R.string.stage_connected_pool, Num.int(conn.pool - 1, locale))
             } else {
-                stringResource(R.string.stage_connected)
+                ""
             }
             is ConnState.Failed -> failReasonText(context, conn.reason)
         }
         val reduced = LocalReducedMotion.current
         AnimatedContent(
             targetState = text,
-            transitionSpec = { fadeIn(tween(if (reduced) 150 else 220)) togetherWith fadeOut(tween(if (reduced) 150 else 120)) },
+            transitionSpec = { fadeIn(tween(ZeroMotion.ms(if (reduced) 150 else 220))) togetherWith fadeOut(tween(ZeroMotion.ms(if (reduced) 150 else 120))) },
             label = "stage",
         ) { t ->
             Text(
@@ -491,9 +489,9 @@ fun Sparkline(down: List<Long>, up: List<Long>, modifier: Modifier = Modifier) {
 }
 
 /**
- * A slow, low-contrast gradient field whose hue follows the connection:
- * neutral → accent → ok. Drift runs in the draw phase and only while the
- * connection is active and the screen is resumed.
+ * A low-contrast gradient field whose hue follows the connection:
+ * neutral → accent → ok. It is deliberately still: a full-screen layer that
+ * moves forces the blurred bars to redraw every frame.
  */
 @Composable
 private fun StateBackdrop(phase: OrbPhase) {
@@ -505,8 +503,7 @@ private fun StateBackdrop(phase: OrbPhase) {
         OrbPhase.Connected -> c.ok
         OrbPhase.Failed -> c.err
     }
-    val hue by animateColorAsState(target, tween(if (reduced) 150 else 900), label = "backdropHue")
-    val clock = rememberAmbientClock(!reduced && (phase == OrbPhase.Busy || phase == OrbPhase.Connected))
+    val hue by animateColorAsState(target, tween(ZeroMotion.ms(if (reduced) 150 else 900)), label = "backdropHue")
     val strength = if (c.isDark) 0.16f else 0.10f
     Box(
         Modifier
@@ -517,14 +514,8 @@ private fun StateBackdrop(phase: OrbPhase) {
                 val a = Brush.radialGradient(listOf(h.copy(alpha = strength), Color.Transparent), center = Offset(size.width * 0.5f, size.height * 0.30f), radius = r)
                 val b = Brush.radialGradient(listOf(h.copy(alpha = strength * 0.55f), Color.Transparent), center = Offset(size.width * 0.15f, size.height * 0.85f), radius = r * 0.8f)
                 onDrawBehind {
-                    val t = clock.floatValue / 9000f * 2f * PI.toFloat()
-                    val dx = cos(t) * size.width * 0.06f
-                    val dy = sin(t * 0.7f) * size.height * 0.03f
-                    // Oversized by the drift amplitude so the shifted layer never exposes an edge.
-                    val pad = Offset(size.width * 0.08f, size.height * 0.05f)
-                    val big = androidx.compose.ui.geometry.Size(size.width + pad.x * 2, size.height + pad.y * 2)
-                    translate(dx, dy) { drawRect(a, topLeft = -pad, size = big) }
-                    translate(-dx, -dy) { drawRect(b, topLeft = -pad, size = big) }
+                    drawRect(a)
+                    drawRect(b)
                 }
             },
     )

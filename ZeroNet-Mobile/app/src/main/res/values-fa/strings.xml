@@ -59,7 +59,6 @@
     <string name="state_active">الان وصل است</string>
 
     <!-- Home: the stage line under the orb -->
-    <string name="stage_idle">برای اتصال بزنید</string>
     <string name="stage_history">امتحان سرورهایی که قبلاً جواب داده‌اند…</string>
     <string name="stage_fetch">گرفتن فهرست‌های تازه‌ی سرور…</string>
     <string name="stage_parse">خواندن %1$s سرور…</string>
@@ -69,21 +68,20 @@
     <string name="stage_connecting_to">اتصال به %1$s…</string>
     <string name="stage_reconnecting">اتصال قطع شد. در حال عوض کردن سرور…</string>
     <string name="stage_disconnecting">در حال قطع اتصال…</string>
-    <string name="stage_connected">ترافیک شما از زیرونت عبور می‌کند</string>
     <string name="stage_connected_pool">سرورهای پشتیبان آماده: %1$s</string>
 
     <!-- Home: why a connection failed -->
-    <string name="fail_no_server">فعلاً روی این شبکه سرور سالمی پیدا نشد. یک دقیقه‌ی دیگر دوباره امتحان کنید یا ضدسانسور را روی «قوی» بگذارید.</string>
+    <string name="fail_no_server">روی این اینترنت سرور سالمی پیدا نشد. یک دقیقه‌ی دیگر دوباره امتحان کنید یا ضدسانسور را روی «قوی» بگذارید.</string>
     <string name="fail_no_network">اینترنت ندارید. وای‌فای یا داده‌ی همراه را بررسی کنید.</string>
     <string name="fail_vpn_permission">زیرونت برای ساختن VPN به اجازه‌ی شما نیاز دارد.</string>
-    <string name="fail_vpn_revoked">یک برنامه‌ی VPN دیگر اتصال را در دست گرفت.</string>
-    <string name="fail_core">در موتور برنامه مشکلی پیش آمد. لطفاً دوباره امتحان کنید.</string>
+    <string name="fail_vpn_revoked">یک VPN دیگر اتصال را گرفت.</string>
+    <string name="fail_core">اتصال برقرار نشد. دوباره امتحان کنید.</string>
     <string name="fail_server_unavailable">این سرور جواب نمی‌دهد. سریع‌ترین سرور را امتحان کنید.</string>
 
     <!-- Home: server card and stats -->
     <string name="server_fastest">سریع‌ترین سرور</string>
-    <string name="server_fastest_hint">خودکار برای شبکه‌ی شما انتخاب می‌شود</string>
-    <string name="server_fastest_picked">سریع‌ترین · انتخاب‌شده برای شما</string>
+    <string name="server_fastest_hint">زیرونت خودش انتخاب می‌کند</string>
+    <string name="server_fastest_picked">سریع‌ترین</string>
     <string name="server_country_best">بهترین سرور این کشور</string>
     <string name="server_card_action">انتخاب سرور</string>
     <string name="stats_download">دانلود</string>
@@ -121,6 +119,7 @@
     <!-- Server picker sheet -->
     <string name="picker_title">انتخاب سرور</string>
     <string name="picker_favorites">برگزیده‌ها</string>
+    <string name="picker_mine">کانفیگ‌های شما</string>
     <string name="picker_countries">کشورها</string>
     <string name="picker_empty">هنوز سروری نیست. یک بار وصل شوید تا زیرونت چند سرور پیدا کند.</string>
 
@@ -139,18 +138,18 @@
     <string name="servers_countries">کشورها</string>
     <string name="servers_mine">مال من</string>
     <string name="servers_rec_empty_title">هنوز سروری تست نشده</string>
-    <string name="servers_rec_empty_body">فهرست را تست کنید تا ببینید کدام سرورها همین حالا روی شبکه‌ی شما کار می‌کنند.</string>
+    <string name="servers_rec_empty_body">فهرست را تست کنید تا ببینید کدام سرورها روی اینترنت شما کار می‌کنند.</string>
     <string name="servers_testing">تست %1$s از %2$s…</string>
     <string name="servers_working_count">%1$s سالم</string>
     <string name="servers_subscriptions">اشتراک‌ها</string>
-    <string name="servers_your_servers">سرورهای شما</string>
+    <string name="servers_your_servers">کانفیگ‌های شما</string>
     <string name="servers_mine_empty_title">هنوز چیزی اضافه نکرده‌اید</string>
-    <string name="servers_mine_empty_body">یک لینک بچسبانید یا اشتراکی را که از فروشنده گرفته‌اید اضافه کنید.</string>
-    <string name="servers_add_title">افزودن سرور</string>
-    <string name="servers_add_body">لینک یا آدرس اشتراک را بچسبانید</string>
+    <string name="servers_mine_empty_body">لینک کانفیگ یا لینک اشتراک را اینجا اضافه کنید.</string>
+    <string name="servers_add_title">افزودن کانفیگ</string>
+    <string name="servers_add_body">لینک کانفیگ یا لینک اشتراک</string>
     <string name="servers_no_matches">چیزی با «%1$s» پیدا نشد</string>
-    <string name="servers_empty_title">بیایید برایتان سرور پیدا کنیم</string>
-    <string name="servers_empty_body">زیرونت فهرست‌های عمومی را می‌گردد و هر سرور را روی شبکه‌ی خود شما تست می‌کند. فقط چند ثانیه طول می‌کشد.</string>
+    <string name="servers_empty_title">هنوز سروری ندارید</string>
+    <string name="servers_empty_body">روی «پیدا کردن سرور» بزنید. زیرونت فهرست‌های عمومی را می‌گیرد و روی اینترنت شما تستشان می‌کند.</string>
     <string name="servers_finding">در حال جست‌وجو…</string>
 
     <!-- Server detail sheet -->
@@ -169,8 +168,8 @@
     <string name="detail_delete_confirm">این سرور حذف شود؟ این کار برگشت‌پذیر نیست.</string>
 
     <!-- Import sheet -->
-    <string name="import_title">افزودن سرورهای خودتان</string>
-    <string name="import_body">یک یا چند لینک بچسبانید، یا آدرس اشتراکی را که از فروشنده گرفته‌اید اضافه کنید.</string>
+    <string name="import_title">افزودن کانفیگ</string>
+    <string name="import_body">یک یا چند لینک کانفیگ، یا لینک اشتراک را اینجا بچسبانید.</string>
     <string name="import_links">لینک</string>
     <string name="import_subscription">اشتراک</string>
     <string name="import_links_placeholder">vless://، vmess://، trojan://، ss://…</string>
@@ -179,7 +178,7 @@
     <string name="import_sub_url">https://…</string>
     <string name="import_sub_name">نام (اختیاری)</string>
     <string name="import_sub_invalid">آدرسی وارد کنید که با https:// شروع شود</string>
-    <string name="import_sub_hint">زیرونت آن را همراه با فهرست‌های عمومی به‌روز می‌کند.</string>
+    <string name="import_sub_hint">زیرونت آن را همراه فهرست‌های عمومی به‌روز می‌کند.</string>
 
     <!-- Transient messages -->
     <string name="msg_copied">کپی شد</string>
@@ -206,7 +205,7 @@
     <string name="scanner_results">سریع‌ترین آدرس‌ها</string>
     <string name="scanner_copy_best">کپی %1$s تای اول</string>
     <string name="scanner_how_title">چرا اسکن؟</string>
-    <string name="scanner_how_body">خیلی از سرورها پشت کلادفلر هستند. وقتی آدرس‌های معمول فیلتر می‌شوند، یک آدرس تمیز که هنوز روی اینترنت شما جواب می‌دهد آن‌ها را دوباره راه می‌اندازد. زیرونت بهترین نتیجه‌ها را خودکار به کار می‌برد.</string>
+    <string name="scanner_how_body">خیلی از سرورها پشت کلادفلر هستند. وقتی آی‌پی‌های معمولش فیلتر می‌شوند، یک آی‌پی تمیز که هنوز روی اینترنت شما جواب می‌دهد دوباره راهشان می‌اندازد. زیرونت بهترین نتیجه‌ها را خودش استفاده می‌کند.</string>
     <string name="scanner_none_found">این بار هیچ آدرسی جواب نداد. بعداً یا روی شبکه‌ی دیگری دوباره امتحان کنید.</string>
     <string name="scanner_port">پورت %1$s</string>
     <string name="scanner_copy_ip">کپی %1$s</string>
@@ -270,7 +269,7 @@
     <!-- Settings: split tunnelling -->
     <string name="settings_split">تونل جداگانه</string>
     <string name="settings_iran_direct">سایت‌های ایرانی بدون VPN</string>
-    <string name="settings_iran_direct_hint">بانک‌ها و سرویس‌های داخلی سریع و بی‌دردسر کار می‌کنند</string>
+    <string name="settings_iran_direct_hint">سایت‌های ایرانی و برنامه‌های بانکی بدون VPN باز می‌شوند</string>
     <string name="settings_apps">برنامه‌ها</string>
     <string name="settings_apps_all">همه</string>
     <string name="settings_apps_only">فقط انتخابی‌ها</string>
@@ -318,7 +317,7 @@
     <string name="settings_block_quic">مسدود کردن QUIC</string>
     <string name="settings_block_quic_hint">برنامه‌ها به جای گیر کردن، سراغ TCP می‌روند</string>
     <string name="settings_remote_dns">DNS برای سایت‌های مسدود</string>
-    <string name="settings_remote_dns_hint">از داخل تونل پرسیده می‌شود تا اینترنت‌دهنده نتواند جواب را ببیند یا تغییر دهد</string>
+    <string name="settings_remote_dns_hint">از داخل VPN پرسیده می‌شود تا اپراتور نتواند جواب را ببیند یا عوض کند</string>
     <string name="settings_custom_dns_hint">DNS دلخواه (مثلاً ۸.۸.۸.۸)</string>
     <string name="settings_custom_dns_note">برای استفاده از یکی از گزینه‌های بالا خالی بگذارید. یک IP، ‏tls://…‎ یا ‏https://…/dns-query‎ پذیرفته می‌شود.</string>
     <string name="settings_block_ads">مسدود کردن تبلیغ و ردیاب</string>
@@ -339,8 +338,8 @@
     <string name="settings_motion">حرکت</string>
     <string name="settings_motion_full">کامل</string>
     <string name="settings_motion_reduced">کم</string>
-    <string name="settings_motion_full_hint">انیمیشن‌های فنری و زنده</string>
-    <string name="settings_motion_reduced_hint">محو شدن ساده. هیچ چیز خودبه‌خود حرکت نمی‌کند.</string>
+    <string name="settings_motion_full_hint">همه‌ی انیمیشن‌ها</string>
+    <string name="settings_motion_reduced_hint">فقط محو شدن ساده</string>
     <string name="palette_golden">طلایی</string>
     <string name="palette_nightshade">شبانه</string>
     <string name="palette_arctic">قطبی</string>
@@ -351,7 +350,7 @@
     <!-- Settings: data & privacy -->
     <string name="settings_privacy">داده و حریم خصوصی</string>
     <string name="settings_logs">ذخیره‌ی گزارش‌ها</string>
-    <string name="settings_logs_hint">به‌طور پیش‌فرض خاموش. گزارش‌ها هرگز از گوشی خارج نمی‌شوند.</string>
+    <string name="settings_logs_hint">به‌طور پیش‌فرض خاموش. گزارش‌ها فقط روی همین گوشی می‌مانند.</string>
     <string name="settings_clear_history">پاک کردن سرورهای پیدا‌شده</string>
     <string name="settings_clear_history_hint">سرورهای عمومی و نتیجه‌ی تست‌ها فراموش می‌شوند. سرورهای خودتان می‌مانند.</string>
     <plurals name="clear_history_body">
@@ -364,7 +363,7 @@
     <string name="settings_about">درباره</string>
     <string name="settings_version">نسخه</string>
     <string name="settings_engine">موتور</string>
-    <string name="settings_engine_hint">هسته‌ی متن‌باز که تونل را اجرا می‌کند</string>
+    <string name="settings_engine_hint">هسته‌ی متن‌بازی که اتصال را اجرا می‌کند</string>
     <string name="settings_licences">مجوزهای متن‌باز</string>
     <string name="settings_licences_hint">زیرونت نرم‌افزار آزاد با مجوز GPL-3.0 است</string>
     <string name="licences_body">زیرونت روی این پروژه‌ها ساخته شده است.</string>
@@ -382,17 +381,17 @@
     <!-- Onboarding -->
     <string name="onboarding_skip">رد شدن</string>
     <string name="onboarding_next">ادامه</string>
-    <string name="onboarding_allow">اجازه بده و شروع کن</string>
+    <string name="onboarding_allow">اجازه دادن</string>
     <string name="onboarding_later">فعلاً نه</string>
     <string name="onboarding_page">%1$s از %2$s</string>
-    <string name="onboarding_1_title">اینترنت آزاد، با یک لمس</string>
-    <string name="onboarding_1_body">زیرونت خودش یک سرور سالم پیدا می‌کند و شما را وصل می‌کند. نه دنبال کانفیگ گشتن، نه تنظیمات پیچیده.</string>
-    <string name="onboarding_2_title">زیرونت می‌گردد، شما نه</string>
-    <string name="onboarding_2_body">هر بار که وصل می‌شوید، زیرونت فهرست‌های عمومی سرور را می‌گردد، آن‌ها را روی شبکه‌ی خودتان تست می‌کند و سریع‌ترین را نگه می‌دارد. آنچه جواب داده برای دفعه‌ی بعد یادش می‌ماند.</string>
-    <string name="onboarding_3_title">دو اجازه‌ی کوتاه</string>
-    <string name="onboarding_3_body">اندروید فقط یک بار این‌ها را می‌پرسد. هر وقت خواستید از تنظیمات سیستم عوضشان کنید.</string>
+    <string name="onboarding_1_title">با یک لمس وصل شوید</string>
+    <string name="onboarding_1_body">زیرونت خودش سروری پیدا می‌کند که روی اینترنت شما کار کند و به آن وصل می‌شود.</string>
+    <string name="onboarding_2_title">سرورها از کجا می‌آیند</string>
+    <string name="onboarding_2_body">زیرونت فهرست‌های عمومی سرور را می‌گیرد، روی اینترنت شما تستشان می‌کند و سریع‌ترها را نگه می‌دارد. دفعه‌ی بعد اول سراغ سرورهایی می‌رود که قبلاً جواب داده‌اند.</string>
+    <string name="onboarding_3_title">دو دسترسی</string>
+    <string name="onboarding_3_body">اندروید فقط یک بار این‌ها را می‌پرسد. بعداً هم می‌توانید از تنظیمات گوشی عوضشان کنید.</string>
     <string name="onboarding_perm_vpn">اتصال VPN</string>
-    <string name="onboarding_perm_vpn_body">تا زیرونت بتواند ترافیک برنامه‌ها را از تونل عبور دهد.</string>
+    <string name="onboarding_perm_vpn_body">برای اینکه ترافیک برنامه‌ها از VPN رد شود.</string>
     <string name="onboarding_perm_notif">اعلان‌ها</string>
-    <string name="onboarding_perm_notif_body">وضعیت اتصال و دکمه‌ی قطع سریع را نشان می‌دهد.</string>
+    <string name="onboarding_perm_notif_body">وضعیت اتصال را همراه دکمه‌ی قطع نشان می‌دهد.</string>
 </resources>

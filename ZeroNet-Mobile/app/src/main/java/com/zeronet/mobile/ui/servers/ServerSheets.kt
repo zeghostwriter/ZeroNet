@@ -163,26 +163,32 @@ private fun ColumnScope.DetailContent(
                 enabled = !testing,
             )
         }
-        Spacer(Modifier.height(20.dp))
-        DetailRow(stringResource(R.string.detail_delay), formatDelay(context, s.delayMs, locale), c.delayColor(s.delayMs))
-        Hairline()
-        DetailRow(stringResource(R.string.detail_last_tested), formatAgo(context, s.lastTestedAt, now, locale))
-        Hairline()
-        DetailRow(stringResource(R.string.detail_protocol), protocolLabel(s.protocol))
-        Hairline()
-        DetailRow(stringResource(R.string.detail_transport), transportLabel(s.transport))
-        Hairline()
-        DetailRow(stringResource(R.string.detail_security), securityLabel(s.security))
-        Hairline()
-        DetailRow(stringResource(R.string.detail_address), if (s.port > 0) "${s.host}:${s.port}" else s.host, ltr = true)
-        Hairline()
-        DetailRow(stringResource(R.string.detail_source), sourceLabel(context, s.source, subscriptions))
-        if (s.aliveCount + s.failCount > 0) {
-            Hairline()
-            DetailRow(
-                stringResource(R.string.detail_history),
-                stringResource(R.string.detail_history_value, Num.int(s.aliveCount, locale), Num.int(s.aliveCount + s.failCount, locale)),
-            )
+        // While the QR code is up the details step aside, so the code opens
+        // right under the buttons instead of below the bottom of the screen.
+        AnimatedVisibility(!sharing, enter = fadeIn(ZeroMotion.quick()) + expandVertically(ZeroMotion.quickSize()), exit = fadeOut(ZeroMotion.quick()) + shrinkVertically(ZeroMotion.quickSize())) {
+            Column {
+                Spacer(Modifier.height(20.dp))
+                DetailRow(stringResource(R.string.detail_delay), formatDelay(context, s.delayMs, locale), c.delayColor(s.delayMs))
+                Hairline()
+                DetailRow(stringResource(R.string.detail_last_tested), formatAgo(context, s.lastTestedAt, now, locale))
+                Hairline()
+                DetailRow(stringResource(R.string.detail_protocol), protocolLabel(s.protocol))
+                Hairline()
+                DetailRow(stringResource(R.string.detail_transport), transportLabel(s.transport))
+                Hairline()
+                DetailRow(stringResource(R.string.detail_security), securityLabel(s.security))
+                Hairline()
+                DetailRow(stringResource(R.string.detail_address), if (s.port > 0) "${s.host}:${s.port}" else s.host, ltr = true)
+                Hairline()
+                DetailRow(stringResource(R.string.detail_source), sourceLabel(context, s.source, subscriptions))
+                if (s.aliveCount + s.failCount > 0) {
+                    Hairline()
+                    DetailRow(
+                        stringResource(R.string.detail_history),
+                        stringResource(R.string.detail_history_value, Num.int(s.aliveCount, locale), Num.int(s.aliveCount + s.failCount, locale)),
+                    )
+                }
+            }
         }
         Spacer(Modifier.height(16.dp))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -194,7 +200,7 @@ private fun ColumnScope.DetailContent(
             )
             TonalButton(stringResource(R.string.action_copy_link), { onCopyLink(s) }, Modifier.weight(1f), icon = ZeroIcons.Copy)
         }
-        AnimatedVisibility(sharing, enter = fadeIn() + expandVertically(), exit = fadeOut() + shrinkVertically()) {
+        AnimatedVisibility(sharing, enter = fadeIn(ZeroMotion.quick()) + expandVertically(ZeroMotion.quickSize()), exit = fadeOut(ZeroMotion.quick()) + shrinkVertically(ZeroMotion.quickSize())) {
             Column(Modifier.fillMaxWidth().padding(top = 16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                 QrCode(s.link, stringResource(R.string.detail_qr_description), Modifier.widthIn(max = 260.dp).fillMaxWidth())
                 Spacer(Modifier.height(8.dp))

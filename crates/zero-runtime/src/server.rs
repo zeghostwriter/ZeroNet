@@ -506,6 +506,24 @@ impl Server {
             }
         }
         config.validate()?;
+        // Balancer health is keyed by outbound tag. A host that re-orders its
+        // servers on reload (the mobile app lists them best first) points a
+        // tag at a different server, which must not inherit the latency and
+        // failures measured for the one it replaced.
+        {
+            let mut health = self
+                .health
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            for old in current.config.outbounds.iter() {
+                let unchanged = config
+                    .outbound_by_tag(&old.tag)
+                    .is_some_and(|new| format!("{new:?}") == format!("{old:?}"));
+                if !unchanged {
+                    health.forget(&old.tag);
+                }
+            }
+        }
         self.state.store(Arc::new(Self::build_state(
             config,
             generation,
@@ -4050,8 +4068,10 @@ impl Server {
             .health
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
+        // Liveness only: `outcome.elapsed` is the whole session, not a round
+        // trip, so latency stays with the observatory's probes.
         if outcome.is_useful() {
-            health.record_success(tag, outcome.elapsed);
+            health.record_alive(tag);
         } else {
             health.record_failure(tag);
         }

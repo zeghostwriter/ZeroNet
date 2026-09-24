@@ -59,7 +59,7 @@ fun ServersRoute() {
                 onQuery = { query = it },
                 onToggleCountry = { code -> expanded = if (code in expanded) expanded - code else expanded + code },
                 onRefresh = { controller.engine.refresh() },
-                onTest = { controller.engine.test() },
+                onTest = { keys -> controller.engine.test(keys) },
                 onConnect = { controller.selectTarget(it) },
                 onFavorite = { s, fav -> controller.servers.setFavorite(s.key, fav) },
                 onDetails = { detailKey = it.key },

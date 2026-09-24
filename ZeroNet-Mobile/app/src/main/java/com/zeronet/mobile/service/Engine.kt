@@ -34,6 +34,7 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.takeWhile
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -70,6 +71,8 @@ interface TunnelHost {
 object Engine {
     private const val TAG = "ZeroEngine"
     private const val WANT_ALIVE = 5
+    /** Connected with this many servers (the one in use plus backups): stop searching. */
+    private const val STOP_DISCOVERY_AT = 3
     private const val HEALTH_INTERVAL_MS = 45_000L
     private const val PROBE_URL = "http://cp.cloudflare.com/generate_204"
 
@@ -284,7 +287,12 @@ object Engine {
         var progress = DiscoveryProgress()
         var pendingReload = false
         var lastReload = 0L
-        nativeJob { ZrayNative.discover(request.toString(), it) }.collect { e ->
+        // Once the tunnel is up with a couple of backups, stop. Discovery runs
+        // hundreds of probes in parallel; left going for up to 75 s after the
+        // user is connected, it competed with their own traffic on exactly
+        // the slow links it exists for (images in Telegram stalled).
+        var enough = false
+        nativeJob { ZrayNative.discover(request.toString(), it) }.takeWhile { !enough }.collect { e ->
             when (e.optString("t")) {
                 "stage" -> {
                     progress = progress.copy(stage = stageOf(e.optString("stage")))
@@ -310,7 +318,12 @@ object Engine {
                     if (pool.none { it.server.key == server.key || (it.server.host == server.host && it.server.port == server.port) }) {
                         pool += Alive(server, delay)
                     }
-                    pool.sortBy { if (it.delayMs < 0) Int.MAX_VALUE else it.delayMs }
+                    // Only before the tunnel is up. Afterwards a new find joins
+                    // the end: re-sorting would make it the server every new
+                    // connection uses, switching servers under the user's
+                    // feet on the strength of one probe.
+                    if (!running) pool.sortBy { if (it.delayMs < 0) Int.MAX_VALUE else it.delayMs }
+                    if (running && pool.size >= STOP_DISCOVERY_AT) enough = true
                     if (!running) {
                         publish(ConnState.Connecting(server))
                         if (!bringUp()) throw BringUpFailed()
@@ -324,9 +337,10 @@ object Engine {
                     }
                 }
                 "error" -> Log.w(TAG, "discovery: ${e.optString("message")}")
-                "done" -> if (pendingReload && running) reloadPool()
+                "done" -> if (pendingReload && running) { reloadPool(); pendingReload = false }
             }
         }
+        if (pendingReload && running) reloadPool()
         withContext(Dispatchers.IO) { store.prune() }
     }
 
@@ -480,6 +494,16 @@ object Engine {
             withContext(Dispatchers.IO) { results.forEach { (k, d) -> store.recordResult(k, d, network) } }
             val survivors = pool.mapNotNull { a -> results[a.server.key]?.takeIf { it >= 0 }?.let { a.copy(delayMs = it) } }
                 .sortedBy { it.delayMs }
+                .toMutableList()
+            // Keep the current primary unless it is clearly worse: a few
+            // milliseconds between two probes is noise, and every change of
+            // primary moves the user's new connections to another server.
+            val primary = before.firstOrNull()?.let { key -> survivors.firstOrNull { it.server.key == key } }
+            val best = survivors.firstOrNull()
+            if (primary != null && best != null && primary !== best && primary.delayMs <= best.delayMs * 3 / 2 + 50) {
+                survivors.remove(primary)
+                survivors.add(0, primary)
+            }
             pool.clear(); pool.addAll(survivors)
             serversChanged.tryEmit(Unit)
         }
@@ -540,7 +564,11 @@ object Engine {
     fun test(keys: List<String>) {
         testJob?.cancel()
         testJob = scope.launch {
-            val servers = withContext(Dispatchers.IO) { if (keys.isEmpty()) store.all() else store.byKeys(keys) }.take(400)
+            // "Test all" is capped, and untested servers sort last, so the
+            // user's own come first or they would never be reached.
+            val servers = withContext(Dispatchers.IO) {
+                if (keys.isEmpty()) (store.userServers() + store.all()).distinctBy { it.key } else store.byKeys(keys)
+            }.take(400)
             if (servers.isEmpty()) return@launch
             val network = NetworkIdentity.current(app)
             var done = 0

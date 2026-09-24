@@ -94,6 +94,7 @@ import com.zeronet.mobile.ui.util.Num
 import com.zeronet.mobile.ui.util.currentLocale
 import com.zeronet.mobile.ui.util.formatAgo
 import com.zeronet.mobile.ui.util.formatDelay
+import com.zeronet.mobile.ui.theme.ZeroMotion
 import dev.chrisbanes.haze.hazeSource
 import dev.chrisbanes.haze.rememberHazeState
 import java.util.Locale
@@ -121,7 +122,8 @@ data class ServersActions(
     val onQuery: (String) -> Unit = {},
     val onToggleCountry: (String) -> Unit = {},
     val onRefresh: () -> Unit = {},
-    val onTest: () -> Unit = {},
+    /** Test these servers; an empty list means everything. */
+    val onTest: (List<String>) -> Unit = {},
     val onConnect: (ConnectTarget) -> Unit = {},
     val onFavorite: (Server, Boolean) -> Unit = { _, _ -> },
     val onDetails: (Server) -> Unit = {},
@@ -231,13 +233,13 @@ fun ServersScreen(state: ServersState, actions: ServersActions, modifier: Modifi
                                         body = stringResource(R.string.servers_rec_empty_body),
                                         action = stringResource(R.string.action_test_servers),
                                         busy = state.testProgress != null,
-                                        onAction = actions.onTest,
+                                        onAction = { actions.onTest(emptyList()) },
                                     )
                                 }
                             }
                         } else {
                             items(recommended, key = { "r_" + it.key }, contentType = { "server" }) { s ->
-                                ServerRow(s, s.key == state.activeKey, actions, Modifier.animateItem())
+                                ServerRow(s, s.key == state.activeKey, actions, Modifier.animateItem(fadeInSpec = ZeroMotion.quick(), placementSpec = ZeroMotion.quickOffset(), fadeOutSpec = ZeroMotion.quick()))
                             }
                         }
                     }
@@ -249,27 +251,27 @@ fun ServersScreen(state: ServersState, actions: ServersActions, modifier: Modifi
                             val code = g.code
                             val open = code in state.expanded || (state.query.isNotBlank() && groups.size == 1)
                             item(key = "c_$code", contentType = "country") {
-                                CountryRow(g, open, actions, Modifier.animateItem())
+                                CountryRow(g, open, actions, Modifier.animateItem(fadeInSpec = ZeroMotion.quick(), placementSpec = ZeroMotion.quickOffset(), fadeOutSpec = ZeroMotion.quick()))
                             }
                             if (open) {
                                 items(g.servers, key = { "c_${code}_" + it.key }, contentType = { "server" }) { s ->
-                                    ServerRow(s, s.key == state.activeKey, actions, Modifier.animateItem(), indent = true)
+                                    ServerRow(s, s.key == state.activeKey, actions, Modifier.animateItem(fadeInSpec = ZeroMotion.quick(), placementSpec = ZeroMotion.quickOffset(), fadeOutSpec = ZeroMotion.quick()), indent = true)
                                 }
                             }
                         }
                     }
                     ServersSegment.Mine -> {
-                        item(key = "add", contentType = "add") { AddRow(actions.onAdd, Modifier.animateItem()) }
+                        item(key = "add", contentType = "add") { AddRow(actions.onAdd, Modifier.animateItem(fadeInSpec = ZeroMotion.quick(), placementSpec = ZeroMotion.quickOffset(), fadeOutSpec = ZeroMotion.quick())) }
                         if (state.subscriptions.isNotEmpty()) {
                             item(key = "subs_title", contentType = "section") { Section(stringResource(R.string.servers_subscriptions)) }
                             items(state.subscriptions, key = { "sub_" + it.id }, contentType = { "sub" }) { sub ->
-                                SubscriptionRow(sub, state.now, actions.onRemoveSubscription, Modifier.animateItem())
+                                SubscriptionRow(sub, state.now, actions.onRemoveSubscription, Modifier.animateItem(fadeInSpec = ZeroMotion.quick(), placementSpec = ZeroMotion.quickOffset(), fadeOutSpec = ZeroMotion.quick()))
                             }
                         }
                         if (mine.isNotEmpty()) {
                             item(key = "mine_title", contentType = "section") { Section(stringResource(R.string.servers_your_servers)) }
                             items(mine, key = { "m_" + it.key }, contentType = { "server" }) { s ->
-                                ServerRow(s, s.key == state.activeKey, actions, Modifier.animateItem())
+                                ServerRow(s, s.key == state.activeKey, actions, Modifier.animateItem(fadeInSpec = ZeroMotion.quick(), placementSpec = ZeroMotion.quickOffset(), fadeOutSpec = ZeroMotion.quick()))
                             }
                         } else if (state.subscriptions.isEmpty()) {
                             item(key = "mine_empty", contentType = "empty") {
@@ -297,7 +299,13 @@ fun ServersScreen(state: ServersState, actions: ServersActions, modifier: Modifi
                 onClick = actions.onRefresh,
                 enabled = !state.refreshing,
             )
-            TestAction(state.testProgress, actions.onTest, enabled = state.servers.isNotEmpty())
+            // Test what is on screen: on "Mine" that is the user's own servers,
+            // which a test of everything could leave out entirely.
+            TestAction(
+                state.testProgress,
+                onTest = { actions.onTest(if (state.segment == ServersSegment.Mine) mine.map { it.key } else emptyList()) },
+                enabled = if (state.segment == ServersSegment.Mine) mine.isNotEmpty() else state.servers.isNotEmpty(),
+            )
         }
     }
 }
@@ -331,7 +339,7 @@ private fun TestAction(progress: Pair<Int, Int>?, onTest: () -> Unit, enabled: B
 private fun TestProgress(progress: Pair<Int, Int>?) {
     val c = ZeroTheme.colors
     val locale = currentLocale()
-    AnimatedVisibility(progress != null, enter = fadeIn(), exit = fadeOut()) {
+    AnimatedVisibility(progress != null, enter = fadeIn(ZeroMotion.quick()), exit = fadeOut(ZeroMotion.quick())) {
         val p = progress ?: (0 to 0)
         Text(
             stringResource(R.string.servers_testing, Num.int(p.first, locale), Num.int(p.second, locale)),
@@ -578,7 +586,7 @@ private fun EmptyServers(refreshing: Boolean, onFind: () -> Unit, onAdd: () -> U
             .fillMaxWidth()
             .padding(horizontal = 32.dp)
             .padding(top = 24.dp, bottom = 16.dp)
-            .animateContentSize(),
+            .animateContentSize(ZeroMotion.quickSize()),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         EmptyIllustration(Modifier.size(180.dp))

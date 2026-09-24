@@ -61,6 +61,17 @@ impl HealthTable {
         });
     }
 
+    /// A real session through `tag` carried data. It proves the server is up,
+    /// but its duration says nothing about latency: a download or an idle
+    /// chat connection lasting minutes is not a slow ping. Counting it as one
+    /// made the server a user was actively using look like the worst choice,
+    /// and moved their next connections to another, less proven one.
+    pub fn record_alive(&mut self, tag: &str) {
+        let sample = self.sample_mut(tag);
+        sample.successes = sample.successes.saturating_add(1);
+        sample.consecutive_failures = 0;
+    }
+
     pub fn record_failure(&mut self, tag: &str) {
         let sample = self.sample_mut(tag);
         sample.failures = sample.failures.saturating_add(1);
@@ -71,9 +82,21 @@ impl HealthTable {
         self.samples.get(tag).copied().unwrap_or_default()
     }
 
-    /// Select the healthiest member. Unknown members retain a neutral prior,
-    /// so a fresh configuration still probes every server instead of pinning
-    /// to the first entry.
+    /// Drop what is known about `tag`: after a reload that points the tag at
+    /// a different server, its old latency describes a server it no longer is.
+    pub fn forget(&mut self, tag: &str) {
+        self.samples.remove(tag);
+    }
+
+    /// Select the healthiest member.
+    ///
+    /// Unknown members carry a neutral prior. For `LeastPing` a tie goes to
+    /// the earliest member, so before the first probe completes every new
+    /// session uses the first configured server, which a host lists best
+    /// first. Rotating through the tied members instead sent consecutive
+    /// sessions of one application (Telegram's parallel media downloads)
+    /// through different, untested servers. `LeastLoad` still rotates ties:
+    /// spreading sessions is its purpose.
     pub fn choose(
         &self,
         strategy: BalancerHealthStrategy,
@@ -98,9 +121,10 @@ impl HealthTable {
                         + sample.failures.saturating_sub(sample.successes) as f64
                 }
             };
-            if score < best_score
-                || (score == best_score && (ticket as usize) % tags.len() == index)
-            {
+            let rotate_tie = matches!(strategy, BalancerHealthStrategy::LeastLoad)
+                && score == best_score
+                && (ticket as usize) % tags.len() == index;
+            if score < best_score || rotate_tie {
                 best = index;
                 best_score = score;
             }
@@ -895,6 +919,64 @@ mod tests {
         for class in AccessClass::ALL {
             assert_eq!(class.first_strategy().access_class(), class);
         }
+    }
+
+    #[test]
+    fn least_ping_sends_every_session_to_the_first_member_until_probed() {
+        let table = HealthTable::default();
+        let tags = [
+            Arc::from("proxy"),
+            Arc::from("proxy-1"),
+            Arc::from("proxy-2"),
+        ];
+        for ticket in 0..9 {
+            assert_eq!(
+                table.choose(BalancerHealthStrategy::LeastPing, &tags, ticket),
+                0,
+                "ticket {ticket}"
+            );
+        }
+    }
+
+    #[test]
+    fn least_load_still_spreads_tied_members() {
+        let table = HealthTable::default();
+        let tags = [Arc::from("a"), Arc::from("b"), Arc::from("c")];
+        let chosen: std::collections::HashSet<usize> = (0..3)
+            .map(|ticket| table.choose(BalancerHealthStrategy::LeastLoad, &tags, ticket))
+            .collect();
+        assert_eq!(chosen.len(), 3);
+    }
+
+    #[test]
+    fn a_long_session_does_not_count_as_a_slow_ping() {
+        let mut table = HealthTable::default();
+        table.record_success("proxy", Duration::from_millis(80));
+        table.record_success("proxy-1", Duration::from_millis(120));
+        table.record_failure("proxy");
+        // Minutes of real traffic through the probed-fastest server.
+        table.record_alive("proxy");
+        assert_eq!(
+            table.sample("proxy").latency,
+            Some(Duration::from_millis(80))
+        );
+        assert_eq!(table.sample("proxy").consecutive_failures, 0);
+        assert_eq!(
+            table.choose(
+                BalancerHealthStrategy::LeastPing,
+                &[Arc::from("proxy"), Arc::from("proxy-1")],
+                1
+            ),
+            0
+        );
+    }
+
+    #[test]
+    fn a_forgotten_tag_loses_its_history() {
+        let mut table = HealthTable::default();
+        table.record_success("proxy", Duration::from_millis(20));
+        table.forget("proxy");
+        assert_eq!(table.sample("proxy"), OutboundHealth::default());
     }
 
     #[test]

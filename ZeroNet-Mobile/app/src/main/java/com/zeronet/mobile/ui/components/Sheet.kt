@@ -150,7 +150,7 @@ private fun SheetFrame(entry: SheetEntry) {
                     offset.animateTo(0f, ZeroMotion.surface())
                 }
             } else if (present) {
-                if (reduced) offset.animateTo(sheetHeight, tween(150)) else offset.animateTo(sheetHeight.coerceAtLeast(1f), ZeroMotion.surface())
+                if (reduced) offset.animateTo(sheetHeight, tween(ZeroMotion.ms(150))) else offset.animateTo(sheetHeight.coerceAtLeast(1f), ZeroMotion.surface())
                 present = false
             }
         }

@@ -178,7 +178,7 @@ fun ScannerScreen(state: ScanState, actions: ScannerActions, modifier: Modifier 
                     }
                 }
                 itemsIndexed(sorted, key = { _, r -> "${r.ip}:${r.port}" }, contentType = { _, _ -> "result" }) { i, r ->
-                    ResultRow(i + 1, r, actions.onCopy, Modifier.animateItem())
+                    ResultRow(i + 1, r, actions.onCopy, Modifier.animateItem(fadeInSpec = ZeroMotion.quick(), placementSpec = ZeroMotion.quickOffset(), fadeOutSpec = ZeroMotion.quick()))
                 }
             } else if (!state.running && state.scanned == 0) {
                 item(key = "how", contentType = "how") {

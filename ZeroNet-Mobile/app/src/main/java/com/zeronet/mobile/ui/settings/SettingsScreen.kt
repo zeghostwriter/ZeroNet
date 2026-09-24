@@ -100,6 +100,7 @@ import com.zeronet.mobile.ui.theme.ZeroTheme
 import com.zeronet.mobile.ui.util.Countries
 import com.zeronet.mobile.ui.util.Num
 import com.zeronet.mobile.ui.util.currentLocale
+import com.zeronet.mobile.ui.theme.ZeroMotion
 import dev.chrisbanes.haze.hazeSource
 import dev.chrisbanes.haze.rememberHazeState
 
@@ -189,7 +190,7 @@ fun SettingsScreen(
             cards.forEach { id ->
                 item(key = id.name, contentType = "card") {
                     val reconnect = id in state.reconnectCards
-                    Box(Modifier.padding(horizontal = 16.dp).animateItem()) {
+                    Box(Modifier.padding(horizontal = 16.dp).animateItem(fadeInSpec = ZeroMotion.quick(), placementSpec = ZeroMotion.quickOffset(), fadeOutSpec = ZeroMotion.quick())) {
                         when (id) {
                             SettingsCardId.Connection -> ConnectionCard(s, q, reconnect, actions) { sheet = SettingsSheet.ConnectionMore }
                             SettingsCardId.Sources -> SourcesCard(state, q, actions, onManage = { sheet = SettingsSheet.Sources }, onCountries = { sheet = SettingsSheet.Countries })
@@ -270,13 +271,13 @@ private fun SettingsCard(
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val c = ZeroTheme.colors
-    ZeroCard(Modifier.fillMaxWidth().animateContentSize(), padding = PaddingValues(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 8.dp)) {
+    ZeroCard(Modifier.fillMaxWidth().animateContentSize(ZeroMotion.quickSize()), padding = PaddingValues(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 8.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             IconBadge(icon, size = 36.dp, tint = tint)
             Spacer(Modifier.width(12.dp))
             Text(title, style = MaterialTheme.typography.titleMedium, color = c.text, modifier = Modifier.weight(1f).semantics { heading() })
         }
-        AnimatedVisibility(reconnect, enter = fadeIn() + expandVertically(), exit = fadeOut() + shrinkVertically()) {
+        AnimatedVisibility(reconnect, enter = fadeIn(ZeroMotion.quick()) + expandVertically(ZeroMotion.quickSize()), exit = fadeOut(ZeroMotion.quick()) + shrinkVertically(ZeroMotion.quickSize())) {
             ReconnectChip(onReconnect, Modifier.padding(top = 12.dp))
         }
         Spacer(Modifier.height(4.dp))
@@ -430,7 +431,7 @@ private fun SplitCard(s: Settings, q: SettingsQuery, reconnect: Boolean, actions
                     },
                 )
             }
-            AnimatedVisibility(s.appFilter != AppFilterMode.All, enter = fadeIn() + expandVertically(), exit = fadeOut() + shrinkVertically()) {
+            AnimatedVisibility(s.appFilter != AppFilterMode.All, enter = fadeIn(ZeroMotion.quick()) + expandVertically(ZeroMotion.quickSize()), exit = fadeOut(ZeroMotion.quick()) + shrinkVertically(ZeroMotion.quickSize())) {
                 NavRow(
                     stringResource(R.string.settings_choose_apps),
                     onApps,
@@ -465,7 +466,7 @@ private fun ShareCard(state: SettingsUiState, q: SettingsQuery, actions: Setting
         if (state.lanPermissionDenied && !s.lanShare) {
             Note(stringResource(R.string.settings_share_permission_denied), c.warn)
         }
-        AnimatedVisibility(s.lanShare, enter = fadeIn() + expandVertically(), exit = fadeOut() + shrinkVertically()) {
+        AnimatedVisibility(s.lanShare, enter = fadeIn(ZeroMotion.quick()) + expandVertically(ZeroMotion.quickSize()), exit = fadeOut(ZeroMotion.quick()) + shrinkVertically(ZeroMotion.quickSize())) {
             Column {
                 Note(
                     stringResource(if (state.connected) R.string.settings_share_live else R.string.settings_share_when_connected),

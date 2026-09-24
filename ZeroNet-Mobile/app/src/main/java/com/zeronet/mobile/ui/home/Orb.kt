@@ -74,10 +74,18 @@ enum class OrbPhase { Idle, Busy, Connected, Failed }
 /** Ring radii as fractions of the outer ring (TUI `RING_SCALES`). */
 private val RING_SCALES = floatArrayOf(1.0f, 0.80f, 0.62f)
 
+/** Ambient animation frame interval: ~30 fps. */
+private const val AMBIENT_FRAME_MS = 33f
+
 /**
- * A clock in milliseconds that advances every frame only while [running] and
- * the screen is at least RESUMED. It is read exclusively inside draw lambdas,
- * so ticking it invalidates drawing, never composition.
+ * A clock in milliseconds that advances only while [running] and the screen is
+ * at least RESUMED. It is read exclusively inside draw lambdas, so ticking it
+ * invalidates drawing, never composition.
+ *
+ * It publishes at most ~30 times a second. The ambient motion it drives is
+ * slow (breathing, a spinner), and every tick also forces the blurred bottom
+ * bar to re-sample the page, so running it at the display's 90/120 Hz cost
+ * GPU time and battery for no visible difference.
  */
 @Composable
 fun rememberAmbientClock(running: Boolean): FloatState {
@@ -87,10 +95,15 @@ fun rememberAmbientClock(running: Boolean): FloatState {
         if (!running) return@LaunchedEffect
         lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
             var last = -1L
+            var pending = 0f
             while (true) {
                 withFrameNanos { now ->
-                    if (last >= 0) time.floatValue += (now - last) / 1_000_000f
+                    if (last >= 0) pending += (now - last) / 1_000_000f
                     last = now
+                    if (pending >= AMBIENT_FRAME_MS) {
+                        time.floatValue += pending
+                        pending = 0f
+                    }
                 }
             }
         }
@@ -177,19 +190,19 @@ fun ConnectOrb(
             view.performHapticFeedback(HapticFeedbackConstants.REJECT)
         }
         if (reduced) {
-            mix.animateTo(1f, tween(150))
+            mix.animateTo(1f, tween(ZeroMotion.ms(150)))
             busyAmount.snapTo(if (phase == OrbPhase.Busy) 1f else 0f)
             glow.snapTo(if (phase == OrbPhase.Connected) 1f else 0f)
             return@LaunchedEffect
         }
         kotlinx.coroutines.coroutineScope {
-            launch { mix.animateTo(1f, tween(460, easing = { t -> 1f - (1f - t) * (1f - t) * (1f - t) })) }
+            launch { mix.animateTo(1f, tween(ZeroMotion.ms(460), easing = { t -> 1f - (1f - t) * (1f - t) * (1f - t) })) }
             launch { busyAmount.animateTo(if (phase == OrbPhase.Busy) 1f else 0f, ZeroMotion.standard()) }
-            launch { glow.animateTo(if (phase == OrbPhase.Connected) 1f else 0f, tween(900)) }
+            launch { glow.animateTo(if (phase == OrbPhase.Connected) 1f else 0f, tween(ZeroMotion.ms(900))) }
             if (phase == OrbPhase.Connected) {
                 launch {
                     ripple.snapTo(0f)
-                    ripple.animateTo(1f, tween(1100, easing = LinearEasing))
+                    ripple.animateTo(1f, tween(ZeroMotion.ms(1100), easing = LinearEasing))
                 }
                 launch {
                     scale.animateTo(1.04f, ZeroMotion.expressive())
@@ -205,11 +218,11 @@ fun ConnectOrb(
             when (i) {
                 is PressInteraction.Press -> {
                     view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
-                    launch { press.animateTo(1f, tween(120)) }
+                    launch { press.animateTo(1f, tween(ZeroMotion.ms(120))) }
                     if (!reduced) launch { scale.animateTo(0.96f, ZeroMotion.snappy()) }
                 }
                 is PressInteraction.Release, is PressInteraction.Cancel -> {
-                    launch { press.animateTo(0f, tween(260)) }
+                    launch { press.animateTo(0f, tween(ZeroMotion.ms(260))) }
                     if (!reduced) launch { scale.animateTo(1f, ZeroMotion.expressive()) }
                 }
             }
