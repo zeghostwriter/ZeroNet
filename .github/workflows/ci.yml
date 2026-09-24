@@ -129,13 +129,20 @@ jobs:
           test -f "$so"
           for symbol in zray_start zray_stop zray_set_tun_descriptor \
                         zray_set_protect_callback zray_last_error; do
-            "$toolchain/llvm-nm" --defined-only --extern-only "$so" \
+            # -D: the release profile strips the static symbol table; the
+            # exports a loader resolves live in the dynamic one.
+            "$toolchain/llvm-nm" -D --defined-only --extern-only "$so" \
               | grep -q " $symbol$" || { echo "missing export: $symbol"; exit 1; }
           done
 
   apple:
     name: Apple platform boundary
     runs-on: macos-latest
+    env:
+      # Rust's default iOS target (10.0) predates `___chkstk_darwin`, which
+      # the C dependencies (zstd) reference when built with a current SDK.
+      # Packet tunnel extensions need iOS 15 or later anyway.
+      IPHONEOS_DEPLOYMENT_TARGET: "15.0"
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
