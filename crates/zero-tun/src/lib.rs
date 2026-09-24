@@ -2048,7 +2048,9 @@ mod tests {
         assert!(matches!(result, Err(TunError::Network(_))));
     }
 
-    #[cfg(unix)]
+    // `SOCK_SEQPACKET` Unix sockets, which these tests need for both record
+    // boundaries and a real end of file, do not exist on Apple platforms.
+    #[cfg(all(unix, not(target_vendor = "apple")))]
     #[tokio::test]
     async fn a_framed_read_at_end_of_file_reports_zero_rather_than_a_malformed_frame() {
         let (theirs, ours) = stream_pair();
@@ -2062,7 +2064,7 @@ mod tests {
 
     /// A stream socket pair: unlike a datagram pair, closing one end gives the
     /// other a real end of file.
-    #[cfg(unix)]
+    #[cfg(all(unix, not(target_vendor = "apple")))]
     fn stream_pair() -> (std::os::fd::RawFd, std::fs::File) {
         use std::os::fd::FromRawFd;
         let mut fds = [0 as libc::c_int; 2];
@@ -2072,7 +2074,7 @@ mod tests {
         (fds[0], unsafe { std::fs::File::from_raw_fd(fds[1]) })
     }
 
-    #[cfg(unix)]
+    #[cfg(all(unix, not(target_vendor = "apple")))]
     #[tokio::test]
     async fn the_bridge_survives_a_malformed_packet_and_ends_when_the_device_closes() {
         use std::io::Write;
