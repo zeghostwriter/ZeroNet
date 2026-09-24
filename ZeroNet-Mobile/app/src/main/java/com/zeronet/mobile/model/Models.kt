@@ -65,12 +65,16 @@ sealed interface ConnectTarget {
     /** Discover and pick the best config automatically. */
     data object Fastest : ConnectTarget
     data class Country(val code: String) : ConnectTarget
+    /** One config the user chose: used as is, never swapped for another. */
     data class Specific(val key: String) : ConnectTarget
+    /** The user's own subscription: the engine switches only between its configs. */
+    data class Subscription(val id: String) : ConnectTarget
 
     fun encode(): String = when (this) {
         Fastest -> "fastest"
         is Country -> "country:$code"
         is Specific -> "server:$key"
+        is Subscription -> "sub:$id"
     }
 
     companion object {
@@ -78,6 +82,7 @@ sealed interface ConnectTarget {
             value == null || value == "fastest" -> Fastest
             value.startsWith("country:") -> Country(value.removePrefix("country:"))
             value.startsWith("server:") -> Specific(value.removePrefix("server:"))
+            value.startsWith("sub:") -> Subscription(value.removePrefix("sub:"))
             else -> Fastest
         }
     }

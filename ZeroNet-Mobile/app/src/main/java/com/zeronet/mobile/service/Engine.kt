@@ -85,6 +85,8 @@ object Engine {
     private const val BACKGROUND_WANT = 2
     private const val BACKGROUND_SEARCH_MS = 20_000L
     private const val PROFILE_SETTLE_MS = 600L
+    /** [ConnState.Reconnecting] reason: the config the user chose stopped answering; retrying it. */
+    const val REASON_CHOSEN_DOWN = "chosen_down"
 
     // ------------------------------------------------------------ profiles
     //
@@ -279,6 +281,12 @@ object Engine {
 
     /** Keep the servers that suit [next]'s profile, or search for some with the tunnel up. */
     private suspend fun adoptProfile(next: Settings) {
+        // A config the user chose stays, whatever the mode: only its
+        // settings (fragmentation, QUIC) follow the profile.
+        if (target is ConnectTarget.Specific) {
+            reloadPool()
+            return
+        }
         val kept = pool.filter { suits(it.server, next.profile) }
         val network = NetworkIdentity.current(app)
         if (kept.isNotEmpty() || network == null) {
@@ -292,11 +300,25 @@ object Engine {
         val old = pool.toList()
         pool.clear()
         try {
-            discover(network, excludeKeys = emptySet())
+            findReplacements(network, excludeKeys = emptySet())
         } finally {
             if (pool.isEmpty()) pool.addAll(old)
         }
         reloadPool()
+    }
+
+    /**
+     * Look for working servers with the tunnel up. With a subscription chosen
+     * only its own configs are candidates; anything else searches the feeds.
+     */
+    private suspend fun findReplacements(network: String, excludeKeys: Set<String>) {
+        when (val t = target) {
+            is ConnectTarget.Subscription -> {
+                val all = withContext(Dispatchers.IO) { store.inSubscription(t.id) }
+                testAndCollect(all.filter { it.key !in excludeKeys }.ifEmpty { all }, network)
+            }
+            else -> discover(network, excludeKeys)
+        }
     }
 
     private fun topology(s: Settings) = listOf(s.lanShare, s.lanUser, s.lanPass, s.socksPort, s.httpPort)
@@ -345,6 +367,12 @@ object Engine {
                     if (candidates.isEmpty()) { fail(FailReason.ServerUnavailable, t.code); return }
                     testAndCollect(candidates, network)
                     if (!running) { fail(FailReason.NoWorkingServer, t.code); return }
+                }
+                is ConnectTarget.Subscription -> {
+                    val candidates = withContext(Dispatchers.IO) { store.inSubscription(t.id) }
+                    if (candidates.isEmpty()) { fail(FailReason.ServerUnavailable, ""); return }
+                    testAndCollect(candidates, network)
+                    if (!running) { fail(FailReason.NoWorkingServer, ""); return }
                 }
                 ConnectTarget.Fastest -> {
                     discover(network, excludeKeys = emptySet())
@@ -615,16 +643,28 @@ object Engine {
                 survivors.remove(primary)
                 survivors.add(0, primary)
             }
-            pool.clear(); pool.addAll(survivors)
             serversChanged.tryEmit(Unit)
+            // A config the user chose is never swapped for another: while it
+            // is down, keep it in place and try it again on the next check.
+            if (target is ConnectTarget.Specific) {
+                if (survivors.isEmpty()) {
+                    publish(ConnState.Reconnecting(REASON_CHOSEN_DOWN))
+                } else {
+                    pool.clear(); pool.addAll(survivors)
+                    publishConnected()
+                }
+                return@withLock
+            }
+            pool.clear(); pool.addAll(survivors)
         }
         when {
+            target is ConnectTarget.Specific -> publish(ConnState.Reconnecting(REASON_CHOSEN_DOWN))
             pool.isEmpty() -> {
                 // Everything we had died (or an earlier search came back empty):
                 // search again with the tunnel still up. Runs on every health
                 // tick until something is found.
                 publish(ConnState.Reconnecting("all servers stopped answering"))
-                if (network != null) discover(network, excludeKeys = before.toSet())
+                if (network != null) findReplacements(network, excludeKeys = before.toSet())
                 if (pool.isEmpty()) publish(ConnState.Reconnecting("searching")) else reloadPool()
             }
             // Only the members that are in the config matter: a standby that

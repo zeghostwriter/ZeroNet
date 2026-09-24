@@ -95,6 +95,13 @@ class ServerStore private constructor(context: Context) :
     fun userServers(): List<Server> =
         query("SELECT * FROM servers WHERE source = ? OR source LIKE 'sub:%' ORDER BY favorite DESC, name", arrayOf(Server.SOURCE_USER))
 
+    /** One subscription's configs, the ones that answered last time first. */
+    fun inSubscription(id: String): List<Server> =
+        query(
+            "SELECT * FROM servers WHERE source = ? ORDER BY CASE WHEN delay_ms < 0 THEN 1 ELSE 0 END, delay_ms",
+            arrayOf(Server.SOURCE_SUB_PREFIX + id),
+        )
+
     fun inCountry(code: String): List<Server> =
         query("SELECT * FROM servers WHERE country = ? ORDER BY CASE WHEN delay_ms < 0 THEN 1 ELSE 0 END, delay_ms", arrayOf(code))
 

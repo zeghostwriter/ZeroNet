@@ -67,6 +67,7 @@
     <string name="stage_connecting">راه‌اندازی تونل…</string>
     <string name="stage_connecting_to">اتصال به %1$s…</string>
     <string name="stage_reconnecting">اتصال قطع شد. در حال عوض کردن سرور…</string>
+    <string name="stage_chosen_down">کانفیگ شما جواب نمی‌دهد. دوباره امتحانش می‌کنیم…</string>
     <string name="stage_disconnecting">در حال قطع اتصال…</string>
     <string name="stage_connected_pool">سرورهای پشتیبان آماده: %1$s</string>
 
@@ -120,6 +121,8 @@
     <string name="picker_title">انتخاب سرور</string>
     <string name="picker_favorites">برگزیده‌ها</string>
     <string name="picker_mine">کانفیگ‌های شما</string>
+    <string name="picker_subscriptions">اشتراک‌های شما</string>
+    <string name="server_subscription_hint">فقط بین کانفیگ‌های همین اشتراک جابه‌جا می‌شود</string>
     <string name="picker_countries">کشورها</string>
     <string name="picker_empty">هنوز سروری نیست. یک بار وصل شوید تا زیرونت چند سرور پیدا کند.</string>
 
