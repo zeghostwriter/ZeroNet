@@ -23,6 +23,7 @@ pub mod config;
 pub mod discover;
 pub mod events;
 pub mod feed;
+pub mod json_subscription;
 pub mod link;
 pub mod order;
 pub mod probe;

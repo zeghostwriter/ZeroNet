@@ -798,15 +798,27 @@ object Engine {
         val trimmed = text.trim()
         if (trimmed.isEmpty()) return ImportResult(0, 0, 0, "empty")
         if ((trimmed.startsWith("https://") || trimmed.startsWith("http://")) && trimmed.lines().size == 1) {
-            val sub = Subscription(subscriptionId(trimmed), hostOf(trimmed), trimmed, true, 0, 0)
-            store.upsertSubscription(sub)
-            return fetchSubscription(sub)
+            return addSubscription("", trimmed)
         }
         return importText(trimmed, Server.SOURCE_USER)
     }
 
+    /**
+     * A subscription URL may end in `#name`, the name the panel suggests
+     * (BPB's `#💦 BPB Normal`). It names the subscription and is not part of
+     * the address: browsers never send it, and two copies of one URL with
+     * different names are the same subscription.
+     */
     fun addSubscription(name: String, url: String): ImportResult {
-        val sub = Subscription(subscriptionId(url), name.ifBlank { hostOf(url) }, url, true, 0, 0)
+        val address = url.trim().substringBefore('#')
+        val suggested = url.trim().substringAfter('#', "").let { fragment ->
+            runCatching { java.net.URLDecoder.decode(fragment.replace("+", "%2B"), "UTF-8") }.getOrDefault(fragment).trim()
+        }
+        val sub = Subscription(
+            subscriptionId(address),
+            name.ifBlank { suggested }.ifBlank { hostOf(address) },
+            address, true, 0, 0,
+        )
         store.upsertSubscription(sub)
         return fetchSubscription(sub)
     }
@@ -833,6 +845,9 @@ object Engine {
     private fun fetchSubscription(sub: Subscription): ImportResult = runCatching {
         val body = httpGet(sub.url)
         val result = importText(body, Server.SOURCE_SUB_PREFIX + sub.id)
+        // An answer with nothing in it (a panel's error page, an expired
+        // token) would otherwise read as a successful import of nothing.
+        if (result.added + result.duplicates + result.rejected == 0) error("no configs in the answer")
         store.upsertSubscription(sub.copy(updatedAt = System.currentTimeMillis(), count = result.added + result.duplicates))
         result
     }.getOrElse { ImportResult(0, 0, 0, it.message ?: "download failed") }
@@ -841,8 +856,21 @@ object Engine {
         store.subscriptions().filter { it.enabled }.forEach { fetchSubscription(it) }
     }
 
+    /**
+     * Fetch a subscription. While connected, through the app's own tunnel
+     * first: the app is excluded from its VPN, and subscription hosts
+     * (workers.dev, panel domains) are often filtered on the open network.
+     */
     private fun httpGet(url: String): String {
-        val conn = URL(url).openConnection() as HttpURLConnection
+        if (running) {
+            val proxy = java.net.Proxy(java.net.Proxy.Type.HTTP, java.net.InetSocketAddress("127.0.0.1", settings.httpPort))
+            runCatching { return httpGet(url, proxy) }.onFailure { Log.w(TAG, "subscription through the tunnel: ${it.message}") }
+        }
+        return httpGet(url, java.net.Proxy.NO_PROXY)
+    }
+
+    private fun httpGet(url: String, proxy: java.net.Proxy): String {
+        val conn = URL(url).openConnection(proxy) as HttpURLConnection
         conn.connectTimeout = 15_000
         conn.readTimeout = 20_000
         conn.setRequestProperty("User-Agent", "ZeroNet")
