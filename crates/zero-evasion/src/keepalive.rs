@@ -210,6 +210,18 @@ pub trait KeepaliveCarrier {
     /// padding for such a carrier would corrupt the tunnel, so the shaper
     /// falls back to retirement alone.
     fn poll_keepalive(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<bool>>;
+
+    /// How many no-op frames may go out back to back, with none of our own
+    /// data in between, before the peer gives up on the connection. `None`
+    /// when the peer sets no such limit (a WebSocket Ping is answered, not
+    /// counted).
+    ///
+    /// The shaper stops probing at this many and resumes after the next real
+    /// write. Only data *we* send resets the peer's count, so a flow that
+    /// merely receives is still piling probes up.
+    fn max_probes_between_writes(&self) -> Option<u32> {
+        None
+    }
 }
 
 /// A carrier wrapper that emits idle probes and tracks retirement.
@@ -223,6 +235,9 @@ pub struct KeepaliveStream<S> {
     state: KeepaliveState,
     timer: Option<Pin<Box<Sleep>>>,
     probes_sent: u64,
+    /// Probes since the last real write; see
+    /// [`KeepaliveCarrier::max_probes_between_writes`].
+    probes_since_write: u32,
     /// Set once the carrier reports it has no legal no-op, so the shaper stops
     /// asking and settles for retirement alone.
     probing_unavailable: bool,
@@ -235,6 +250,7 @@ impl<S> KeepaliveStream<S> {
             state: KeepaliveState::new(policy, Instant::now()),
             timer: None,
             probes_sent: 0,
+            probes_since_write: 0,
             probing_unavailable: false,
         }
     }
@@ -270,11 +286,19 @@ impl<S> KeepaliveStream<S> {
 }
 
 impl<S: KeepaliveCarrier + Unpin> KeepaliveStream<S> {
+    /// Whether another probe now would reach the peer's limit.
+    fn probe_budget_spent(&self) -> bool {
+        self.inner
+            .max_probes_between_writes()
+            .is_some_and(|limit| self.probes_since_write >= limit)
+    }
+
     fn poll_send_probe(&mut self, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         match Pin::new(&mut self.inner).poll_keepalive(cx) {
             Poll::Ready(Ok(sent)) => {
                 if sent {
                     self.probes_sent += 1;
+                    self.probes_since_write = self.probes_since_write.saturating_add(1);
                 } else {
                     self.probing_unavailable = true;
                 }
@@ -318,6 +342,16 @@ impl<S: AsyncRead + AsyncWrite + KeepaliveCarrier + Unpin> AsyncRead for Keepali
         loop {
             let now = Instant::now();
             match this.state.action(now) {
+                // Every probe the peer will take has been sent: one more would
+                // get the connection closed, which is worse than letting it
+                // look idle. Look again an idle period from now, by which
+                // time a real write may have started a new run.
+                KeepaliveAction::Probe
+                    if !this.probing_unavailable && this.probe_budget_spent() =>
+                {
+                    this.state.note_activity(now);
+                    continue;
+                }
                 KeepaliveAction::Probe if !this.probing_unavailable => {
                     match this.poll_send_probe(cx) {
                         Poll::Ready(Ok(())) => continue,
@@ -371,6 +405,7 @@ impl<S: AsyncWrite + Unpin> AsyncWrite for KeepaliveStream<S> {
         if let Poll::Ready(Ok(n)) = &result {
             if *n > 0 {
                 this.state.note_activity(Instant::now());
+                this.probes_since_write = 0;
             }
         }
         result
@@ -566,11 +601,24 @@ mod tests {
     struct TestCarrier<S> {
         inner: S,
         counter: u8,
+        /// Stands in for a peer that counts empty frames, like Go's TLS.
+        limit: Option<u32>,
     }
 
     impl<S> TestCarrier<S> {
         fn new(inner: S) -> Self {
-            Self { inner, counter: 0 }
+            Self {
+                inner,
+                counter: 0,
+                limit: None,
+            }
+        }
+
+        fn with_limit(inner: S, limit: u32) -> Self {
+            Self {
+                limit: Some(limit),
+                ..Self::new(inner)
+            }
         }
     }
 
@@ -588,6 +636,10 @@ mod tests {
                 Poll::Ready(Err(e)) => Poll::Ready(Err(e)),
                 Poll::Pending => Poll::Pending,
             }
+        }
+
+        fn max_probes_between_writes(&self) -> Option<u32> {
+            self.limit
         }
     }
 
@@ -650,6 +702,52 @@ mod tests {
         // Each probe is a fresh frame, not a replayed buffer.
         assert_eq!(seen[0][0], 0x89);
         assert_ne!(seen[0][1], seen[1][1]);
+        reader.abort();
+    }
+
+    /// Go's TLS stack closes a connection after a run of empty records with
+    /// no data from us in between; the probe that would reach that limit is
+    /// never sent, and a real write starts a fresh run.
+    #[tokio::test(start_paused = true)]
+    async fn probes_stop_at_the_peers_limit_until_real_data_is_written() {
+        let (mut peer, local) = tokio::io::duplex(4096);
+        let policy = KeepalivePolicy {
+            idle_after: Duration::from_secs(10),
+            max_flow_lifetime: None,
+        };
+        let shaped = KeepaliveStream::new(TestCarrier::with_limit(local, 3), policy);
+        let (mut read_half, mut write_half) = tokio::io::split(shaped);
+        let reader = tokio::spawn(async move {
+            let mut buf = [0u8; 16];
+            let _ = read_half.read(&mut buf).await;
+        });
+
+        async fn next_frame(peer: &mut tokio::io::DuplexStream) -> Option<[u8; 2]> {
+            let mut buf = [0u8; 2];
+            match tokio::time::timeout(Duration::from_secs(120), peer.read_exact(&mut buf)).await {
+                Ok(Ok(_)) => Some(buf),
+                _ => None,
+            }
+        }
+
+        for _ in 0..3 {
+            assert_eq!(next_frame(&mut peer).await.map(|f| f[0]), Some(0x89));
+        }
+        assert_eq!(
+            next_frame(&mut peer).await,
+            None,
+            "a fourth probe would have reached the peer's limit"
+        );
+
+        write_half.write_all(b"data").await.unwrap();
+        let mut data = [0u8; 4];
+        peer.read_exact(&mut data).await.unwrap();
+        assert_eq!(&data, b"data");
+        assert_eq!(
+            next_frame(&mut peer).await.map(|f| f[0]),
+            Some(0x89),
+            "real data starts a new run, so probing resumes"
+        );
         reader.abort();
     }
 

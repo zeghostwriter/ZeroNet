@@ -1287,3 +1287,99 @@ async fn xhttp_requests_match_the_oracle() {
         .await;
     }
 }
+
+/// An idle REALITY flow under keepalive shaping must outlive the server's
+/// limit on consecutive empty records.
+///
+/// A REALITY keepalive probe is a zero-length application-data record. The
+/// server is Go's TLS stack (REALITY is a fork of `crypto/tls`), which counts
+/// consecutive records that carry nothing and closes the connection with
+/// "too many ignored records" past a small limit (16 in Go, 32 in current
+/// REALITY), resetting the count only when real data arrives. A flow that
+/// only receives, or sits idle, piled probes up until the server killed it,
+/// while the app still showed "connected": Telegram's long-lived connections
+/// died this way. Here probes go every 50 ms and the flow idles for 3 s,
+/// about sixty probes, before it is used again.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "needs an Xray binary; see the module documentation"]
+async fn an_idle_reality_flow_with_keepalive_probes_survives_the_servers_empty_record_limit() {
+    let binary = oracle_binary().unwrap_or_else(|reason| {
+        panic!("the oracle comparison cannot run: {reason}");
+    });
+    eprintln!(
+        "oracle: {} (REALITY keepalive, idle)",
+        oracle_version(&binary)
+    );
+    let echo = echo_service().await;
+    let relay_port = free_port();
+    let socks_port = free_port();
+    let (private_key, public_key) = oracle_x25519_keypair(&binary);
+    let (server_settings, client_settings) = protocol_settings("vless", relay_port);
+    let decoy_port = free_port();
+    let _decoy = spawn_decoy(&binary, decoy_port);
+    let decoy = SocketAddr::new("127.0.0.1".parse().unwrap(), decoy_port);
+    assert!(wait_for(decoy).await, "the REALITY decoy never listened");
+
+    let mut oracle_stream = transport("tcp");
+    oracle_stream["security"] = json!("reality");
+    oracle_stream["realitySettings"] = reality_server_settings(&private_key, decoy);
+
+    let mut zray_stream = transport("tcp");
+    zray_stream["security"] = json!("reality");
+    zray_stream["realitySettings"] = reality_client_settings(&public_key);
+    zray_stream["finalmask"] = json!({"tcp": [{
+        "type": "keepalive",
+        "settings": {"idle": "50ms", "lifetime": 0},
+    }]});
+
+    let _oracle = spawn_oracle(
+        &binary,
+        json!({
+            "log": {"loglevel": "debug"},
+            "inbounds": [{
+                "tag": "in",
+                "listen": "127.0.0.1",
+                "port": relay_port,
+                "protocol": "vless",
+                "settings": server_settings,
+                "streamSettings": oracle_stream,
+            }],
+            "outbounds": [oracle_loopback_freedom()],
+        }),
+    );
+    spawn_zray(json!({
+        "log": {"loglevel": "warning"},
+        "inbounds": [{
+            "tag": "socks-in",
+            "listen": "127.0.0.1",
+            "port": socks_port,
+            "protocol": "socks",
+        }],
+        "outbounds": [{
+            "tag": "proxy",
+            "protocol": "vless",
+            "settings": client_settings,
+            "streamSettings": zray_stream,
+        }],
+    }));
+
+    let relay = SocketAddr::new("127.0.0.1".parse().unwrap(), relay_port);
+    assert!(
+        wait_for(relay).await,
+        "the oracle never listened on {relay}"
+    );
+    assert!(wait_for(SocketAddr::new("127.0.0.1".parse().unwrap(), socks_port)).await);
+
+    let mut stream = socks_connect(
+        SocketAddr::new("127.0.0.1".parse().unwrap(), socks_port),
+        echo,
+    )
+    .await
+    .unwrap();
+    round_trip(&mut stream, &payload(21, 64)).await;
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    round_trip(&mut stream, &payload(22, 64)).await;
+    // And again, after data reset the server's count.
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    round_trip(&mut stream, &payload(23, 4096)).await;
+}
