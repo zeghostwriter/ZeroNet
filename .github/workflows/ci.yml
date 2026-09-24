@@ -148,6 +148,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-apple-ios
+          # llvm-nm matching rustc's LLVM: Xcode's nm can lag behind it and
+          # then reads nothing from the archive.
+          components: llvm-tools
       - uses: Swatinem/rust-cache@v2
 
       # iOS links the static archive into a NEPacketTunnelProvider extension.
@@ -158,9 +161,11 @@ jobs:
         run: |
           archive=target/aarch64-apple-ios/release/libzray_mobile.a
           test -f "$archive"
+          nm_tool="$(ls "$(rustc --print sysroot)"/lib/rustlib/*/bin/llvm-nm | head -n 1)"
+          "$nm_tool" -g --defined-only "$archive" > symbols.txt
           for symbol in zray_start zray_stop zray_set_tun_descriptor \
                         zray_set_protect_callback zray_last_error; do
-            nm -gU "$archive" 2>/dev/null | grep -q "_$symbol$" \
+            grep -q " _$symbol$" symbols.txt \
               || { echo "missing export: $symbol"; exit 1; }
           done
 
