@@ -7,7 +7,8 @@
 ### Performance, Speed, and Freedom in your hands.
 ### کارایی، سرعت و آزادی در دستان شما.
 
-<a href="https://github.com/zeghostwriter/ZeroNet/releases/latest"><b>⬇️ دانلود آخرین نسخه · Download the latest release</b></a>
+<a href="https://github.com/zeghostwriter/ZeroNet/releases/latest"><b>⬇️ دانلود آخرین نسخه</b></a><br>
+<a href="https://github.com/zeghostwriter/ZeroNet/releases/latest"><b>⬇️ Download the latest release</b></a>
 
 [فارسی](#فارسی) · [English](#english)
 
@@ -19,20 +20,20 @@
 
 ## فارسی
 
-**زیرونت** یک VPN ساده و سریع برای عبور از فیلترینگ است. برای ویندوز، لینوکس، مک و اندروید. قلب آن **Zray** است، یک هسته‌ی شبکه که از صفر با زبان **Rust** نوشته شده. کانفیگ‌هایی که امروز با Xray کار می‌کنند (VLESS، REALITY، Vision، XHTTP، VMess، Trojan، Shadowsocks و…) در زیرونت هم کار می‌کنند.
+**زیرونت** یک VPN ساده و سریع برای عبور از فیلترینگ است. برای ویندوز، لینوکس، مک و اندروید. قلب آن **Zray** است، یک هسته‌ی شبکه که از صفر با زبان **Rust** نوشته شده. کانفیگ‌هایی که امروز با Xray کار می‌کنند (VLESS،&rlm; REALITY،&rlm; Vision،&rlm; XHTTP،&rlm; VMess،&rlm; Trojan،&rlm; Shadowsocks و…) در زیرونت هم کار می‌کنند.
 
 ### ⚡ چرا این‌قدر سریع است؟
 
-Rust به کد ماشین کامپایل می‌شود و Garbage Collector ندارد. پس برنامه هیچ‌وقت برای «جمع‌کردن حافظه» مکث نمی‌کند و فقط همان حافظه‌ای را می‌گیرد که واقعاً لازم دارد. نتیجه: اینترنت سریع‌تر، مصرف کمتر رم و CPU، و باتری ماندگارتر، حتی روی سیستم‌ها و گوشی‌های ضعیف.
+زبان Rust به کد ماشین کامپایل می‌شود و Garbage Collector ندارد. پس برنامه هیچ‌وقت برای «جمع‌کردن حافظه» مکث نمی‌کند و فقط همان حافظه‌ای را می‌گیرد که واقعاً لازم دارد. نتیجه: اینترنت سریع‌تر، مصرف کمتر رم و CPU، و باتری ماندگارتر، حتی روی سیستم‌ها و گوشی‌های ضعیف.
 
 ما Zray و Xray-core را روی یک سیستم، با یک سرور و یک کانفیگ مقایسه کردیم. تنها چیزی که عوض شد هسته‌ی کلاینت بود:
 
 | | Xray-core | **Zray (زیرونت)** |
 |---|---:|---:|
-| سرعت دانلود با TLS (یک اتصال) | 349 MB/s | **532 MB/s** (۵۳٪ سریع‌تر) |
-| مصرف CPU برای هر گیگابایت (TLS) | 3.0 ثانیه | **1.6 ثانیه** (۴۶٪ کمتر) |
-| رم در حالت بیکار | 29 MB | **8 MB** (۳.۷ برابر کمتر) |
-| بیشترین مصرف رم زیر بار | 51 MB | **21 MB** (۲.۴ برابر کمتر) |
+| سرعت دانلود با TLS (یک اتصال) | ۳۴۹ مگابایت بر ثانیه | **۵۳۲ مگابایت بر ثانیه** (۵۳٪ سریع‌تر) |
+| مصرف CPU برای هر گیگابایت (TLS) | ۳٫۰ ثانیه | **۱٫۶ ثانیه** (۴۶٪ کمتر) |
+| رم در حالت بیکار | ۲۹ مگابایت | **۸ مگابایت** (۳٫۷ برابر کمتر) |
+| بیشترین مصرف رم زیر بار | ۵۱ مگابایت | **۲۱ مگابایت** (۲٫۴ برابر کمتر) |
 
 </div>
 
@@ -45,7 +46,7 @@ Rust به کد ماشین کامپایل می‌شود و Garbage Collector ند
 
 <div dir="rtl">
 
-Zray در همه‌ی تست‌ها CPU کمتری مصرف کرد. تنها موردی که Xray جلو بود، دانلود تک‌اتصالی بدون TLS بود (873 در برابر 799 مگابایت بر ثانیه). همه‌ی نتایج را همان‌طور که اندازه گرفته شد گذاشته‌ایم. روش تست و ابزار تکرار آن در [docs/benchmarks](docs/benchmarks) است.
+در همه‌ی تست‌ها، Zray مصرف CPU کمتری داشت. تنها موردی که Xray جلو بود، دانلود تک‌اتصالی بدون TLS بود (۸۷۳ در برابر ۷۹۹ مگابایت بر ثانیه). همه‌ی نتایج را همان‌طور که اندازه گرفته شد گذاشته‌ایم. روش تست و ابزار تکرار آن در [docs/benchmarks](docs/benchmarks) است.
 
 ### 📥 نصب (فقط چند کلیک)
 
@@ -53,7 +54,7 @@ Zray در همه‌ی تست‌ها CPU کمتری مصرف کرد. تنها م�
 
 | سیستم | فایل | چه کار کنم؟ |
 |---|---|---|
-| 🪟 ویندوز | `ZeroNet-Windows-x64.zip` | فایل را از حالت فشرده خارج کنید و روی `ZeroNet.exe` دوبار کلیک کنید. اگر ویندوز هشدار داد: **More info ← Run anyway**. |
+| 🪟 ویندوز | `ZeroNet-Windows-x64.zip` | فایل را از حالت فشرده خارج کنید و روی `ZeroNet.exe` دوبار کلیک کنید. اگر ویندوز هشدار داد: **More info ←&rlm; Run anyway**. |
 | 🐧 لینوکس | `ZeroNet-Linux-x86_64.AppImage` | راست‌کلیک ← Properties ← تیک **Allow executing file as program**. بعد دوبار کلیک کنید. برنامه خودش در ترمینال باز می‌شود. |
 | 🍎 مک | `ZeroNet-macOS-universal.zip` | از حالت فشرده خارج کنید، `ZeroNet.app` را به Applications ببرید. بار اول **راست‌کلیک ← Open** (برنامه امضای اپل ندارد). |
 | 🤖 اندروید | `ZeroNet-Android-universal.apk` | نصب کنید. اگر پرسید، اجازه‌ی نصب از منابع ناشناس را بدهید. |
@@ -62,7 +63,7 @@ Zray در همه‌ی تست‌ها CPU کمتری مصرف کرد. تنها م�
 
 ### 🧭 استفاده
 
-1. لینک کانفیگ (`vless://`، `vmess://`، `trojan://`، `ss://` یا لینک ساب‌اسکریپشن) را کپی کنید و در زیرونت **Ctrl+V** بزنید.
+1. لینک کانفیگ (`vless://`،&rlm; `vmess://`،&rlm; `trojan://`،&rlm; `ss://` یا لینک ساب‌اسکریپشن) را کپی کنید و در زیرونت **Ctrl+V** بزنید.
 2. روی دکمه‌ی اتصال کلیک کنید. همه‌چیز با موس کار می‌کند، مثل یک برنامه‌ی معمولی.
 3. در تنظیمات، **System Proxy** را روی **SET SYSTEM** بگذارید (یا آن‌قدر **Ctrl+P** بزنید تا SET SYSTEM شود) تا بقیه‌ی برنامه‌ها هم از آن استفاده کنند.
 
@@ -71,8 +72,9 @@ Zray در همه‌ی تست‌ها CPU کمتری مصرف کرد. تنها م�
 - **سریع:** به اولین سروری که کار کند وصل می‌شود، بدون جست‌وجوی اضافه. سریع‌ترین راه برای وصل شدن.
 - **گیمینگ:** کمترین پینگ، UDP روشن (برای بازی‌ها و تماس صوتی)، بدون سرورهای پشت CDN، و سرور وسط بازی عوض نمی‌شود. سایت‌ها و سرورهای بازی ایرانی مستقیم می‌روند.
 
-**تلگرام:** Settings ← Advanced ← Connection type ← **Use system proxy**. در لینوکس بعد از روشن‌کردن پروکسی، تلگرام را کامل ببندید و دوباره باز کنید.
-**فایرفاکس:** Settings ← Network Settings ← **Use system proxy settings**.
+**برنامه‌های دیگر:**
+- **تلگرام:** Settings ←&rlm; Advanced ←&rlm; Connection type ←&rlm; **Use system proxy**. در لینوکس بعد از روشن‌کردن پروکسی، تلگرام را کامل ببندید و دوباره باز کنید.
+- **فایرفاکس:** Settings ←&rlm; Network Settings ←&rlm; **Use system proxy settings**.
 
 **حالت TUN** (همه‌ی برنامه‌ها بدون تنظیم جداگانه): در لینوکس و مک زیرونت رمز سیستم را می‌پرسد. در ویندوز برنامه را با **Run as administrator** باز کنید (فایل `wintun.dll` کنار برنامه است).
 
@@ -145,6 +147,7 @@ On macOS it runs in Terminal.app, so double-clicking always works.
 - **Fast:** connects to the first server that works, nothing more. The quickest way to get online.
 - **Gaming:** lowest ping, UDP allowed (games and voice need it), no CDN-fronted servers, and the server is never switched mid-match. Iranian sites and game servers still go direct.
 
+**Other apps:**
 - **Telegram:** Settings → Advanced → Connection type → **Use system proxy**.
   On Linux, Telegram reads the proxy only when it starts, so fully quit it
   and open it again after turning the proxy on.
