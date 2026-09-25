@@ -142,7 +142,8 @@ object Engine {
     private const val CHOSEN_DOWN_AFTER = 2
     /** Test timeout for the user's own configs; see [testServers]. */
     private const val OWN_TIMEOUT_MS = 10_000
-    private const val PROBE_URL = "http://cp.cloudflare.com/generate_204"
+    /** Not Cloudflare: Worker-served configs (BPB and the like) cannot reach Cloudflare addresses. */
+    private const val PROBE_URL = "http://www.gstatic.com/generate_204"
 
     private lateinit var app: Context
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)

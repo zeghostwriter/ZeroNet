@@ -21,8 +21,9 @@ pub const PING_TIMEOUT: Duration = Duration::from_millis(2500);
 pub const REAL_DELAY_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Where the traffic check goes: a tiny plain-HTTP endpoint that answers
-/// 204, the same probe v2rayN and most Android clients use.
-const PROBE_HOST: &str = "cp.cloudflare.com";
+/// 204. Google's, not Cloudflare's: configs served by Cloudflare Workers
+/// cannot reach Cloudflare addresses, and failed this check while working.
+const PROBE_HOST: &str = "www.gstatic.com";
 
 /// Send one real request through the local SOCKS port and time it end to
 /// end: SOCKS handshake, the proxy's dial to its server, the server's dial
