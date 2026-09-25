@@ -413,8 +413,8 @@ fn update_dialog(phase: zeronet_tui::modal::UpdatePhase) -> ModalState {
                 "README: fix right-to-left layout".into(),
             ],
             asset: Some(zeronet_tui::update::Asset {
-                name: "ZeroNet-Linux-x86_64".into(),
-                url: "https://example.invalid/ZeroNet-Linux-x86_64".into(),
+                name: "ZeroNet-Linux-x64".into(),
+                url: "https://example.invalid/ZeroNet-Linux-x64".into(),
                 size: 20 * 1024 * 1024,
                 sha256: None,
             }),

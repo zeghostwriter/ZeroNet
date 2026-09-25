@@ -55,10 +55,13 @@
 | سیستم | فایل | چه کار کنم؟ |
 |---|---|---|
 | 🪟 ویندوز | `ZeroNet-Windows-x64.zip` | فایل را از حالت فشرده خارج کنید و روی `ZeroNet.exe` دوبار کلیک کنید. اگر ویندوز هشدار داد: **More info ←&rlm; Run anyway**. |
-| 🐧 لینوکس | `ZeroNet-Linux-x86_64.AppImage` | راست‌کلیک ← Properties ← تیک **Allow executing file as program**. بعد دوبار کلیک کنید. برنامه خودش در ترمینال باز می‌شود. |
+| 🐧 لینوکس (بیشتر کامپیوترها: اینتل و AMD) | `ZeroNet-Linux-x64.AppImage` | راست‌کلیک ← Properties ← تیک **Allow executing file as program**. بعد دوبار کلیک کنید. برنامه خودش در ترمینال باز می‌شود. |
+| 🐧 لینوکس روی ARM (رزبری‌پای، لپ‌تاپ‌های ARM) | `ZeroNet-Linux-ARM64.AppImage` | مثل بالا. |
 | 🍎 مک | `ZeroNet-macOS-universal.zip` | از حالت فشرده خارج کنید، `ZeroNet.app` را به Applications ببرید. بار اول **راست‌کلیک ← Open** (برنامه امضای اپل ندارد). |
 | 🤖 اندروید | `ZeroNet-Android-universal.apk` | نصب کنید. اگر پرسید، اجازه‌ی نصب از منابع ناشناس را بدهید. |
 
+> مطمئن نیستید کدام فایل لینوکس؟ در ترمینال `uname -m` را بزنید: `x86_64` یعنی **x64** و `aarch64` یعنی **ARM64**. خطای «exec format error» یعنی فایل آن یکی را لازم دارید.
+>
 > برای گوشی‌های جدید فایل `arm64-v8a` کم‌حجم‌تر است. اگر مطمئن نیستید، `universal` را بگیرید.
 
 ### 🧭 استفاده
@@ -126,9 +129,14 @@ Everything is on the **[Releases page](https://github.com/zeghostwriter/ZeroNet/
 | Platform | File | What to do |
 |---|---|---|
 | 🪟 Windows | `ZeroNet-Windows-x64.zip` | Extract it and double-click `ZeroNet.exe`. If SmartScreen appears: **More info → Run anyway**. |
-| 🐧 Linux | `ZeroNet-Linux-x86_64.AppImage` | Right-click → Properties → **Allow executing file as program**, then double-click. It opens in a terminal window on its own. (`aarch64` builds and a plain `.tar.gz` are there too.) |
+| 🐧 Linux, most computers (Intel / AMD) | `ZeroNet-Linux-x64.AppImage` | Right-click → Properties → **Allow executing file as program**, then double-click. It opens in a terminal window on its own. (A plain `.tar.gz` is there too.) |
+| 🐧 Linux on ARM (Raspberry Pi, ARM laptops) | `ZeroNet-Linux-ARM64.AppImage` | The same. |
 | 🍎 macOS | `ZeroNet-macOS-universal.zip` | Unzip and move `ZeroNet.app` to Applications. The first time, **right-click → Open**: the app isn't notarized by Apple. If macOS says it is damaged, run `xattr -dr com.apple.quarantine /Applications/ZeroNet.app`. |
 | 🤖 Android | `ZeroNet-Android-universal.apk` | Install it and allow installs from this source if asked. `arm64-v8a` is a smaller download for most modern phones. |
+
+Not sure which Linux file? Run `uname -m` in a terminal: `x86_64` means
+**x64**, `aarch64` means **ARM64**. "exec format error" means you have the
+other one.
 
 ZeroNet is a terminal app that works like a desktop app: mouse, hover,
 menus, clicks. When you double-click it, it opens its own terminal window.

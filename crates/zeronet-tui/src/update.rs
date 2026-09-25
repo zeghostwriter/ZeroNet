@@ -12,7 +12,7 @@
 //! - an AppImage: the `.AppImage` file itself (`$APPIMAGE`), with the new
 //!   AppImage;
 //! - anything else: the running executable, with the plain binary the
-//!   release also carries (`ZeroNet-Windows-x64.exe`, `ZeroNet-Linux-<arch>`,
+//!   release also carries (`ZeroNet-Windows-x64.exe`, `ZeroNet-Linux-x64`/`ZeroNet-Linux-ARM64`,
 //!   `ZeroNet-macOS-universal`).
 //!
 //! GitHub is often slow or filtered where ZeroNet is used, so while a
@@ -154,18 +154,28 @@ impl Target {
     /// for.
     pub fn current() -> Option<Self> {
         let arch = std::env::consts::ARCH;
+        // The release names processors the way people know them (see
+        // release.yml): x64 and ARM64.
+        let label = match arch {
+            "x86_64" => Some("x64"),
+            "aarch64" => Some("ARM64"),
+            _ => None,
+        };
         if cfg!(target_os = "linux") {
-            if let Some(appimage) = std::env::var_os("APPIMAGE").filter(|p| !p.is_empty()) {
+            if let (Some(appimage), Some(label)) = (
+                std::env::var_os("APPIMAGE").filter(|p| !p.is_empty()),
+                label,
+            ) {
                 return Some(Self {
                     path: PathBuf::from(appimage),
-                    asset: format!("ZeroNet-Linux-{arch}.AppImage"),
+                    asset: format!("ZeroNet-Linux-{label}.AppImage"),
                 });
             }
         }
         let asset = if cfg!(windows) && arch == "x86_64" {
             "ZeroNet-Windows-x64.exe".to_string()
-        } else if cfg!(target_os = "linux") && matches!(arch, "x86_64" | "aarch64") {
-            format!("ZeroNet-Linux-{arch}")
+        } else if let (true, Some(label)) = (cfg!(target_os = "linux"), label) {
+            format!("ZeroNet-Linux-{label}")
         } else if cfg!(target_os = "macos") {
             "ZeroNet-macOS-universal".to_string()
         } else {
@@ -843,12 +853,12 @@ mod tests {
     fn checksums_are_found_by_file_name() {
         let hash = "a".repeat(64);
         let listing = format!(
-            "{hash}  ZeroNet-Linux-x86_64\n{}  ZeroNet-Linux-x86_64.AppImage\n",
+            "{hash}  ZeroNet-Linux-x64\n{}  ZeroNet-Linux-x64.AppImage\n",
             "b".repeat(64)
         );
-        assert_eq!(checksum_for(&listing, "ZeroNet-Linux-x86_64"), Some(hash));
+        assert_eq!(checksum_for(&listing, "ZeroNet-Linux-x64"), Some(hash));
         assert_eq!(
-            checksum_for(&listing, "ZeroNet-Linux-x86_64.AppImage"),
+            checksum_for(&listing, "ZeroNet-Linux-x64.AppImage"),
             Some("b".repeat(64))
         );
         assert_eq!(checksum_for(&listing, "ZeroNet-Linux"), None);

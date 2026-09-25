@@ -475,9 +475,13 @@ object Engine {
         val results = crowdResults.values.sortedBy { !it.ok }
         crowdResults.clear()
         if (!settings.shareResults || results.isEmpty()) return
-        val tunnel = if (running) java.net.Proxy(java.net.Proxy.Type.HTTP, java.net.InetSocketAddress("127.0.0.1", settings.httpPort)) else null
+        val tunnel = tunnelProxy()
         scope.launch(Dispatchers.IO) { Crowd.report(app, network, results, emptyList(), tunnel) }
     }
+
+    /** The local HTTP proxy into the tunnel, while it is up. */
+    private fun tunnelProxy(): java.net.Proxy? =
+        if (running) java.net.Proxy(java.net.Proxy.Type.HTTP, java.net.InetSocketAddress("127.0.0.1", settings.httpPort)) else null
 
     /** Stream discovery; bring the tunnel up on the first working config. */
     private suspend fun discover(network: String, excludeKeys: Set<String>) {
@@ -1013,7 +1017,8 @@ object Engine {
                 scan.value = scan.value.copy(running = false, results = results.take(100))
                 if (settings.shareResults && network != null && results.isNotEmpty()) {
                     val clean = results.distinctBy { it.ip }.take(Crowd.MAX_CLEAN).map { Crowd.CleanIp(it.ip, it.rttMs) }
-                    scope.launch(Dispatchers.IO) { Crowd.report(app, network, emptyList(), clean, null) }
+                    val tunnel = tunnelProxy()
+                    scope.launch(Dispatchers.IO) { Crowd.report(app, network, emptyList(), clean, tunnel) }
                 }
             }
         }

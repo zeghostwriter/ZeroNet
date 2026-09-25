@@ -22,10 +22,13 @@ import java.net.URL
  * jsDelivr mirror, kept on disk and refreshed every [TTL_MS].
  *
  * Writing: after a connection attempt the engine reports what its tests
- * found, public servers only, to a relay named in the rankings. Reports go
- * straight out on the phone's own network (the app is excluded from its VPN),
- * so for Wi-Fi the relay can tell the ISP; it answers with the network name
- * it used, which is remembered for this Wi-Fi.
+ * found, public servers only, to a relay named in the rankings. The relay
+ * runs on a filtered workers.dev address, so while connected reports go
+ * through the tunnel, naming the carrier on mobile data and "any" on Wi-Fi
+ * (through the tunnel the relay cannot tell the ISP). Straight out on the
+ * phone's own network (the app is excluded from its VPN) is the fallback;
+ * there the relay does see the ISP, and the network name it answers with is
+ * remembered for this Wi-Fi.
  */
 object Crowd {
     private const val TAG = "Crowd"
@@ -141,26 +144,48 @@ object Crowd {
             ?.filter { it.startsWith("https://") }.orEmpty()
         if (relays.isEmpty()) return
         val carrier = carrier(context)
-        val body = JSONObject()
+        val remembered = prefs(context).getString("net:$localNetwork", null)
+        fun body(net: String?) = JSONObject()
             .put("v", 1)
+            .put("nonce", dailyNonce(context))
             .put("results", JSONArray().also { a -> results.take(MAX_RESULTS).forEach { a.put(JSONObject().put("id", it.id).put("ok", it.ok).put("ms", it.ms)) } })
             .put("clean", JSONArray().also { a -> clean.take(MAX_CLEAN).forEach { a.put(JSONObject().put("ip", it.ip).put("ms", it.ms)) } })
-        if (carrier != null) body.put("net", "cell:$carrier")
-        // Straight out first, so the relay sees this network's ISP. Through
-        // the tunnel only when the network is named in the report itself:
-        // otherwise it would be counted under the VPN server's ISP.
-        val routes = listOfNotNull(Proxy.NO_PROXY, tunnel?.takeIf { carrier != null })
-        for (route in routes) {
+            .apply { if (net != null) put("net", net) }
+            .toString()
+        // Through the tunnel the relay sees the VPN server, not this network,
+        // so the report must name the network itself: the carrier, else
+        // "any" (counted towards every network together). Straight out, the
+        // relay can see the ISP.
+        val attempts = listOfNotNull(
+            tunnel?.let { it to body(carrier?.let { c -> "cell:$c" } ?: "any") },
+            Proxy.NO_PROXY to body(carrier?.let { "cell:$it" }),
+        )
+        for ((route, payload) in attempts) {
             for (relay in relays) {
-                val answer = runCatching { post("$relay/v1/report", body.toString(), route) }
+                val answer = runCatching { post("$relay/v1/report", payload, route) }
                     .onFailure { Log.i(TAG, "report to $relay: ${it.message}") }
                     .getOrNull() ?: continue
                 runCatching { JSONObject(answer).optString("net") }.getOrNull()
-                    ?.takeIf { it.startsWith("asn:") && carrier == null && route == Proxy.NO_PROXY }
+                    ?.takeIf { it.startsWith("asn:") && carrier == null && route == Proxy.NO_PROXY && it != remembered }
                     ?.let { prefs(context).edit().putString("net:$localNetwork", it).apply() }
                 return
             }
         }
+    }
+
+    /**
+     * A random value for today, sent with reports: the relay combines it with
+     * the sending address, so people behind one VPN server count as
+     * different people. New every day, like the relay's pseudonyms.
+     */
+    private fun dailyNonce(context: Context): String {
+        val prefs = prefs(context)
+        val day = System.currentTimeMillis() / 86_400_000L
+        if (prefs.getLong("nonceDay", -1) == day) prefs.getString("nonce", null)?.let { return it }
+        val bytes = ByteArray(12).also { java.security.SecureRandom().nextBytes(it) }
+        val nonce = bytes.joinToString("") { "%02x".format(it) }
+        prefs.edit().putLong("nonceDay", day).putString("nonce", nonce).apply()
+        return nonce
     }
 
     // ------------------------------------------------------------ HTTP

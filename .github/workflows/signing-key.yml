@@ -1,0 +1,80 @@
+name: create Android signing key
+
+# Run once, by hand (Actions → create Android signing key → Run workflow).
+#
+# Android installs an update only over an app signed with the same key. This
+# makes that key inside the runner, encrypts it with the repository secret
+# ANDROID_SIGNING_PASSWORD (AES-256, PBKDF2), and commits only the encrypted
+# file, ZeroNet-Mobile/signing/release.p12.enc. The release workflow
+# decrypts it with the same secret. The file is useless without the
+# password, and the password is never printed.
+#
+# Keep a copy of the password somewhere safe: without it no update can ever
+# be installed over existing copies again.
+on:
+  workflow_dispatch:
+    inputs:
+      replace:
+        description: "Replace an existing key (every installed copy will need a reinstall)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  create:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: create and encrypt the key
+        env:
+          PASSWORD: ${{ secrets.ANDROID_SIGNING_PASSWORD }}
+          REPLACE: ${{ inputs.replace }}
+        run: |
+          if [ -z "$PASSWORD" ]; then
+            echo "::error::Add the repository secret ANDROID_SIGNING_PASSWORD first (Settings → Secrets and variables → Actions)."
+            exit 1
+          fi
+          if [ "${#PASSWORD}" -lt 20 ]; then
+            echo "::error::ANDROID_SIGNING_PASSWORD is shorter than 20 characters; use a long random one."
+            exit 1
+          fi
+          out=ZeroNet-Mobile/signing/release.p12.enc
+          if [ -f "$out" ] && [ "$REPLACE" != "true" ]; then
+            echo "::error::A signing key already exists. Replacing it means every installed copy must be reinstalled; run again with 'replace' ticked if that is really wanted."
+            exit 1
+          fi
+          mkdir -p "$(dirname "$out")"
+          work=$(mktemp -d)
+          keytool -genkeypair -v \
+            -keystore "$work/release.p12" -storetype PKCS12 \
+            -alias zeronet -keyalg RSA -keysize 4096 -validity 36500 \
+            -dname "CN=ZeroNet" \
+            -storepass:env PASSWORD -keypass:env PASSWORD > /dev/null
+          openssl enc -aes-256-cbc -pbkdf2 -iter 600000 -salt \
+            -in "$work/release.p12" -out "$out" -pass env:PASSWORD
+          # Prove the encrypted file opens again before committing it.
+          openssl enc -d -aes-256-cbc -pbkdf2 -iter 600000 \
+            -in "$out" -out "$work/check.p12" -pass env:PASSWORD
+          cmp "$work/release.p12" "$work/check.p12"
+          {
+            echo "### Android signing key created"
+            echo
+            echo "Certificate fingerprint (public; the same for every release from now on):"
+            echo '```'
+            keytool -list -v -keystore "$work/release.p12" -storepass:env PASSWORD | grep -E "SHA256:" | head -1
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          rm -rf "$work"
+      - name: commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add ZeroNet-Mobile/signing/release.p12.enc
+          git commit -m "Android signing key (encrypted)"
+          git push
