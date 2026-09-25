@@ -89,22 +89,125 @@ pub async fn resolve_endpoint(address: &Address, port: u16) -> Result<Vec<Socket
     match address {
         Address::Ip(ip) => Ok(vec![SocketAddr::new(*ip, port)]),
         Address::Domain(d) => {
-            let host = format!("{d}:{port}");
-            match tokio::net::lookup_host(host).await {
-                Ok(iter) => {
-                    let v: Vec<SocketAddr> = iter.collect();
-                    if v.is_empty() {
-                        Err(Failure::new(FailureKind::DnsNoData, Stage::Resolving)
-                            .with_confidence(Confidence::Confirmed)
-                            .with_detail(format!("no addresses for {d}")))
-                    } else {
-                        Ok(v)
+            let name: &str = d;
+            // The system resolver first: it is fast and, for most names,
+            // right. In Iran it is also the ISP's, which answers a filtered
+            // name with the block page (10.10.34.x) or a dead address, so
+            // those answers are thrown away rather than dialled: connecting
+            // to them only ever yields "connection refused".
+            let system = tokio::time::timeout(
+                SYSTEM_DNS_TIMEOUT,
+                tokio::net::lookup_host(format!("{name}:{port}")),
+            )
+            .await;
+            let mut hijacked = false;
+            let system_error = match system {
+                Ok(Ok(iter)) => {
+                    let all: Vec<SocketAddr> = iter.collect();
+                    // `localhost` is loopback by definition, not by forgery.
+                    let local_name = name.eq_ignore_ascii_case("localhost")
+                        || name.to_ascii_lowercase().ends_with(".localhost");
+                    let usable: Vec<SocketAddr> = all
+                        .iter()
+                        .copied()
+                        .filter(|a| local_name || !is_hijacked_answer(a.ip()))
+                        .collect();
+                    if !usable.is_empty() {
+                        return Ok(usable);
                     }
+                    hijacked = !all.is_empty();
+                    None
                 }
-                Err(e) => Err(Failure::from_io(&e, Stage::Resolving)),
+                Ok(Err(e)) => Some(e.to_string()),
+                Err(_) => Some("timed out".to_string()),
+            };
+            // Then encrypted DNS, which a middlebox can block but not forge.
+            let encrypted = fallback_resolver()
+                .lookup(name, zero_config::dns::QueryStrategy::UseIp)
+                .await;
+            match encrypted {
+                Ok(ips) => {
+                    let usable: Vec<SocketAddr> = ips
+                        .into_iter()
+                        .filter(|ip| !is_hijacked_answer(*ip))
+                        .map(|ip| SocketAddr::new(ip, port))
+                        .collect();
+                    if !usable.is_empty() {
+                        return Ok(usable);
+                    }
+                    Err(Failure::new(FailureKind::DnsNoData, Stage::Resolving)
+                        .with_confidence(Confidence::Confirmed)
+                        .with_detail(format!("no usable addresses for {name}")))
+                }
+                Err(error) => {
+                    let detail = if hijacked {
+                        format!(
+                            "{name} resolves to a filtering address on this network, \
+                             and encrypted DNS failed: {error}"
+                        )
+                    } else {
+                        format!(
+                            "{name}: {}; encrypted DNS: {error}",
+                            system_error.unwrap_or_else(|| "no addresses".into())
+                        )
+                    };
+                    let kind = if hijacked {
+                        FailureKind::DnsSuspectedInterference
+                    } else {
+                        FailureKind::DnsNoData
+                    };
+                    Err(Failure::new(kind, Stage::Resolving).with_detail(detail))
+                }
             }
         }
     }
+}
+
+/// How long the system resolver gets before encrypted DNS is asked instead.
+const SYSTEM_DNS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(4);
+
+/// An answer no public proxy server has: Iran's filtering block page
+/// (10.10.34.34–36), the unspecified address and loopback, which filtering
+/// resolvers return for names they refuse to answer.
+pub fn is_hijacked_answer(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => {
+            let o = v4.octets();
+            (o[0] == 10 && o[1] == 10 && o[2] == 34)
+                || v4.is_unspecified()
+                || v4.is_loopback()
+                || v4.is_broadcast()
+        }
+        IpAddr::V6(v6) => v6.is_unspecified() || v6.is_loopback(),
+    }
+}
+
+/// Encrypted resolvers addressed by IP, so they need no DNS of their own.
+/// Tried in order; their sockets are protected like every other dial.
+fn fallback_resolver() -> &'static zero_dns::Resolver {
+    static RESOLVER: OnceLock<zero_dns::Resolver> = OnceLock::new();
+    RESOLVER.get_or_init(|| {
+        let servers = [
+            "https://1.1.1.1/dns-query",
+            "https://8.8.8.8/dns-query",
+            "https://9.9.9.9/dns-query",
+        ]
+        .into_iter()
+        .filter_map(zero_config::dns::ResolverEndpoint::parse)
+        .map(|endpoint| zero_config::dns::DnsServer {
+            endpoint,
+            domains: Vec::new(),
+            expect_ips: Vec::new(),
+            skip_fallback: false,
+            tag: None,
+        })
+        .collect::<Vec<_>>()
+        .into_boxed_slice();
+        zero_dns::Resolver::new(zero_config::dns::DnsSettings {
+            servers,
+            ..zero_config::dns::DnsSettings::default()
+        })
+    })
 }
 
 fn race_policy(stream: &StreamSettings) -> RacePolicy {
@@ -1680,6 +1783,34 @@ pub fn filter_family(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Iran's resolvers answer a filtered name with the block page; those
+    /// answers must never be dialled. Ordinary private and public addresses
+    /// stay usable (a self-hosted server can legitimately be on a LAN).
+    #[test]
+    fn forged_dns_answers_are_recognised() {
+        for forged in [
+            "10.10.34.34",
+            "10.10.34.35",
+            "10.10.34.36",
+            "0.0.0.0",
+            "127.0.0.1",
+            "::",
+            "::1",
+        ] {
+            assert!(is_hijacked_answer(forged.parse().unwrap()), "{forged}");
+        }
+        for real in ["104.16.1.1", "192.168.1.10", "10.0.0.5", "2606:4700::1111"] {
+            assert!(!is_hijacked_answer(real.parse().unwrap()), "{real}");
+        }
+    }
+
+    #[tokio::test]
+    async fn an_ip_endpoint_is_used_as_is() {
+        let address = Address::parse_host("203.0.113.9");
+        let resolved = resolve_endpoint(&address, 443).await.unwrap();
+        assert_eq!(resolved, vec!["203.0.113.9:443".parse().unwrap()]);
+    }
     use zero_config::DomainStrategy;
 
     fn sa(s: &str) -> SocketAddr {

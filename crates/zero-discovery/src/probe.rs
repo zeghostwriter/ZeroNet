@@ -23,9 +23,21 @@ use std::time::{Duration, Instant};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use zero_core::{Address, Destination};
 
-/// Default probe: plain HTTP, answered with an empty 204 by a CDN edge close
-/// to every exit.
-pub const DEFAULT_PROBE_URL: &str = "http://cp.cloudflare.com/generate_204";
+/// Default probe: plain HTTP, answered with an empty 204 by a Google edge
+/// close to every exit.
+///
+/// Not a Cloudflare address. Configs served by Cloudflare Workers (BPB,
+/// edgetunnel and their kin, a large share of what Iranians use) cannot open
+/// a connection from the Worker back into Cloudflare's own network: those
+/// panels route such destinations through a "proxy IP" of uneven quality,
+/// and a probe to cp.cloudflare.com came back as "http: status 404" or not
+/// at all, through configs that work for everything else.
+pub const DEFAULT_PROBE_URL: &str = "http://www.gstatic.com/generate_204";
+
+/// Tried when the tunnel carried the request but the default target answered
+/// wrongly, so one unreachable or misbehaving target does not fail a working
+/// config.
+pub const ALTERNATE_PROBE_URL: &str = "http://cp.cloudflare.com/generate_204";
 
 /// A parsed probe URL.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -74,14 +86,17 @@ impl ProbeTarget {
 /// Resolve `host:port`, preferring IPv4 (mobile networks in the target region
 /// rarely carry IPv6 end to end).
 pub async fn resolve(host: &str, port: u16, timeout: Duration) -> Result<Vec<SocketAddr>, String> {
-    if let Ok(ip) = host.trim_matches(['[', ']']).parse::<std::net::IpAddr>() {
-        return Ok(vec![SocketAddr::new(ip, port)]);
-    }
-    let resolved = tokio::time::timeout(timeout, tokio::net::lookup_host((host, port)))
-        .await
-        .map_err(|_| "dns: timed out".to_string())?
-        .map_err(|error| format!("dns: {error}"))?;
-    let mut addresses: Vec<SocketAddr> = resolved.collect();
+    // The runtime's resolver: the system's first, with answers a filtering
+    // resolver forges (Iran's 10.10.34.x block page) replaced by encrypted
+    // DNS. Dialling a forged answer only ever produced "connection refused".
+    let address = Address::parse_host(host.trim_matches(['[', ']']));
+    let mut addresses = tokio::time::timeout(
+        timeout,
+        zero_runtime::outbound::resolve_endpoint(&address, port),
+    )
+    .await
+    .map_err(|_| "dns: timed out".to_string())?
+    .map_err(|failure| format!("dns: {failure}"))?;
     addresses.sort_by_key(|address| address.is_ipv6());
     addresses.dedup();
     if addresses.is_empty() {
@@ -251,6 +266,15 @@ async fn read_status<S: tokio::io::AsyncRead + Unpin>(stream: &mut S) -> Result<
     Ok(status)
 }
 
+fn alternate_target(target: &ProbeTarget) -> ProbeTarget {
+    let default = ProbeTarget::parse(DEFAULT_PROBE_URL).expect("the default probe URL parses");
+    if target.host_header == default.host_header {
+        ProbeTarget::parse(ALTERNATE_PROBE_URL).expect("the alternate probe URL parses")
+    } else {
+        default
+    }
+}
+
 /// The real test: a plain-HTTP request as a cheap filter, then a verified
 /// HTTPS confirmation. Only a config that passes both is alive. The reported
 /// delay is the plain request's, so it stays comparable across protocols and
@@ -261,7 +285,24 @@ pub async fn real_test(
     timeout: Duration,
     confirm: Option<Duration>,
 ) -> Result<u64, String> {
-    let first = real_delay(outbound, target, timeout).await?;
+    let first = match real_delay(outbound, target, timeout).await {
+        Ok(delay) => delay,
+        // The proxy connected and carried the request; only the target's
+        // answer was wrong. Ask another target before blaming the config.
+        Err(error) if error.starts_with("http:") || error.starts_with("read:") => {
+            let alternate = alternate_target(target);
+            match real_delay(outbound, &alternate, timeout).await {
+                Ok(delay) => delay,
+                Err(second) => {
+                    return Err(format!(
+                        "{error} ({}); {second} ({})",
+                        target.host_header, alternate.host_header
+                    ))
+                }
+            }
+        }
+        Err(error) => return Err(error),
+    };
     if let Some(confirm_timeout) = confirm {
         tls_confirm(outbound, confirm_timeout)
             .await
@@ -279,7 +320,7 @@ pub(crate) mod tests {
     fn probe_urls_are_parsed_and_https_is_refused() {
         let target = ProbeTarget::parse(DEFAULT_PROBE_URL).unwrap();
         assert_eq!(target.destination.port, 80);
-        assert_eq!(target.host_header, "cp.cloudflare.com");
+        assert_eq!(target.host_header, "www.gstatic.com");
         assert_eq!(target.path, "/generate_204");
 
         let target = ProbeTarget::parse("http://127.0.0.1:8080/x?y=1").unwrap();
@@ -289,6 +330,24 @@ pub(crate) mod tests {
 
         assert!(ProbeTarget::parse("https://www.gstatic.com/generate_204").is_err());
         assert!(ProbeTarget::parse("not a url").is_err());
+    }
+
+    /// The retry goes to the other well-known target, never to the one that
+    /// just answered wrongly.
+    #[test]
+    fn a_failed_target_is_retried_on_the_other_one() {
+        let default = ProbeTarget::parse(DEFAULT_PROBE_URL).unwrap();
+        let alternate = ProbeTarget::parse(ALTERNATE_PROBE_URL).unwrap();
+        assert_eq!(
+            alternate_target(&default).host_header,
+            alternate.host_header
+        );
+        assert_eq!(
+            alternate_target(&alternate).host_header,
+            default.host_header
+        );
+        let custom = ProbeTarget::parse("http://127.0.0.1:8080/x").unwrap();
+        assert_eq!(alternate_target(&custom).host_header, default.host_header);
     }
 
     #[tokio::test]
