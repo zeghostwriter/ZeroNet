@@ -123,6 +123,8 @@ pub struct AppSettings {
     pub secret_theme_unlocked: bool,
     /// Notices the user chose "Don't show again" on, comma-separated keys.
     pub muted_notices: String,
+    /// Look for a new release at start (release builds only).
+    pub auto_update_check: bool,
 }
 
 impl Default for AppSettings {
@@ -179,6 +181,7 @@ impl Default for AppSettings {
             show_usage: true,
             secret_theme_unlocked: false,
             muted_notices: String::new(),
+            auto_update_check: true,
         }
     }
 }
@@ -531,6 +534,7 @@ impl Database {
                     "show_usage" => settings.show_usage = truthy(&item.1),
                     "secret_theme_unlocked" => settings.secret_theme_unlocked = truthy(&item.1),
                     "muted_notices" => settings.muted_notices = item.1,
+                    "auto_update_check" => settings.auto_update_check = truthy(&item.1),
                     _ => {}
                 }
             }
@@ -664,6 +668,10 @@ impl Database {
                 },
             ),
             ("muted_notices", &settings.muted_notices),
+            (
+                "auto_update_check",
+                if settings.auto_update_check { "1" } else { "0" },
+            ),
         ];
 
         for (k, v) in pairs {
@@ -1118,6 +1126,7 @@ mod tests {
             show_usage: false,
             secret_theme_unlocked: true,
             muted_notices: "startup.elevated,startup.no-elevator".into(),
+            auto_update_check: false,
         }
     }
 

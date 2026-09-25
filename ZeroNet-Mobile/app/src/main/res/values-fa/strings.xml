@@ -385,8 +385,8 @@
     <string name="kw_share">اشتراک هات‌اسپات وای‌فای پراکسی ساکس پورت رمز تترینگ</string>
     <string name="kw_evasion">سانسور فیلترینگ فیلترشکن دی ان اس تبلیغات کوییک</string>
     <string name="kw_appearance">پوسته رنگ تیره روشن سیاه زبان فارسی انگلیسی انیمیشن حرکت تم</string>
-    <string name="kw_privacy">گزارش لاگ تاریخچه حذف پاک داده حریم خصوصی</string>
-    <string name="kw_about">نسخه مجوز لایسنس کد منبع متن‌باز موتور</string>
+    <string name="kw_privacy">گزارش لاگ تاریخچه حذف پاک داده حریم خصوصی اشتراک ناشناس کمک دیگران</string>
+    <string name="kw_about">نسخه مجوز لایسنس کد منبع متن‌باز موتور به‌روزرسانی آپدیت</string>
 
     <!-- Onboarding -->
     <string name="onboarding_perm_title">زیرونت به دو دسترسی نیاز دارد</string>
@@ -403,4 +403,35 @@
     <string name="profile_gaming_hint">کمترین پینگ، UDP روشن، سرور وسط بازی عوض نمی‌شود</string>
     <string name="gaming_title">حالت گیمینگ</string>
     <string name="gaming_ping">پینگ %1$s ms</string>
+
+    <!-- In-app updates -->
+    <string name="update_sheet_title">به‌روزرسانی</string>
+    <string name="update_title_available">زیرونت %1$s آمد</string>
+    <string name="update_title_downloading">در حال دانلود %1$s</string>
+    <string name="update_title_ready">%1$s آماده‌ی نصب است</string>
+    <string name="update_title_reinstall">این نسخه روی نسخه‌ی فعلی نصب نمی‌شود</string>
+    <string name="update_title_failed">به‌روزرسانی کامل نشد</string>
+    <string name="update_whats_new">تغییرات</string>
+    <string name="update_size">حجم دانلود %1$s. سرورها و تنظیمات شما دست نمی‌خورند.</string>
+    <string name="update_progress">%1$s از %2$s</string>
+    <string name="update_ready_hint">اندروید برای نصب از شما تأیید می‌گیرد.</string>
+    <string name="update_allow_hint">اندروید فقط یک بار می‌پرسد: اجازه‌ی نصب برنامه را به زیرونت بدهید، بعد برگردید و «نصب» را بزنید.</string>
+    <string name="update_reinstall_body">این نسخه با کلیدی متفاوت از زیرونتِ روی گوشی امضا شده، برای همین اندروید آن را روی نسخه‌ی فعلی نصب نمی‌کند. برای گرفتنش، زیرونت را حذف کنید و نسخه‌ی جدید را از صفحه‌ی انتشار نصب کنید. سرورها و تنظیمات شما پاک می‌شوند.</string>
+    <string name="update_now">به‌روزرسانی</string>
+    <string name="update_later">بعداً</string>
+    <string name="update_cancel">لغو</string>
+    <string name="update_install">نصب</string>
+    <string name="update_allow">اجازه‌ی نصب</string>
+    <string name="update_open_page">صفحه‌ی انتشار</string>
+    <string name="update_retry">دوباره</string>
+    <string name="settings_updates">به‌روزرسانی</string>
+    <string name="settings_update_check">بررسی به‌روزرسانی</string>
+    <string name="settings_update_checking">در حال بررسی…</string>
+    <string name="settings_update_latest">آخرین نسخه را دارید</string>
+    <string name="settings_update_available">نسخه‌ی %1$s آمده است</string>
+    <string name="settings_update_downloading">در حال دانلود… %1$s</string>
+    <string name="settings_update_ready">نسخه‌ی %1$s آماده‌ی نصب است</string>
+    <string name="settings_update_failed">بررسی نشد: %1$s</string>
+    <string name="settings_share_results">کمک به اتصال دیگران</string>
+    <string name="settings_share_results_hint">به‌صورت ناشناس اعلام می‌کند کدام سرورهای عمومی و آی‌پی‌های تمیز روی شبکه‌ی شما کار کردند تا دیگران روی همین شبکه سریع‌تر وصل شوند. کانفیگ‌های شخصی شما هرگز ارسال نمی‌شوند.</string>
 </resources>

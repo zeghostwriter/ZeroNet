@@ -28,6 +28,8 @@ import com.zeronet.mobile.ui.shell.TabHost
 import com.zeronet.mobile.ui.shell.ZeroRoot
 import com.zeronet.mobile.ui.theme.ZeroTheme
 import com.zeronet.mobile.ui.theme.ZeroMotion
+import com.zeronet.mobile.ui.update.UpdateActions
+import com.zeronet.mobile.ui.update.UpdateSheet
 
 /**
  * The whole app: theme from settings, first-run onboarding, then the four
@@ -90,5 +92,17 @@ private fun MainTabs(controller: AppController) {
                 Tab.Settings -> SettingsRoute()
             }
         }
+        val update by controller.updater.state.collectAsStateWithLifecycle()
+        val actions = remember(controller) {
+            UpdateActions(
+                onUpdate = controller.updater::download,
+                onLater = controller::dismissUpdate,
+                onCancel = controller.updater::cancel,
+                onInstall = controller::installUpdate,
+                onOpenPage = controller.platform::openUrl,
+                canInstall = controller.updater::canInstall,
+            )
+        }
+        UpdateSheet(controller.updateSheetOpen, update, actions)
     }
 }

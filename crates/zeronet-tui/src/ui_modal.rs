@@ -47,6 +47,9 @@ impl UiRenderer<'_> {
             ModalState::SudoPassword { .. } => (centered_rect(64, 46, area), "PASSWORD"),
             ModalState::Help { .. } => (centered_rect(74, 86, area), "HELP"),
             ModalState::ImageView { .. } => (centered_rect(70, 80, area), "IMAGE"),
+            ModalState::Update { release, .. } => {
+                (update_dialog_rect(area, release.notes.len()), "UPDATE")
+            }
         }
     }
 
@@ -71,6 +74,7 @@ impl UiRenderer<'_> {
             ModalState::ShareConfig { .. } => "SHARE CONFIG",
             ModalState::SudoPassword { .. } => "ADMINISTRATOR PASSWORD",
             ModalState::Help { .. } => "KEYBOARD REFERENCE",
+            ModalState::Update { .. } => "UPDATE",
             ModalState::None => return,
         };
         let accent = match self.modal_state {
@@ -84,6 +88,11 @@ impl UiRenderer<'_> {
                 }
             }
             ModalState::Confirm { .. } => self.theme.warn,
+            ModalState::Update { phase, .. } => match phase {
+                crate::modal::UpdatePhase::Installed => self.theme.ok,
+                crate::modal::UpdatePhase::Failed(_) => self.theme.err,
+                _ => self.theme.accent_bright,
+            },
             ModalState::QuitConfirmation { .. } | ModalState::Help { .. } => self.theme.accent,
             _ => self.theme.accent_bright,
         };
@@ -202,6 +211,9 @@ impl UiRenderer<'_> {
             ModalState::Help { .. } => self.render_help(frame, inner),
             ModalState::ImageView { findings, .. } => {
                 self.render_image_view(frame, inner, findings)
+            }
+            ModalState::Update { release, phase, .. } => {
+                self.render_update(frame, inner, release, phase)
             }
             ModalState::None => {}
         }
@@ -541,6 +553,269 @@ impl UiRenderer<'_> {
             ComponentId::AshesWarningDismiss,
             "✖ Dismiss (Enter / Esc)",
             self.theme.err,
+        );
+    }
+
+    /// The update dialog: a headline with a light sweeping across it, the
+    /// version change as a rail a pulse runs along, what changed, and then
+    /// whatever the update is doing.
+    fn render_update(
+        &mut self,
+        frame: &mut Frame,
+        inner: Rect,
+        release: &crate::update::Release,
+        phase: &crate::modal::UpdatePhase,
+    ) {
+        use crate::modal::UpdatePhase;
+        let theme = self.theme;
+        let moving = self.caps.animations && self.effects.animations_enabled();
+        let tick = if moving {
+            self.effects.current_tick()
+        } else {
+            0
+        };
+        let done = *phase == UpdatePhase::Installed;
+        let hue = if done { theme.ok } else { theme.accent_bright };
+
+        let notes = release.notes.len() as u16;
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(1), // breathing room
+                Constraint::Length(1), // headline
+                Constraint::Length(1),
+                Constraint::Length(1), // version rail
+                Constraint::Length(1),
+                Constraint::Min(0),    // what's new
+                Constraint::Length(3), // status
+                Constraint::Length(3), // buttons
+            ])
+            .split(inner);
+
+        // Headline, with a band of light sweeping across it.
+        let headline = if done {
+            format!("✔  ZeroNet {} is installed", release.version)
+        } else {
+            format!("⬆  ZeroNet {} is out", release.version)
+        };
+        let len = headline.chars().count();
+        let spans: Vec<Span> = headline
+            .chars()
+            .enumerate()
+            .map(|(i, ch)| {
+                let glow = if moving {
+                    sweep(tick, i, len, 0.7)
+                } else {
+                    0.0
+                };
+                Span::styled(
+                    ch.to_string(),
+                    Style::default()
+                        .fg(crate::theme::lerp_color(hue, theme.text, glow * 0.85))
+                        .add_modifier(Modifier::BOLD),
+                )
+            })
+            .collect();
+        frame.render_widget(
+            Paragraph::new(Line::from(spans)).alignment(Alignment::Center),
+            chunks[1],
+        );
+
+        // Old version, a rail, new version. A pulse runs along the rail
+        // towards the new version; once installed the rail is lit through.
+        let from = crate::update::CURRENT_VERSION;
+        let to = release.version.as_str();
+        let rail_len = (chunks[3].width as usize)
+            .saturating_sub(from.len() + to.len() + 8)
+            .clamp(4, 28);
+        let mut rail: Vec<Span> = vec![Span::styled(
+            format!("{from}  "),
+            Style::default().fg(theme.muted),
+        )];
+        for i in 0..rail_len {
+            let color = if done {
+                theme.ok
+            } else {
+                let pulse = if moving {
+                    sweep(tick, i, rail_len, 0.45)
+                } else {
+                    0.0
+                };
+                crate::theme::lerp_color(theme.accent_dim, theme.accent_bright, pulse)
+            };
+            rail.push(Span::styled("━", Style::default().fg(color)));
+        }
+        rail.push(Span::styled("▶  ", Style::default().fg(hue)));
+        rail.push(Span::styled(
+            to.to_string(),
+            Style::default().fg(hue).add_modifier(Modifier::BOLD),
+        ));
+        frame.render_widget(
+            Paragraph::new(Line::from(rail)).alignment(Alignment::Center),
+            chunks[3],
+        );
+
+        // What changed.
+        if notes > 0 && chunks[5].height >= 2 {
+            let width = (chunks[5].width as usize).saturating_sub(4);
+            let mut lines = vec![Line::from(Span::styled(
+                "WHAT'S NEW",
+                Style::default()
+                    .fg(theme.muted)
+                    .add_modifier(Modifier::BOLD),
+            ))];
+            for note in release.notes.iter().take(chunks[5].height as usize - 1) {
+                lines.push(Line::from(vec![
+                    Span::styled("• ", Style::default().fg(theme.accent)),
+                    Span::styled(truncate(note, width), Style::default().fg(theme.text)),
+                ]));
+            }
+            frame.render_widget(Paragraph::new(lines), chunks[5]);
+        }
+
+        // Status: size, progress, result.
+        let status = chunks[6];
+        match phase {
+            UpdatePhase::Available => {
+                let size = release
+                    .asset
+                    .as_ref()
+                    .filter(|a| a.size > 0)
+                    .map(|a| format!("{} download. ", megabytes(a.size)))
+                    .unwrap_or_default();
+                frame.render_widget(
+                    Paragraph::new(vec![
+                        Line::from(""),
+                        Line::from(Span::styled(
+                            format!("{size}Your profiles and settings stay as they are."),
+                            Style::default().fg(theme.muted),
+                        )),
+                    ])
+                    .alignment(Alignment::Center),
+                    status,
+                );
+            }
+            UpdatePhase::Downloading { received, total } => {
+                self.render_update_progress(frame, status, *received, *total, tick, moving);
+            }
+            UpdatePhase::Installed => {
+                frame.render_widget(
+                    Paragraph::new(vec![
+                        Line::from(""),
+                        Line::from(Span::styled(
+                            "Restart ZeroNet to start using it.",
+                            Style::default().fg(theme.text),
+                        )),
+                    ])
+                    .alignment(Alignment::Center),
+                    status,
+                );
+            }
+            UpdatePhase::Manual(message) | UpdatePhase::Failed(message) => {
+                let color = if matches!(phase, UpdatePhase::Failed(_)) {
+                    theme.err
+                } else {
+                    theme.warn
+                };
+                frame.render_widget(
+                    Paragraph::new(message.as_str())
+                        .style(Style::default().fg(color))
+                        .alignment(Alignment::Center)
+                        .wrap(Wrap { trim: true }),
+                    status,
+                );
+            }
+        }
+
+        let (primary, primary_color, secondary) = match phase {
+            UpdatePhase::Available => ("⬇ Update now (Enter)", theme.accent_bright, "Later (Esc)"),
+            UpdatePhase::Downloading { .. } => ("Downloading…", theme.muted, "Hide (Esc)"),
+            UpdatePhase::Installed => ("↻ Restart now (Enter)", theme.ok, "Later (Esc)"),
+            UpdatePhase::Manual(_) => (
+                "Open release page (Enter)",
+                theme.accent_bright,
+                "Close (Esc)",
+            ),
+            UpdatePhase::Failed(_) => ("↻ Try again (Enter)", theme.accent_bright, "Close (Esc)"),
+        };
+        self.confirm_cancel_colored(
+            frame,
+            chunks[7],
+            ComponentId::UpdatePrimary,
+            primary,
+            primary_color,
+            ComponentId::UpdateSecondary,
+            secondary,
+            theme.muted,
+        );
+    }
+
+    /// A progress bar with eighth-cell precision, shading from the dim to
+    /// the bright accent, with a sheen travelling over the filled part.
+    fn render_update_progress(
+        &mut self,
+        frame: &mut Frame,
+        area: Rect,
+        received: u64,
+        total: u64,
+        tick: u64,
+        moving: bool,
+    ) {
+        const PARTIAL: [&str; 8] = [" ", "▏", "▎", "▍", "▌", "▋", "▊", "▉"];
+        let theme = self.theme;
+        let fraction = if total > 0 {
+            (received as f64 / total as f64).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        let width = (area.width as usize).saturating_sub(12).max(4);
+        let eighths = (fraction * width as f64 * 8.0).round() as usize;
+        let (full, partial) = (eighths / 8, eighths % 8);
+
+        let mut bar: Vec<Span> = vec![Span::styled("▕", Style::default().fg(theme.border))];
+        for i in 0..width {
+            let base = crate::theme::lerp_color(
+                theme.accent_dim,
+                theme.accent_bright,
+                i as f64 / width.max(1) as f64,
+            );
+            if i < full {
+                let sheen = if moving {
+                    sweep(tick, i, full.max(1), 0.8)
+                } else {
+                    0.0
+                };
+                bar.push(Span::styled(
+                    "█",
+                    Style::default().fg(crate::theme::lerp_color(base, theme.text, sheen * 0.6)),
+                ));
+            } else if i == full && partial > 0 {
+                bar.push(Span::styled(PARTIAL[partial], Style::default().fg(base)));
+            } else {
+                bar.push(Span::styled("·", Style::default().fg(theme.border)));
+            }
+        }
+        bar.push(Span::styled("▏", Style::default().fg(theme.border)));
+        bar.push(Span::styled(
+            format!(" {:>3}%", (fraction * 100.0).floor() as u32),
+            Style::default()
+                .fg(theme.accent_bright)
+                .add_modifier(Modifier::BOLD),
+        ));
+
+        let detail = if total > 0 {
+            format!("{} of {}", megabytes(received), megabytes(total))
+        } else {
+            megabytes(received)
+        };
+        frame.render_widget(
+            Paragraph::new(vec![
+                Line::from(""),
+                Line::from(bar),
+                Line::from(Span::styled(detail, Style::default().fg(theme.muted))),
+            ])
+            .alignment(Alignment::Center),
+            area,
         );
     }
 
@@ -1113,6 +1388,36 @@ impl UiRenderer<'_> {
         let hovered = self.interaction.is_hovered(id);
         self.chip(frame, area, label, color, hovered);
     }
+}
+
+/// The update dialog, sized to its contents: a line per release note, and
+/// never larger than the screen.
+fn update_dialog_rect(area: Rect, notes: usize) -> Rect {
+    // Borders 2, headline and rail 5, notes (heading, lines, gap), status
+    // 3, buttons 3.
+    let notes_rows = if notes > 0 { notes as u16 + 2 } else { 0 };
+    let want_h = (13 + notes_rows).min(area.height.saturating_sub(2));
+    let want_w = 68.min(area.width.saturating_sub(4));
+    Rect {
+        x: area.x + area.width.saturating_sub(want_w) / 2,
+        y: area.y + area.height.saturating_sub(want_h) / 2,
+        width: want_w,
+        height: want_h,
+    }
+}
+
+/// `12.4 MB`.
+fn megabytes(bytes: u64) -> String {
+    format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
+}
+
+/// Brightness of a light band sweeping along a row of `len` cells, at cell
+/// `i` on frame `tick`: 0 away from the band, 1 at its centre.
+fn sweep(tick: u64, i: usize, len: usize, speed: f64) -> f64 {
+    let period = len as f64 + 18.0;
+    let centre = (tick as f64 * speed) % period - 6.0;
+    let d = (i as f64 - centre).abs();
+    (-(d * d) / 8.0).exp()
 }
 
 /// Size the share dialog around the code itself.

@@ -107,6 +107,12 @@ class MainActivity : ComponentActivity(), PlatformActions {
         controller.engine.attach()
     }
 
+    override fun onResume() {
+        super.onResume()
+        // Back from the "install unknown apps" screen: carry on with the update.
+        controller.resumePendingInstall()
+    }
+
     override fun onStop() {
         controller.engine.detach()
         super.onStop()
@@ -202,6 +208,9 @@ class MainActivity : ComponentActivity(), PlatformActions {
         val opened = runCatching { startActivity(Intent(SystemSettings.ACTION_VPN_SETTINGS)) }.isSuccess
         if (!opened) runCatching { startActivity(Intent(SystemSettings.ACTION_WIRELESS_SETTINGS)) }
     }
+
+    override fun startIntent(intent: Intent): Boolean =
+        runCatching { startActivity(intent) }.isSuccess
 
     override fun openUrl(url: String) {
         runCatching { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addCategory(Intent.CATEGORY_BROWSABLE)) }

@@ -27,6 +27,7 @@ pub mod ui;
 pub mod ui_activity;
 mod ui_modal;
 mod ui_settings;
+pub mod update;
 pub mod usage;
 
 #[derive(Debug, Clone)]

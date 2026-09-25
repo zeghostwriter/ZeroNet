@@ -117,6 +117,8 @@ pub struct UiRenderer<'a> {
     pub session: Option<std::time::Duration>,
     /// Upload and download rates, one sample a second, newest last.
     pub speed_history: (&'a [u64], &'a [u64]),
+    /// Where updating stands, for the settings page.
+    pub update_status: &'a crate::update::Status,
 }
 
 /// What the F12 overlay shows.

@@ -139,6 +139,7 @@ impl Harness {
             perf: None,
             session: None,
             speed_history: (&[], &[]),
+            update_status: &zeronet_tui::update::Status::Idle,
         };
         renderer.render(frame);
     }
@@ -194,6 +195,7 @@ impl Harness {
                     perf: None,
                     session: None,
                     speed_history: (&[], &[]),
+                    update_status: &zeronet_tui::update::Status::Idle,
                 };
                 renderer.render(frame);
             })
@@ -399,6 +401,82 @@ fn quit_confirmation_renders_both_choices() {
     assert!(frame.contains("Quit ZeroNet?"));
     assert!(frame.contains("Exit"));
     assert!(frame.contains("Stay"));
+}
+
+fn update_dialog(phase: zeronet_tui::modal::UpdatePhase) -> ModalState {
+    ModalState::Update {
+        release: Box::new(zeronet_tui::update::Release {
+            version: "9.9.9".into(),
+            page: "https://github.com/zeghostwriter/ZeroNet/releases/tag/v9.9.9".into(),
+            notes: vec![
+                "Server tests: survive forged DNS".into(),
+                "README: fix right-to-left layout".into(),
+            ],
+            asset: Some(zeronet_tui::update::Asset {
+                name: "ZeroNet-Linux-x86_64".into(),
+                url: "https://example.invalid/ZeroNet-Linux-x86_64".into(),
+                size: 20 * 1024 * 1024,
+                sha256: None,
+            }),
+        }),
+        phase,
+        created_tick: 0,
+    }
+}
+
+#[test]
+fn update_dialog_offers_the_new_version_and_what_changed() {
+    use zeronet_tui::modal::UpdatePhase;
+    let mut h = Harness::new();
+    h.modal_state = update_dialog(UpdatePhase::Available);
+    let frame = h.draw(120, 40);
+    dump("modal_update", &frame);
+    assert!(frame.contains("ZeroNet 9.9.9 is out"));
+    assert!(frame.contains(zeronet_tui::update::CURRENT_VERSION));
+    assert!(frame.contains("WHAT'S NEW"));
+    assert!(frame.contains("Server tests: survive forged DNS"));
+    assert!(frame.contains("20.0 MB download"));
+    assert!(frame.contains("Update now"));
+    assert!(frame.contains("Later"));
+}
+
+#[test]
+fn update_dialog_follows_the_download_to_the_restart() {
+    use zeronet_tui::modal::UpdatePhase;
+    let mut h = Harness::new();
+    h.modal_state = update_dialog(UpdatePhase::Downloading {
+        received: 5 * 1024 * 1024,
+        total: 20 * 1024 * 1024,
+    });
+    let frame = h.draw(120, 40);
+    dump("modal_update_downloading", &frame);
+    assert!(frame.contains(" 25%"));
+    assert!(frame.contains("5.0 MB of 20.0 MB"));
+    assert!(frame.contains("Hide"));
+
+    h.modal_state = update_dialog(UpdatePhase::Installed);
+    let frame = h.draw(120, 40);
+    assert!(frame.contains("ZeroNet 9.9.9 is installed"));
+    assert!(frame.contains("Restart now"));
+
+    h.modal_state = update_dialog(UpdatePhase::Failed("the download is damaged".into()));
+    let frame = h.draw(120, 40);
+    assert!(frame.contains("the download is damaged"));
+    assert!(frame.contains("Try again"));
+}
+
+#[test]
+fn update_dialog_fits_a_small_terminal() {
+    use zeronet_tui::modal::UpdatePhase;
+    for (w, h_) in [(64, 18), (72, 20), (80, 24)] {
+        let mut h = Harness::new();
+        h.modal_state = update_dialog(UpdatePhase::Downloading {
+            received: 1,
+            total: 3,
+        });
+        let frame = h.draw(w, h_);
+        assert!(frame.contains("9.9.9"), "{w}x{h_} lost the version");
+    }
 }
 
 #[test]
@@ -1184,6 +1262,10 @@ fn every_dialog_gets_a_close_button() {
             },
         ),
         (
+            "update",
+            update_dialog(zeronet_tui::modal::UpdatePhase::Available),
+        ),
+        (
             "confirm",
             ModalState::Confirm {
                 title: "CONFIRM DELETE".into(),
@@ -1489,6 +1571,7 @@ fn the_opening_slit_is_painted_as_a_lit_bar() {
                 perf: None,
                 session: None,
                 speed_history: (&[], &[]),
+                update_status: &zeronet_tui::update::Status::Idle,
             };
             renderer.render(frame);
         })
@@ -2369,6 +2452,7 @@ fn a_live_session_shows_its_protocol_clock_and_speed_graphs() {
                 perf: None,
                 session: Some(std::time::Duration::from_secs(3 * 3600 + 7 * 60 + 5)),
                 speed_history: (&up, &down),
+                update_status: &zeronet_tui::update::Status::Idle,
             };
             renderer.render(frame);
         })

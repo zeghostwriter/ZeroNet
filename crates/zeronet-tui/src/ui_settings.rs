@@ -19,9 +19,9 @@ const LABEL_WIDTH: usize = 28;
 const VALUE_WIDTH: usize = 20;
 
 /// Rows when Advanced is folded: four headings plus the everyday settings.
-pub(crate) const SETTINGS_ROWS_BASIC: usize = 25;
+pub(crate) const SETTINGS_ROWS_BASIC: usize = 28;
 /// Rows when Advanced is open, including the edge-scanner block.
-pub(crate) const SETTINGS_ROWS: usize = 54;
+pub(crate) const SETTINGS_ROWS: usize = 57;
 
 impl UiRenderer<'_> {
     /// Total lines the settings page needs, for the scrollbar.
@@ -307,6 +307,66 @@ impl UiRenderer<'_> {
             } else {
                 "click to show them again"
             },
+        );
+
+        self.group_heading(frame, row(), "UPDATES");
+        {
+            use crate::update::Status;
+            let (value, color, hint) = match self.update_status {
+                Status::Idle => (
+                    crate::update::CURRENT_VERSION.to_string(),
+                    self.theme.text,
+                    "click to check for updates".to_string(),
+                ),
+                Status::Checking => (
+                    "CHECKING…".to_string(),
+                    self.theme.info,
+                    "asking GitHub".to_string(),
+                ),
+                Status::UpToDate => (
+                    format!("{} · LATEST", crate::update::CURRENT_VERSION),
+                    self.theme.ok,
+                    "click to check again".to_string(),
+                ),
+                Status::Available(v) => (
+                    format!("{v} AVAILABLE"),
+                    self.theme.accent_bright,
+                    "click to update".to_string(),
+                ),
+                Status::Downloading(percent) => (
+                    format!("DOWNLOADING {percent}%"),
+                    self.theme.info,
+                    "click to show progress".to_string(),
+                ),
+                Status::Installed(v) => (
+                    format!("{v} READY"),
+                    self.theme.ok,
+                    "click to restart into it".to_string(),
+                ),
+                Status::Failed => (
+                    crate::update::CURRENT_VERSION.to_string(),
+                    self.theme.warn,
+                    "check failed · click to retry".to_string(),
+                ),
+            };
+            self.value_row(
+                frame,
+                row(),
+                ComponentId::SettingCheckUpdates,
+                "Version",
+                &value,
+                color,
+                &hint,
+            );
+        }
+        self.toggle_row(
+            frame,
+            row(),
+            ComponentId::SettingAutoUpdateToggle,
+            "Check at Start",
+            self.settings.auto_update_check,
+            "ON",
+            "OFF",
         );
 
         let advanced_label = if self.advanced_open {

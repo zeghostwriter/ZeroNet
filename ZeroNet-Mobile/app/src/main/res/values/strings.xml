@@ -387,8 +387,8 @@
     <string name="kw_share">share lan wifi hotspot tether socks http proxy port qr password</string>
     <string name="kw_evasion">censorship filtering fragment dpi sni dns doh quic ads adblock tracker</string>
     <string name="kw_appearance">theme colour color dark light amoled black language persian english farsi animation motion</string>
-    <string name="kw_privacy">logs history delete clear data privacy</string>
-    <string name="kw_about">version licence license source code open source engine zray</string>
+    <string name="kw_privacy">logs history delete clear data privacy share anonymous crowd others help</string>
+    <string name="kw_about">version licence license source code open source engine zray update upgrade new</string>
 
     <!-- Onboarding -->
     <string name="onboarding_perm_title">ZeroNet needs two permissions</string>
@@ -405,4 +405,35 @@
     <string name="profile_gaming_hint">Lowest ping, UDP on, no server switching mid-game</string>
     <string name="gaming_title">GAME MODE</string>
     <string name="gaming_ping">PING %1$s ms</string>
+
+    <!-- In-app updates -->
+    <string name="update_sheet_title">Update</string>
+    <string name="update_title_available">ZeroNet %1$s is out</string>
+    <string name="update_title_downloading">Downloading %1$s</string>
+    <string name="update_title_ready">%1$s is ready to install</string>
+    <string name="update_title_reinstall">This update can\'t install over your copy</string>
+    <string name="update_title_failed">The update didn\'t finish</string>
+    <string name="update_whats_new">What\'s new</string>
+    <string name="update_size">%1$s download. Your servers and settings stay as they are.</string>
+    <string name="update_progress">%1$s of %2$s</string>
+    <string name="update_ready_hint">Android will ask you to confirm the install.</string>
+    <string name="update_allow_hint">Android asks once: allow ZeroNet to install apps, then come back and tap Install.</string>
+    <string name="update_reinstall_body">It\'s signed with a different key than the ZeroNet on this phone, so Android won\'t install it on top. To get it, uninstall ZeroNet and install the new version from the release page. Your servers and settings will be removed.</string>
+    <string name="update_now">Update now</string>
+    <string name="update_later">Later</string>
+    <string name="update_cancel">Cancel</string>
+    <string name="update_install">Install</string>
+    <string name="update_allow">Allow installs</string>
+    <string name="update_open_page">Open release page</string>
+    <string name="update_retry">Try again</string>
+    <string name="settings_updates">Updates</string>
+    <string name="settings_update_check">Check for updates</string>
+    <string name="settings_update_checking">Checking…</string>
+    <string name="settings_update_latest">You have the latest version</string>
+    <string name="settings_update_available">Version %1$s is available</string>
+    <string name="settings_update_downloading">Downloading… %1$s</string>
+    <string name="settings_update_ready">Version %1$s is ready to install</string>
+    <string name="settings_update_failed">Couldn\'t check: %1$s</string>
+    <string name="settings_share_results">Help others connect</string>
+    <string name="settings_share_results_hint">Anonymously share which public servers and clean IPs worked on your network, so others on it connect faster. Your own configs are never sent.</string>
 </resources>
