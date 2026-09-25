@@ -1,0 +1,95 @@
+name: crowd
+
+# Turns the reports apps sent to the crowd relay into rankings.json: which
+# public servers and clean Cloudflare addresses work on which network. The
+# file is published on the `crowd-data` branch, where apps read it from
+# raw.githubusercontent.com and its jsDelivr mirror.
+#
+# Needs, in the repository settings:
+#   variable CROWD_RELAYS        relay URLs, comma-separated (https://…)
+#   secret   CROWD_EXPORT_TOKEN  the relays' EXPORT_TOKEN
+# Without CROWD_RELAYS the job does nothing. See deploy/crowd-relay/README.md.
+on:
+  schedule:
+    - cron: "*/20 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: crowd
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  rank:
+    name: rank reports
+    if: vars.CROWD_RELAYS != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: crowd
+      - run: cargo build --release -p zero-discovery --bin zeronet-crowd
+
+      - name: export reports
+        env:
+          RELAYS: ${{ vars.CROWD_RELAYS }}
+          EXPORT_TOKEN: ${{ secrets.CROWD_EXPORT_TOKEN }}
+        run: |
+          since=$(( $(date +%s) - 12 * 3600 ))
+          parts=()
+          IFS=',' read -ra relays <<< "$RELAYS"
+          for relay in "${relays[@]}"; do
+            relay="${relay// /}"
+            [[ "$relay" == https://* ]] || continue
+            file="export-${#parts[@]}.json"
+            # One relay being down must not stop the others from counting.
+            if curl -fsS --retry 3 --max-time 60 \
+                 -H "Authorization: Bearer $EXPORT_TOKEN" \
+                 "$relay/v1/export?since=$since" -o "$file"; then
+              parts+=("$file")
+            else
+              echo "::warning::could not export from $relay"
+            fi
+          done
+          if [ ${#parts[@]} -eq 0 ]; then
+            echo "::error::no relay answered"
+            exit 1
+          fi
+          jq -s 'add' "${parts[@]}" > reports.json
+          echo "$(jq length reports.json) reports"
+
+      - name: rank
+        env:
+          RELAYS: ${{ vars.CROWD_RELAYS }}
+        run: |
+          target/release/zeronet-crowd \
+            --reports reports.json \
+            --sources deploy/crowd/sources.json \
+            --out rankings.json \
+            --relays "$RELAYS"
+
+      # The branch holds one commit, replaced every run: the history of
+      # who-could-connect-where is not worth keeping, and it would grow
+      # the repository by a copy every twenty minutes.
+      - name: publish
+        run: |
+          mkdir publish
+          cp rankings.json publish/
+          cd publish
+          git init -q -b crowd-data
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add rankings.json
+          git commit -q -m "Crowd rankings $(date -u +%Y-%m-%dT%H:%MZ)"
+          git push -q --force "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" crowd-data
+          # Ask the jsDelivr mirror to drop its copy, which it otherwise
+          # keeps for up to a day.
+          curl -fsS --max-time 20 "https://purge.jsdelivr.net/gh/${{ github.repository }}@crowd-data/rankings.json" > /dev/null || true

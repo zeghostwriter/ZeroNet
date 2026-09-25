@@ -385,7 +385,7 @@
     <string name="kw_share">اشتراک هات‌اسپات وای‌فای پراکسی ساکس پورت رمز تترینگ</string>
     <string name="kw_evasion">سانسور فیلترینگ فیلترشکن دی ان اس تبلیغات کوییک</string>
     <string name="kw_appearance">پوسته رنگ تیره روشن سیاه زبان فارسی انگلیسی انیمیشن حرکت تم</string>
-    <string name="kw_privacy">گزارش لاگ تاریخچه حذف پاک داده حریم خصوصی</string>
+    <string name="kw_privacy">گزارش لاگ تاریخچه حذف پاک داده حریم خصوصی اشتراک ناشناس کمک دیگران</string>
     <string name="kw_about">نسخه مجوز لایسنس کد منبع متن‌باز موتور به‌روزرسانی آپدیت</string>
 
     <!-- Onboarding -->
@@ -432,4 +432,6 @@
     <string name="settings_update_downloading">در حال دانلود… %1$s</string>
     <string name="settings_update_ready">نسخه‌ی %1$s آماده‌ی نصب است</string>
     <string name="settings_update_failed">بررسی نشد: %1$s</string>
+    <string name="settings_share_results">کمک به اتصال دیگران</string>
+    <string name="settings_share_results_hint">به‌صورت ناشناس اعلام می‌کند کدام سرورهای عمومی و آی‌پی‌های تمیز روی شبکه‌ی شما کار کردند تا دیگران روی همین شبکه سریع‌تر وصل شوند. کانفیگ‌های شخصی شما هرگز ارسال نمی‌شوند.</string>
 </resources>

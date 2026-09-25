@@ -387,7 +387,7 @@
     <string name="kw_share">share lan wifi hotspot tether socks http proxy port qr password</string>
     <string name="kw_evasion">censorship filtering fragment dpi sni dns doh quic ads adblock tracker</string>
     <string name="kw_appearance">theme colour color dark light amoled black language persian english farsi animation motion</string>
-    <string name="kw_privacy">logs history delete clear data privacy</string>
+    <string name="kw_privacy">logs history delete clear data privacy share anonymous crowd others help</string>
     <string name="kw_about">version licence license source code open source engine zray update upgrade new</string>
 
     <!-- Onboarding -->
@@ -434,4 +434,6 @@
     <string name="settings_update_downloading">Downloading… %1$s</string>
     <string name="settings_update_ready">Version %1$s is ready to install</string>
     <string name="settings_update_failed">Couldn\'t check: %1$s</string>
+    <string name="settings_share_results">Help others connect</string>
+    <string name="settings_share_results_hint">Anonymously share which public servers and clean IPs worked on your network, so others on it connect faster. Your own configs are never sent.</string>
 </resources>

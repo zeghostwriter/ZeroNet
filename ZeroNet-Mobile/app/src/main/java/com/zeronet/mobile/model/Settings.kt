@@ -72,6 +72,8 @@ data class Settings(
     val motion: MotionLevel = MotionLevel.Full,
     // Privacy
     val logs: Boolean = false,
+    /** Share which public servers and clean addresses worked here, anonymously (see `Crowd`). */
+    val shareResults: Boolean = true,
 ) {
     fun toJson(): JSONObject = JSONObject()
         .put("mode", mode.name)
@@ -106,6 +108,7 @@ data class Settings(
         .put("language", language.name)
         .put("motion", motion.name)
         .put("logs", logs)
+        .put("shareResults", shareResults)
 
     companion object {
         fun fromJson(o: JSONObject): Settings {
@@ -143,6 +146,7 @@ data class Settings(
                 language = o.enumOr("language", d.language),
                 motion = o.enumOr("motion", d.motion),
                 logs = o.optBoolean("logs", d.logs),
+                shareResults = o.optBoolean("shareResults", d.shareResults),
             )
         }
 

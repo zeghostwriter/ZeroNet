@@ -20,6 +20,7 @@
 //! and bounds its own concurrency; none of them polls or busy-waits.
 
 pub mod config;
+pub mod crowd;
 pub mod discover;
 pub mod events;
 pub mod feed;
