@@ -317,6 +317,10 @@ const SCHEMES: [&str; 8] = [
 /// rather than counted as a failure.
 pub fn extract_links(text: &str) -> Vec<String> {
     let text = text.trim_start_matches('\u{feff}');
+    // Panels that serve a whole Xray or sing-box config (BPB's `?app=xray`).
+    if let Some(links) = crate::json_subscription::links_from_json(text) {
+        return links;
+    }
     let decoded;
     let text = if !contains_scheme(text) {
         match decode_base64_body(text) {

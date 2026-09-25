@@ -122,9 +122,12 @@ pub async fn real_delay(
 ) -> Result<Duration, String> {
     let started = Instant::now();
     let attempt = async {
-        let mut stream = zero_runtime::outbound::connect(outbound, &target.destination)
+        let stream = zero_runtime::outbound::connect(outbound, &target.destination)
             .await
             .map_err(|failure| format!("connect: {failure}"))?;
+        // What the tunnel does too: VLESS puts a response header ahead of the
+        // payload, and read unstripped it lands in front of the status line.
+        let mut stream = zero_runtime::outbound::strip_response(outbound, stream);
         let request = format!(
             "GET {} HTTP/1.1\r\nHost: {}\r\nUser-Agent: Mozilla/5.0\r\nAccept: */*\r\nConnection: close\r\n\r\n",
             target.path, target.host_header
@@ -169,6 +172,7 @@ pub async fn tls_confirm(
         let stream = zero_runtime::outbound::connect(outbound, &destination)
             .await
             .map_err(|failure| format!("connect: {failure}"))?;
+        let stream = zero_runtime::outbound::strip_response(outbound, stream);
         let server_name = rustls_pki_types::ServerName::try_from(TLS_CONFIRM_HOST.to_string())
             .map_err(|error| format!("tls: {error}"))?;
         let mut tls = tokio_rustls::TlsConnector::from(tls_config())
@@ -311,6 +315,22 @@ pub(crate) mod tests {
         assert!(tcp_ping("localhost", port, Duration::from_secs(2))
             .await
             .is_ok());
+    }
+
+    /// VLESS answers with a response header (version, addons) ahead of the
+    /// payload. Read unstripped, it put two bytes in front of the status
+    /// line, so every VLESS server failed the real test with "malformed
+    /// status line": users' own REALITY configs showed no ping, and discovery
+    /// never counted a VLESS server alive.
+    #[tokio::test]
+    async fn the_real_test_passes_through_a_vless_server() {
+        let relay = crate::testing::vless_relay().await;
+        let web = crate::testing::http_204_server().await;
+        let link = crate::testing::vless_link(relay, "vless");
+        let outbound = zero_config::parse_link(&link).unwrap().outbound;
+        let target = ProbeTarget::parse(&format!("http://{web}/generate_204")).unwrap();
+        let delay = real_delay(&outbound, &target, Duration::from_secs(5)).await;
+        assert!(delay.is_ok(), "{delay:?}");
     }
 
     #[tokio::test]

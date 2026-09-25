@@ -72,6 +72,50 @@ pub async fn shadowsocks_relay() -> SocketAddr {
     SocketAddr::from(([127, 0, 0, 1], port))
 }
 
+pub const VLESS_UUID: &str = "b831381d-6324-4d53-ad4f-8cda48b30811";
+
+/// A Zray runtime serving plain VLESS on loopback. Unlike Shadowsocks, VLESS
+/// answers with a response header before the first payload byte, which a
+/// client has to strip.
+pub async fn vless_relay() -> SocketAddr {
+    let port = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    let config = json!({
+        "log": {"loglevel": "warning"},
+        "inbounds": [{
+            "tag": "relay-in",
+            "listen": "127.0.0.1",
+            "port": port,
+            "protocol": "vless",
+            "settings": {"clients": [{"id": VLESS_UUID}], "decryption": "none"},
+        }],
+        "outbounds": [{"tag": "direct", "protocol": "freedom"}],
+    });
+    let (generation, _) = zero_config::compile_config(&config, zero_core::GenerationId(1))
+        .expect("relay configuration compiles");
+    let server = Arc::new(zero_runtime::Server::new(zero_runtime::ServerConfig {
+        config: Arc::clone(&generation.config),
+        generation: generation.id,
+    }));
+    let running = Arc::clone(&server);
+    tokio::spawn(async move {
+        let _ = running.run().await;
+    });
+    tokio::time::timeout(Duration::from_secs(10), server.wait_until_listening())
+        .await
+        .expect("relay listens");
+    std::mem::forget(server);
+    SocketAddr::from(([127, 0, 0, 1], port))
+}
+
+/// A plain VLESS share link to `address`.
+pub fn vless_link(address: SocketAddr, remark: &str) -> String {
+    format!("vless://{VLESS_UUID}@{address}?security=none&type=tcp&encryption=none#{remark}")
+}
+
 /// A Shadowsocks share link to `address`.
 pub fn ss_link(address: SocketAddr, remark: &str) -> String {
     use base64::Engine as _;
