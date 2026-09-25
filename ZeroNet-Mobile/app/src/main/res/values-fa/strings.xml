@@ -269,6 +269,7 @@
     <string name="settings_subscriptions">اشتراک‌های شما</string>
     <string name="sources_body">فهرست‌های عمومی‌ای که زیرونت می‌گردد، و اشتراک‌های خودتان.</string>
     <string name="sources_public">فهرست‌های عمومی</string>
+    <string name="sources_tier_0">هر دو ساعت آزمایش می‌شود؛ اول از همه امتحان می‌شود</string>
     <string name="sources_tier_1">در هر اتصال بررسی می‌شود</string>
     <string name="sources_tier_2">در صورت نیاز بررسی می‌شود</string>
     <string name="sources_tier_3">در جست‌وجوی عمیق بررسی می‌شود</string>

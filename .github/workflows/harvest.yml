@@ -1,0 +1,45 @@
+name: harvest
+
+# Every two hours: fetch the public config feeds (the app's own and some
+# Iran-focused collectors), test every config the way the app does, and
+# publish the ones that work and are encrypted as verified.txt on the
+# crowd-data branch. The app searches that list before the big feeds, so it
+# usually connects without downloading or testing thousands of dead
+# entries on a slow link. See crates/zero-discovery/src/bin/zeronet-harvest.rs.
+on:
+  schedule:
+    - cron: "37 */2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# Shared with the crowd workflow: both replace the crowd-data commit.
+concurrency:
+  group: crowd-data
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  harvest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: crowd
+      - run: cargo build --release -p zero-discovery --bin zeronet-harvest
+      - name: find and test configs
+        run: |
+          target/release/zeronet-harvest \
+            --sources deploy/crowd/sources.json \
+            --sources deploy/crowd/harvest-sources.json \
+            --out verified.txt --want 300 --min 20 --minutes 20
+      - name: publish
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: .github/scripts/publish-crowd-data.sh verified.txt

@@ -5,7 +5,8 @@ import org.json.JSONObject
 
 /**
  * Community config feeds on GitHub, tiered by what measurement from inside
- * Iran showed (PLAN.md §3). Tier 1 is fetched on every cold connect and is
+ * Iran showed (PLAN.md §3). Tier 0 is this project's own tested list. Tier 1
+ * is fetched on every cold connect (when tier 0 was not enough) and is
  * small; tier 2 only when tier 1 did not yield enough working configs; tier 3
  * only when the user asks to search harder.
  */
@@ -23,6 +24,13 @@ object Sources {
     private const val RAW = "https://raw.githubusercontent.com"
 
     val builtIn: List<FeedSource> = listOf(
+        // Tested every two hours by the harvest workflow and published by
+        // this project: only working, encrypted configs, a few hundred at
+        // most. Tier 0, so the search tries it before any other feed and,
+        // when it yields enough, never downloads the big ones. Served from
+        // jsDelivr, which is often reachable when raw.githubusercontent.com
+        // is not.
+        FeedSource("zeronet", "ZeroNet verified", "zeghostwriter/ZeroNet", "https://cdn.jsdelivr.net/gh/zeghostwriter/ZeroNet@crowd-data/verified.txt", 0),
         FeedSource("limilco", "liMilCo", "liMilCo/v2r", "$RAW/liMilCo/v2r/main/new_configs.txt", 1),
         FeedSource("sinavm", "SVM", "sinavm/SVM", "$RAW/sinavm/SVM/main/lite/subscriptions/xray/base64/mix", 1),
         FeedSource("anonymou3", "Multi Proxy (tested)", "4n0nymou3/multi-proxy-config-fetcher", "$RAW/4n0nymou3/multi-proxy-config-fetcher/main/configs/proxy_configs_tested.txt", 1),
