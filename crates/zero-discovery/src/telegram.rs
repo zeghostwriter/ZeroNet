@@ -25,13 +25,25 @@ pub fn valid_channel(name: &str) -> bool {
         && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
 }
 
-/// The page with HTML entities decoded and line breaks kept, ready for
-/// [`crate::link::extract_links`]: posts escape `&` in links as `&amp;`.
+/// The page as text: every tag becomes a line break (so a post's lines and
+/// a link inside `<code>` stand on their own) and HTML entities are decoded
+/// (posts escape `&` in links as `&amp;`). Ready for
+/// [`crate::link::extract_links`] and [`listed_names`].
 pub fn page_text(html: &str) -> String {
-    html.replace("<br/>", "\n")
-        .replace("<br />", "\n")
-        .replace("<br>", "\n")
-        .replace("&amp;", "&")
+    let mut text = String::with_capacity(html.len());
+    let mut in_tag = false;
+    for c in html.chars() {
+        match c {
+            '<' => in_tag = true,
+            '>' if in_tag => {
+                in_tag = false;
+                text.push('\n');
+            }
+            _ if !in_tag => text.push(c),
+            _ => {}
+        }
+    }
+    text.replace("&amp;", "&")
         .replace("&lt;", "<")
         .replace("&gt;", ">")
         .replace("&quot;", "\"")
@@ -94,6 +106,51 @@ pub fn looks_like_config_channel(name: &str) -> bool {
     ];
     let name = name.to_ascii_lowercase();
     WORDS.iter().any(|w| name.contains(w))
+}
+
+/// Names in a list post such as MahsaNet's monthly thank-you list of
+/// server donors (`2. V2rayBaz (~986 TB)`), as channel usernames to try:
+/// a one-word name as is, a name of several words joined plain and with
+/// underscores. Anonymous donors, shown as hex ids, are skipped. Many
+/// donors have no public channel; the crawl finds out which do.
+pub fn listed_names(text: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut push = |name: String| {
+        if valid_channel(&name) && !is_hex_id(&name) && !out.contains(&name) {
+            out.push(name);
+        }
+    };
+    for line in text.lines() {
+        let line = line.trim();
+        // "12. Name (~183 TB)" or "12) Name – 183 TB": a numbered entry.
+        let Some(rest) = line
+            .split_once(['.', ')', '-'])
+            .filter(|(n, _)| !n.is_empty() && n.trim().chars().all(|c| c.is_ascii_digit()))
+            .map(|(_, rest)| rest)
+        else {
+            continue;
+        };
+        let name_part = rest.split(['(', '~', '–', '|']).next().unwrap_or("");
+        let words: Vec<String> = name_part
+            .split_whitespace()
+            .filter(|w| w.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'))
+            .map(str::to_ascii_lowercase)
+            .collect();
+        match words.len() {
+            0 => {}
+            1 => push(words[0].clone()),
+            _ => {
+                push(words.concat());
+                push(words.join("_"));
+            }
+        }
+    }
+    out
+}
+
+/// An anonymous id such as `9127d869e2354a`, not a name.
+fn is_hex_id(name: &str) -> bool {
+    name.len() >= 12 && name.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
 /// The oldest post number on the page, for fetching the page before it.
@@ -161,6 +218,37 @@ mod tests {
         assert!(looks_like_config_channel("farsvpn"));
         assert!(looks_like_config_channel("V2rayNG_Iran"));
         assert!(!looks_like_config_channel("cooking_recipes"));
+    }
+
+    #[test]
+    fn donor_lists_are_read_from_the_page() {
+        let html = "<div class=\"tgme_widget_message_text\">سپاس<br/>1. V2rayBaz (~986 TB)<br/><b>2. teymur_vpn</b> (~254 TB)</div>";
+        assert_eq!(
+            listed_names(&page_text(html)),
+            vec!["v2raybaz", "teymur_vpn"]
+        );
+    }
+
+    #[test]
+    fn donor_lists_give_names_to_try() {
+        let post = "سپاس از اهداکنندگان این ماه\n\
+                    1. Internet Azad (~1074 TB)\n\
+                    2. V2rayBaz (~986 TB)\n\
+                    3. Bahamestan باهمستان آزادی (~303 TB)\n\
+                    8. 9127d869e2354a (~189 TB)\n\
+                    22. mahsa_net (~54 TB)\n\
+                    متن معمولی بدون شماره";
+        let names = listed_names(post);
+        assert_eq!(
+            names,
+            vec![
+                "internetazad",
+                "internet_azad",
+                "v2raybaz",
+                "bahamestan",
+                "mahsa_net"
+            ]
+        );
     }
 
     #[test]

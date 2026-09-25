@@ -13,8 +13,10 @@
 //!
 //! Besides the feeds it reads Iranian Telegram channels that post configs
 //! (see `zero_discovery::telegram`): the seed list, the channels an earlier
-//! run found (`--telegram-state`, updated in place), and channels those
-//! mention whose names are about VPNs or configs. A channel counts only if
+//! run found (`--telegram-state`, updated in place), every channel named in
+//! a directory channel's lists (MahsaNet's monthly donor thank-yous), and
+//! channels those mention whose names are about VPNs or configs. A channel
+//! counts only if
 //! its page is in Persian and it posts configs; one that has posted none
 //! for two weeks is forgotten.
 //!
@@ -287,6 +289,21 @@ struct TelegramState {
     channels: BTreeMap<String, ChannelState>,
 }
 
+/// deploy/crowd/telegram-channels.json.
+#[derive(Debug, Default, serde::Deserialize)]
+struct Seeds {
+    /// Channels known to post configs.
+    #[serde(default)]
+    channels: Vec<String>,
+    /// Channels that list other channels (MahsaNet's monthly donor lists).
+    #[serde(default)]
+    directories: Vec<String>,
+}
+
+/// Pages read per channel (about 20 posts each).
+const CHANNEL_PAGES: usize = 2;
+/// Pages read per directory: enough to reach the last monthly list.
+const DIRECTORY_PAGES: usize = 6;
 /// A channel that has posted no configs for this long is forgotten.
 const FORGET_AFTER_SECS: i64 = 14 * 24 * 3600;
 /// Channels fetched at once: polite to Telegram, quick enough.
@@ -300,11 +317,11 @@ async fn crawl_telegram(
     state_path: Option<&std::path::Path>,
     max: usize,
 ) -> Result<Vec<String>, String> {
-    let seeds: Vec<String> = serde_json::from_str(
+    let seeds: Seeds = serde_json::from_str(
         &std::fs::read_to_string(seeds_path)
             .map_err(|e| format!("cannot read {}: {e}", seeds_path.display()))?,
     )
-    .map_err(|e| format!("{} is not a list of channels: {e}", seeds_path.display()))?;
+    .map_err(|e| format!("{} is not a channel list: {e}", seeds_path.display()))?;
     let previous: TelegramState = state_path
         .and_then(|p| std::fs::read_to_string(p).ok())
         .and_then(|t| serde_json::from_str(&t).ok())
@@ -322,8 +339,26 @@ async fn crawl_telegram(
             queue.push_back(name);
         }
     };
-    for name in seeds {
-        enqueue(name, &mut queue);
+    // Directories first: channels such as mahsa_net that list other
+    // channels (their monthly donors) rather than only posting configs.
+    // Every name they list is worth one look, whatever it is called.
+    for directory in &seeds.directories {
+        let Some((text, _, mentioned)) = read_channel(directory, DIRECTORY_PAGES).await else {
+            eprintln!("telegram directory {directory}: unreadable");
+            continue;
+        };
+        let listed = telegram::listed_names(&text);
+        eprintln!(
+            "telegram directory {directory}: {} listed, {} mentioned",
+            listed.len(),
+            mentioned.len()
+        );
+        for name in listed.into_iter().chain(mentioned) {
+            enqueue(name, &mut queue);
+        }
+    }
+    for name in seeds.directories.iter().chain(&seeds.channels) {
+        enqueue(name.clone(), &mut queue);
     }
     for (name, state) in &previous.channels {
         if now - state.seen < FORGET_AFTER_SECS {
@@ -340,7 +375,9 @@ async fn crawl_telegram(
             .take(max - visited)
             .collect();
         visited += batch.len();
-        let pages = futures::future::join_all(batch.iter().map(|name| read_channel(name))).await;
+        let pages =
+            futures::future::join_all(batch.iter().map(|name| read_channel(name, CHANNEL_PAGES)))
+                .await;
         for (name, page) in batch.iter().zip(pages) {
             let Some((text, found, mentioned)) = page else {
                 continue;
@@ -387,12 +424,12 @@ async fn crawl_telegram(
     Ok(links)
 }
 
-/// A channel's two latest pages: their text, the share links in them and
-/// the channels they mention. `None` when the channel cannot be read.
-async fn read_channel(name: &str) -> Option<(String, Vec<String>, Vec<String>)> {
+/// A channel's latest `pages` pages: their text, the share links in them
+/// and the channels they mention. `None` when the channel cannot be read.
+async fn read_channel(name: &str, pages: usize) -> Option<(String, Vec<String>, Vec<String>)> {
     let mut html = String::new();
     let mut before = None;
-    for _ in 0..2 {
+    for _ in 0..pages {
         let source = FeedSource {
             id: format!("tg-{name}"),
             url: telegram::page_url(name, before),
