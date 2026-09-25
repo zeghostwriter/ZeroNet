@@ -18,11 +18,13 @@ pub fn page_url(channel: &str, before: Option<u64>) -> String {
     }
 }
 
-/// Whether `name` is a valid public channel username.
+/// Whether `name` is a valid public channel username. Bot accounts (their
+/// names must end in "bot") have no public page of posts, so they are not.
 pub fn valid_channel(name: &str) -> bool {
     (5..=32).contains(&name.len())
         && name.as_bytes()[0].is_ascii_alphabetic()
         && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+        && !name.to_ascii_lowercase().ends_with("bot")
 }
 
 /// The page as text: every tag becomes a line break (so a post's lines and
@@ -215,6 +217,8 @@ mod tests {
         assert!(!valid_channel("vpn"));
         assert!(!valid_channel("1abcde"));
         assert!(!valid_channel("pars-vpn"));
+        assert!(!valid_channel("jusvpnbot"));
+        assert!(!valid_channel("v2ray1_ngBot"));
         assert!(looks_like_config_channel("farsvpn"));
         assert!(looks_like_config_channel("V2rayNG_Iran"));
         assert!(!looks_like_config_channel("cooking_recipes"));
