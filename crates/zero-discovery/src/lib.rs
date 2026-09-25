@@ -29,6 +29,7 @@ pub mod link;
 pub mod order;
 pub mod probe;
 pub mod scan;
+pub mod telegram;
 pub mod test_links;
 
 #[cfg(test)]

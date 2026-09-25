@@ -103,6 +103,7 @@ jobs:
             --reports reports.json \
             --sources deploy/crowd/sources.json \
             --sources deploy/crowd/harvest-sources.json \
+            --sources deploy/crowd/verified-source.json \
             --out rankings.json \
             --relays "$RELAYS"
 
