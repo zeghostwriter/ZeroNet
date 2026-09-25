@@ -86,6 +86,18 @@ pub(crate) enum BgEvent {
     },
     /// The process was asked to terminate (SIGTERM, SIGHUP, SIGINT…).
     Terminate(&'static str),
+    /// Time for the check a release build makes at start.
+    UpdateDue,
+    UpdateChecked {
+        manual: bool,
+        result: Result<(Option<zeronet_tui::update::Release>, Option<u16>), String>,
+    },
+    UpdateProgress {
+        received: u64,
+        total: u64,
+    },
+    /// The download finished: where the new version now is, or why not.
+    UpdateInstalled(Result<std::path::PathBuf, String>),
 }
 
 /// Bookkeeping for the jobs above, kept in one field of the app.
@@ -360,6 +372,22 @@ impl App<'_> {
                 self.flush_ping_writes();
                 self.refresh_due_subscriptions();
                 false
+            }
+            BgEvent::UpdateDue => {
+                self.check_for_update(false);
+                true
+            }
+            BgEvent::UpdateChecked { manual, result } => {
+                self.on_update_checked(manual, result);
+                true
+            }
+            BgEvent::UpdateProgress { received, total } => {
+                self.on_update_progress(received, total);
+                true
+            }
+            BgEvent::UpdateInstalled(result) => {
+                self.on_update_installed(result);
+                true
             }
             BgEvent::Terminate(name) => {
                 tracing::info!(signal = name, "terminating");

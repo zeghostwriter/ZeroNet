@@ -56,6 +56,7 @@ use zeronet_tui::toast::{ToastKind, ToastManager};
 use zeronet_tui::ui::{ActiveTab, UiRenderer};
 
 mod app_tasks;
+mod app_update;
 mod launcher;
 
 /// Frame spacing while something animates (~30 fps).
@@ -172,16 +173,33 @@ fn main() -> Result<()> {
         return Ok(());
     }
     zero_runtime::tune_allocator();
+    zeronet_tui::update::clean_leftovers();
     let result = client_main();
-    if let Err(err) = &result {
-        let _ = writeln!(std::io::stderr(), "ZeroNet could not start: {err:?}");
-        launcher::hold_window_on_error();
+    match result {
+        Err(err) => {
+            let _ = writeln!(std::io::stderr(), "ZeroNet could not start: {err:?}");
+            launcher::hold_window_on_error();
+            Err(err)
+        }
+        // An update was installed and the user chose to restart into it.
+        // The runtime and terminal are gone by now; only the process is
+        // replaced.
+        Ok(Some(updated)) => {
+            let err = zeronet_tui::update::relaunch(&updated);
+            let _ = writeln!(
+                std::io::stderr(),
+                "The update is installed, but ZeroNet could not restart ({err}). Start it again to use the new version."
+            );
+            Ok(())
+        }
+        Ok(None) => Ok(()),
     }
-    result
 }
 
+/// Runs the app. Returns the installed update to restart into, if the
+/// user asked for that.
 #[tokio::main]
-async fn client_main() -> Result<()> {
+async fn client_main() -> Result<Option<std::path::PathBuf>> {
     let _ = rustls::crypto::ring::default_provider().install_default();
 
     let caps = TerminalCaps::detect();
@@ -239,7 +257,9 @@ async fn client_main() -> Result<()> {
     if let Some(message) = recovered_proxy {
         app.toasts.info(message);
     }
+    app.schedule_startup_update_check();
     let result = app.run(&mut terminal).await;
+    let relaunch = app.relaunch.take();
 
     // Every way out of the loop ends here — the quit dialog, a signal, a
     // terminal that went away, an error — so this is where the machine is
@@ -247,7 +267,9 @@ async fn client_main() -> Result<()> {
     app.shutdown().await;
 
     let restored = restore_terminal(&mut terminal);
-    print_goodbye(caps);
+    if relaunch.is_none() {
+        print_goodbye(caps);
+    }
 
     if let Err(err) = result {
         // `eprintln!` panics when stderr is gone (the terminal was closed).
@@ -261,7 +283,7 @@ async fn client_main() -> Result<()> {
     if let Err(err) = restored {
         tracing::debug!(error = %err, "terminal restore failed");
     }
-    Ok(())
+    Ok(relaunch)
 }
 
 fn restore_terminal<B: ratatui::backend::Backend + Write>(
@@ -495,6 +517,10 @@ struct App<'a> {
     speed_history: SpeedHistory,
     /// Frame timing, shown by F12.
     perf: PerfMeter,
+    /// Update checks and downloads; see `app_update`.
+    updater: app_update::Updater,
+    /// An installed update to start in place of this process on exit.
+    relaunch: Option<std::path::PathBuf>,
 }
 
 /// Upload and download rates, one sample a second, newest last.
@@ -768,6 +794,8 @@ impl<'a> App<'a> {
             connected_since: None,
             speed_history: SpeedHistory::default(),
             perf: PerfMeter::default(),
+            updater: app_update::Updater::default(),
+            relaunch: None,
         })
     }
 
@@ -1201,6 +1229,12 @@ impl<'a> App<'a> {
         if !self.caps.animations {
             return false;
         }
+        // The update dialog's light sweep and progress sheen.
+        if matches!(self.modal_state, ModalState::Update { .. })
+            && self.effects.animations_enabled()
+        {
+            return true;
+        }
         self.effects.is_animating()
             // A dimmed backdrop hides the ambient sheen and glows entirely.
             || (self.effects.ambient_running() && !self.modal_state.is_active())
@@ -1333,6 +1367,7 @@ impl<'a> App<'a> {
             perf: self.perf.snapshot(Instant::now()),
             session: self.connected_since.map(|since| since.elapsed()),
             speed_history: (&self.speed_history.up, &self.speed_history.down),
+            update_status: &self.updater.status,
         };
         renderer.render(frame);
     }
@@ -3517,6 +3552,7 @@ impl App<'_> {
     async fn confirm_modal(&mut self) -> Result<()> {
         match &self.modal_state {
             ModalState::QuitConfirmation { .. } => self.should_quit = true,
+            ModalState::Update { .. } => self.update_primary(),
             ModalState::AshesWarning { .. }
             | ModalState::Help { .. }
             | ModalState::ShareConfig { .. } => self.close_modal(),
@@ -4241,6 +4277,7 @@ impl App<'_> {
                 self.open_modal_effect();
             }
             ComponentId::QuitConfirmYes => self.confirm_modal().await?,
+            ComponentId::UpdatePrimary => self.update_primary(),
             ComponentId::SudoConfirm => self.submit_sudo_password().await?,
             ComponentId::SudoCancel => self.cancel_sudo_dialog().await?,
 
@@ -4249,6 +4286,7 @@ impl App<'_> {
             | ComponentId::NumberInputCancel
             | ComponentId::AshesWarningDismiss
             | ComponentId::ManualFormCancel
+            | ComponentId::UpdateSecondary
             | ComponentId::ModalClose => self.close_modal(),
 
             ComponentId::ModalBackdrop => self.on_backdrop_click(),
@@ -4293,6 +4331,11 @@ impl App<'_> {
                     self.settings.muted_notices = self.toasts.muted().collect::<Vec<_>>().join(",");
                     self.persist_settings();
                 }
+            }
+            ComponentId::SettingCheckUpdates => self.check_for_update(true),
+            ComponentId::SettingAutoUpdateToggle => {
+                self.settings.auto_update_check = !self.settings.auto_update_check;
+                self.persist_settings();
             }
             ComponentId::SettingMutedNotices => {
                 if !self.settings.muted_notices.is_empty() {

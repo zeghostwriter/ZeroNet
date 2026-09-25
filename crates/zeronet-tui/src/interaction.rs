@@ -87,6 +87,13 @@ pub enum ComponentId {
     SettingThemeCycle,
     SettingUsageToggle,
     SettingMutedNotices,
+    /// The version row: check for an update, or reopen the one found.
+    SettingCheckUpdates,
+    SettingAutoUpdateToggle,
+    /// The update dialog's main button (update, restart, retry, open page).
+    UpdatePrimary,
+    /// The update dialog's second button (later, hide).
+    UpdateSecondary,
     SettingSystemProxyCycle,
     SettingPacPort,
     /// The heading that folds the advanced settings.

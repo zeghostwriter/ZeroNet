@@ -91,6 +91,30 @@ pub enum ModalState {
         findings: Vec<String>,
         created_tick: u64,
     },
+    /// A newer release: what changed, and the download as it happens.
+    Update {
+        release: Box<crate::update::Release>,
+        phase: UpdatePhase,
+        created_tick: u64,
+    },
+}
+
+/// Where an update stands, as the update dialog shows it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UpdatePhase {
+    /// Offered, not started.
+    Available,
+    /// Downloading: bytes received of the total.
+    Downloading {
+        received: u64,
+        total: u64,
+    },
+    /// In place; runs from the next start.
+    Installed,
+    /// This installation cannot update itself (no file for this system, or
+    /// no permission to replace it): the release page is offered instead.
+    Manual(String),
+    Failed(String),
 }
 
 /// What a text dialog's contents are for.
@@ -146,7 +170,8 @@ impl ModalState {
             | ModalState::ShareConfig { created_tick, .. }
             | ModalState::SudoPassword { created_tick, .. }
             | ModalState::Help { created_tick, .. }
-            | ModalState::ImageView { created_tick, .. } => *created_tick,
+            | ModalState::ImageView { created_tick, .. }
+            | ModalState::Update { created_tick, .. } => *created_tick,
             ModalState::None => 0,
         }
     }
@@ -202,6 +227,7 @@ impl ModalState {
             ModalState::ManualProfile { .. } => "MANUAL NODE CREATOR",
             ModalState::SudoPassword { .. } => "ADMINISTRATOR PASSWORD",
             ModalState::Help { .. } => "KEYBOARD REFERENCE",
+            ModalState::Update { .. } => "UPDATE",
         }
     }
 }

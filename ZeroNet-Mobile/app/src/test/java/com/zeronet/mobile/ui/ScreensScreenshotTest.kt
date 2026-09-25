@@ -164,6 +164,54 @@ class ScreensScreenshotTest {
         )
     }
 
+    // ---------------------------------------------------------------- Updates
+
+    private val release = com.zeronet.mobile.update.ReleaseInfo(
+        version = "0.2.0",
+        page = "https://github.com/zeghostwriter/ZeroNet/releases/tag/v0.2.0",
+        notes = listOf(
+            "Server tests: survive Iran's forged DNS and Cloudflare Workers",
+            "README: fix right-to-left layout of the Persian section",
+            "In-app updates for the desktop and Android apps",
+        ),
+        apkName = "ZeroNet-Android-arm64-v8a.apk",
+        apkUrl = "https://example.invalid/ZeroNet-Android-arm64-v8a.apk",
+        apkSize = 8_484_895,
+        sha256 = null,
+    )
+
+    private val updateActions = com.zeronet.mobile.ui.update.UpdateActions({}, {}, {}, {}, {}, { true })
+
+    @Test fun update_offer_dark() = compose.shot("update_offer_dark") {
+        HomeScreen(home(ConnState.Idle), {}, {}, {})
+        com.zeronet.mobile.ui.update.UpdateSheet(true, com.zeronet.mobile.update.UpdateState.Available(release), updateActions)
+    }
+
+    @Test fun update_downloading_light() = compose.shot("update_downloading_light", dark = false) {
+        HomeScreen(home(connected), {}, {}, {})
+        com.zeronet.mobile.ui.update.UpdateSheet(
+            true,
+            com.zeronet.mobile.update.UpdateState.Downloading(release, 5_400_000, release.apkSize),
+            updateActions,
+        )
+    }
+
+    @Config(qualifiers = "$FA-$PHONE")
+    @Test fun update_ready_fa_dark() = compose.shot("update_ready_fa_dark") {
+        HomeScreen(home(connected), {}, {}, {})
+        com.zeronet.mobile.ui.update.UpdateSheet(
+            true,
+            com.zeronet.mobile.update.UpdateState.Ready(release, java.io.File("ZeroNet.apk")),
+            updateActions,
+        )
+    }
+
+    @Config(qualifiers = "$FA-$PHONE")
+    @Test fun update_offer_fa_light() = compose.shot("update_offer_fa_light", dark = false) {
+        HomeScreen(home(ConnState.Idle), {}, {}, {})
+        com.zeronet.mobile.ui.update.UpdateSheet(true, com.zeronet.mobile.update.UpdateState.Available(release), updateActions)
+    }
+
     // ---------------------------------------------------------------- Scanner
 
     @Test fun scanner_idle_dark() = compose.shot("scanner_idle_dark", tab = Tab.Scanner) { ScannerScreen(ScanState(), ScannerActions()) }

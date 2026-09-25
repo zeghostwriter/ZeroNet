@@ -53,6 +53,7 @@ fun SettingsRoute() {
         }
     }
     val lanAddresses = rememberLanAddresses(settings.lanShare)
+    val update by controller.updater.state.collectAsStateWithLifecycle()
 
     SettingsScreen(
         state = SettingsUiState(
@@ -66,6 +67,7 @@ fun SettingsRoute() {
             lanPermissionDenied = lanDenied,
             versionName = BuildConfig.VERSION_NAME,
             versionCode = BuildConfig.VERSION_CODE,
+            update = update,
         ),
         actions = remember(controller, derived) {
             SettingsActions(
@@ -92,6 +94,7 @@ fun SettingsRoute() {
                     controller.messages.show(resources.getString(R.string.msg_history_cleared))
                 },
                 onCopy = { text -> controller.copy(text, sensitive = text.contains('@')) },
+                onUpdates = controller::openUpdates,
             )
         },
     )

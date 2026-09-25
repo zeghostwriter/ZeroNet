@@ -101,6 +101,9 @@ import com.zeronet.mobile.ui.util.Countries
 import com.zeronet.mobile.ui.util.Num
 import com.zeronet.mobile.ui.util.currentLocale
 import com.zeronet.mobile.ui.theme.ZeroMotion
+import com.zeronet.mobile.update.UpdateState
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.togetherWith
 import dev.chrisbanes.haze.hazeSource
 import dev.chrisbanes.haze.rememberHazeState
 
@@ -122,6 +125,7 @@ data class SettingsUiState(
     val lanPermissionDenied: Boolean = false,
     val versionName: String = "",
     val versionCode: Int = 0,
+    val update: com.zeronet.mobile.update.UpdateState = com.zeronet.mobile.update.UpdateState.Idle,
     val dynamicColorAvailable: Boolean = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S,
 )
 
@@ -136,6 +140,8 @@ data class SettingsActions(
     val onRemoveSubscription: (Subscription) -> Unit = {},
     val onClearHistory: () -> Unit = {},
     val onCopy: (String) -> Unit = {},
+    /** Check for an update, or reopen the one in progress. */
+    val onUpdates: () -> Unit = {},
 )
 
 @Composable
@@ -199,7 +205,7 @@ fun SettingsScreen(
                             SettingsCardId.Evasion -> EvasionCard(s, q, reconnect, actions)
                             SettingsCardId.Appearance -> AppearanceCard(state, q, actions)
                             SettingsCardId.Privacy -> PrivacyCard(state, q, actions) { sheet = SettingsSheet.ClearHistory }
-                            SettingsCardId.About -> AboutCard(state) { sheet = SettingsSheet.Licences }
+                            SettingsCardId.About -> AboutCard(state, actions.onUpdates) { sheet = SettingsSheet.Licences }
                         }
                     }
                 }
@@ -788,7 +794,7 @@ private fun PrivacyCard(state: SettingsUiState, q: SettingsQuery, actions: Setti
 }
 
 @Composable
-private fun AboutCard(state: SettingsUiState, onLicences: () -> Unit) {
+private fun AboutCard(state: SettingsUiState, onUpdates: () -> Unit, onLicences: () -> Unit) {
     val c = ZeroTheme.colors
     val locale = currentLocale()
     SettingsCard(ZeroIcons.Info, stringResource(R.string.settings_about), tint = c.muted) {
@@ -809,8 +815,53 @@ private fun AboutCard(state: SettingsUiState, onLicences: () -> Unit) {
             Text("Zray-Core", style = MaterialTheme.typography.bodyMedium, color = c.muted)
         }
         Hairline()
+        UpdatesRow(state.update, onUpdates)
+        Hairline()
         NavRow(stringResource(R.string.settings_licences), onLicences, subtitle = stringResource(R.string.settings_licences_hint))
         Spacer(Modifier.height(4.dp))
+    }
+}
+
+/** Settings → About → Updates: where updating stands, and the way in. */
+@Composable
+private fun UpdatesRow(update: com.zeronet.mobile.update.UpdateState, onClick: () -> Unit) {
+    val c = ZeroTheme.colors
+    val locale = currentLocale()
+    fun v(version: String) = com.zeronet.mobile.ui.util.ltr(Num.localize(version, locale))
+    val (subtitle, tint) = when (update) {
+        is UpdateState.Idle -> stringResource(R.string.settings_update_check) to c.muted
+        is UpdateState.Checking -> stringResource(R.string.settings_update_checking) to c.muted
+        is UpdateState.UpToDate -> stringResource(R.string.settings_update_latest) to c.ok
+        is UpdateState.CheckFailed -> stringResource(R.string.settings_update_failed, update.message) to c.warn
+        is UpdateState.Available -> stringResource(R.string.settings_update_available, v(update.release.version)) to c.accent
+        is UpdateState.Downloading -> stringResource(
+            R.string.settings_update_downloading,
+            Num.localize("${(update.fraction * 100).toInt()}%", locale),
+        ) to c.accent
+        is UpdateState.Ready -> stringResource(R.string.settings_update_ready, v(update.release.version)) to c.ok
+        is UpdateState.NeedsReinstall -> stringResource(R.string.settings_update_available, v(update.release.version)) to c.warn
+        is UpdateState.Failed -> stringResource(R.string.settings_update_available, v(update.release.version)) to c.warn
+    }
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .heightIn(min = 56.dp)
+            .clip(RowShape)
+            .clickable(role = Role.Button, onClick = onClick)
+            .padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(stringResource(R.string.settings_updates), style = MaterialTheme.typography.bodyLarge, color = c.text)
+            AnimatedContent(subtitle, transitionSpec = { fadeIn() togetherWith fadeOut() }, label = "update-status") { text ->
+                Text(text, style = MaterialTheme.typography.bodySmall, color = tint)
+            }
+        }
+        if (update is UpdateState.Checking || update is UpdateState.Downloading) {
+            androidx.compose.material3.CircularProgressIndicator(Modifier.size(18.dp), color = c.accent, strokeWidth = 2.dp)
+        } else {
+            Icon(if (update is UpdateState.Available || update is UpdateState.Ready) ZeroIcons.ArrowDown else ZeroIcons.Refresh, null, tint = tint, modifier = Modifier.size(20.dp))
+        }
     }
 }
 

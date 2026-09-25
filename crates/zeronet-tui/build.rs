@@ -4,6 +4,16 @@
 
 fn main() {
     println!("cargo:rerun-if-changed=../../packaging/icons/zeronet.ico");
+    // The release workflow names the version it is building (`v0.1.5`);
+    // the app reports it without the `v` and compares it with the latest
+    // release to offer updates. See `update::CURRENT_VERSION`.
+    println!("cargo:rerun-if-env-changed=ZERONET_VERSION");
+    if let Ok(version) = std::env::var("ZERONET_VERSION") {
+        let version = version.trim().trim_start_matches(['v', 'V']);
+        if !version.is_empty() {
+            println!("cargo:rustc-env=ZERONET_APP_VERSION={version}");
+        }
+    }
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") {
         return;
     }

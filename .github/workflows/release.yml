@@ -20,6 +20,10 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   RELEASE_TAG: ${{ github.ref_type == 'tag' && github.ref_name || inputs.version }}
+  # The version the apps report and compare with the latest release for
+  # their in-app updates. Empty for a build-only run, which then reports
+  # the crate version and never checks.
+  ZERONET_VERSION: ${{ github.ref_type == 'tag' && github.ref_name || inputs.version }}
 
 jobs:
   windows:
@@ -86,6 +90,10 @@ jobs:
           # The plain binary, with the desktop entry and icon, for people
           # who prefer to install it themselves. A tarball keeps the
           # executable bit that a browser download would drop.
+          # The bare program, which a non-AppImage install updates itself
+          # from.
+          install -m755 target/release/zeronet-tui "dist/ZeroNet-Linux-${ARCH}"
+
           pkg="ZeroNet-Linux-${ARCH}"
           mkdir -p "$pkg"
           cp target/release/zeronet-tui packaging/linux/zeronet.desktop packaging/icons/zeronet.png "$pkg/"
@@ -120,6 +128,9 @@ jobs:
           cp packaging/icons/zeronet.icns "$app/Contents/Resources/zeronet.icns"
           # Ad-hoc signature: Apple Silicon refuses to run unsigned code.
           codesign --force --deep --sign - "$app"
+          # The bare program, signed, which an installed copy updates itself
+          # from (it re-seals its own bundle afterwards).
+          cp "$app/Contents/MacOS/zeronet-tui" dist/ZeroNet-macOS-universal
           (cd dist && ditto -c -k --keepParent ZeroNet.app ZeroNet-macOS-universal.zip)
           rm -rf "$app"
       - uses: actions/upload-artifact@v4
@@ -175,7 +186,8 @@ jobs:
         working-directory: ZeroNet-Mobile
         run: |
           export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/29.0.14206865"
-          ./gradlew --no-daemon assembleRelease
+          version="${RELEASE_TAG#v}"
+          ./gradlew --no-daemon assembleRelease ${version:+-PzeronetVersion=$version}
       - name: collect
         run: |
           mkdir -p dist

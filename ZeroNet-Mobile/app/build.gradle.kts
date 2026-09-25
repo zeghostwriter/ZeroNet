@@ -25,6 +25,19 @@ val keystoreProps = Properties().apply {
     if (file.exists()) file.inputStream().use { load(it) }
 }
 
+// The release workflow passes the version it is building
+// (-PzeronetVersion=0.1.5). It names the app, orders updates (versionCode
+// must grow for Android to install one over another) and turns on the
+// in-app update check, which a local build leaves off.
+val zeronetVersion: String? = providers.gradleProperty("zeronetVersion").orNull?.trim()?.removePrefix("v")?.takeIf { it.isNotEmpty() }
+val zeronetVersionCode: Int = zeronetVersion
+    ?.substringBefore('-')
+    ?.split('.')
+    ?.map { it.toIntOrNull() ?: 0 }
+    ?.let { p -> (p.getOrElse(0) { 0 } * 1_000_000) + (p.getOrElse(1) { 0 } * 1_000) + p.getOrElse(2) { 0 } }
+    ?.coerceAtLeast(1)
+    ?: 1
+
 android {
     namespace = "com.zeronet.mobile"
     compileSdk = 37
@@ -33,8 +46,9 @@ android {
         applicationId = "com.zeronet.mobile"
         minSdk = 24
         targetSdk = 37
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = zeronetVersionCode
+        versionName = zeronetVersion ?: "0.1.0"
+        buildConfigField("boolean", "RELEASE_CHANNEL", (zeronetVersion != null).toString())
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables { useSupportLibrary = false }
     }

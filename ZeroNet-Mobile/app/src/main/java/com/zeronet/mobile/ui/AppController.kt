@@ -21,6 +21,8 @@ import com.zeronet.mobile.model.ConnectionMode
 import com.zeronet.mobile.model.Settings
 import com.zeronet.mobile.ui.shell.AppMessages
 import com.zeronet.mobile.ui.shell.Tab
+import com.zeronet.mobile.update.AppUpdater
+import com.zeronet.mobile.update.UpdateState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.first
@@ -39,6 +41,9 @@ interface PlatformActions {
     fun requestLocalNetworkPermission(onResult: (Boolean) -> Unit)
 
     fun openVpnSettings()
+
+    /** Start a system screen or another app; false if nothing handles it. */
+    fun startIntent(intent: android.content.Intent): Boolean
     fun openUrl(url: String)
     fun applyLanguage(settings: Settings)
 }
@@ -57,6 +62,16 @@ class AppController(
     val servers: ServerRepository = ServerRepository.get(context)
     val settings: SettingsStore = SettingsStore.get(context)
     val messages = AppMessages()
+    val updater: AppUpdater = AppUpdater.get(context)
+
+    /** Whether the update sheet is showing. */
+    var updateSheetOpen by mutableStateOf(false)
+
+    /** A manual check opens the sheet with whatever it finds; the start-up check only for new news. */
+    private var showNextFinding = false
+
+    /** The user was sent to allow installs; install once they are back. */
+    private var pendingInstall = false
 
     /** Text shared into the app or opened as a link; the Servers tab shows it in the import sheet. */
     var pendingImport by mutableStateOf<String?>(null)
@@ -68,6 +83,25 @@ class AppController(
         private set
 
     init {
+        // The app is excluded from its own VPN: while connected, updates
+        // come through the local proxy, which GitHub filtering cannot see.
+        updater.proxyPort = {
+            if (engine.state.value is ConnState.Connected) settings.current.httpPort else null
+        }
+        scope.launch {
+            updater.state.collect { s ->
+                when (s) {
+                    is UpdateState.Available -> if (showNextFinding || s.release.version != updater.dismissedVersion) {
+                        updateSheetOpen = true
+                    }
+                    is UpdateState.UpToDate -> if (showNextFinding) messages.show(context.getString(R.string.settings_update_latest))
+                    is UpdateState.CheckFailed -> if (showNextFinding) messages.show(context.getString(R.string.settings_update_failed, s.message))
+                    else -> {}
+                }
+                if (s !is UpdateState.Checking && s !is UpdateState.Idle) showNextFinding = false
+            }
+        }
+        updater.checkOnStart()
         scope.launch {
             engine.state.collect { s ->
                 when {
@@ -121,6 +155,42 @@ class AppController(
     }
 
     fun needsVpnPermission(): Boolean = runCatching { VpnService.prepare(context) != null }.getOrDefault(false)
+
+    // ------------------------------------------------------------ updates
+
+    /** Settings → Updates: check now, or reopen the update in progress. */
+    fun openUpdates() {
+        when (updater.state.value) {
+            is UpdateState.Idle, is UpdateState.UpToDate, is UpdateState.CheckFailed -> {
+                showNextFinding = true
+                updater.check()
+            }
+            is UpdateState.Checking -> showNextFinding = true
+            else -> updateSheetOpen = true
+        }
+    }
+
+    /** "Later": close the sheet, and don't offer this version again on start. */
+    fun dismissUpdate() {
+        (updater.state.value as? UpdateState.Available)?.let { updater.dismissedVersion = it.release.version }
+        updateSheetOpen = false
+    }
+
+    fun installUpdate() {
+        if (!updater.canInstall()) {
+            pendingInstall = true
+            if (!platform.startIntent(updater.installPermissionIntent())) pendingInstall = false
+            return
+        }
+        updater.installIntent()?.let { platform.startIntent(it) }
+    }
+
+    fun resumePendingInstall() {
+        if (pendingInstall && updater.canInstall()) {
+            pendingInstall = false
+            updater.installIntent()?.let { platform.startIntent(it) }
+        }
+    }
 
     // ------------------------------------------------------------ settings
 
