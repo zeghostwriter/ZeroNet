@@ -271,6 +271,7 @@
     <string name="settings_subscriptions">Your subscriptions</string>
     <string name="sources_body">The public lists ZeroNet searches, and your own subscriptions.</string>
     <string name="sources_public">Public lists</string>
+    <string name="sources_tier_0">Tested every two hours; tried first</string>
     <string name="sources_tier_1">Checked on every connect</string>
     <string name="sources_tier_2">Checked when needed</string>
     <string name="sources_tier_3">Checked on a deep search</string>

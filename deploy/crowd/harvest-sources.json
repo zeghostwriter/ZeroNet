@@ -1,0 +1,27 @@
+[
+  {
+    "id": "barryfar",
+    "url": "https://raw.githubusercontent.com/barry-far/V2ray-Configs/main/All_Configs_Sub.txt",
+    "tier": 1
+  },
+  {
+    "id": "soroushmirzaei",
+    "url": "https://raw.githubusercontent.com/soroushmirzaei/telegram-configs-collector/main/splitted/mixed",
+    "tier": 1
+  },
+  {
+    "id": "yebekhe",
+    "url": "https://raw.githubusercontent.com/yebekhe/TVC/main/subscriptions/xray/base64/mix",
+    "tier": 1
+  },
+  {
+    "id": "mahsanet",
+    "url": "https://raw.githubusercontent.com/MahsaNetConfigTopic/config/main/xray_final.txt",
+    "tier": 1
+  },
+  {
+    "id": "mrpooyax",
+    "url": "https://raw.githubusercontent.com/MrPooyaX/VpnsFucking/main/Shenzo.txt",
+    "tier": 1
+  }
+]

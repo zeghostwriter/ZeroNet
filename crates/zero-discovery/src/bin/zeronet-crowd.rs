@@ -4,7 +4,7 @@
 //!
 //! ```text
 //! zeronet-crowd --reports reports.json --sources sources.json \
-//!               --out rankings.json [--relays https://a,https://b]
+//!               [--sources more.json] --out rankings.json [--relays https://a,https://b]
 //! ```
 //!
 //! It fetches every public feed in `sources.json` itself, so it knows which
@@ -20,14 +20,14 @@ use zero_discovery::feed::{fetch_feed, FeedSource};
 
 struct Args {
     reports: PathBuf,
-    sources: PathBuf,
+    sources: Vec<PathBuf>,
     out: PathBuf,
     relays: Vec<String>,
 }
 
 fn parse_args() -> Result<Args, String> {
     let mut reports = None;
-    let mut sources = None;
+    let mut sources = Vec::new();
     let mut out = None;
     let mut relays = Vec::new();
     let mut args = std::env::args().skip(1);
@@ -35,22 +35,27 @@ fn parse_args() -> Result<Args, String> {
         let mut value = || args.next().ok_or_else(|| format!("{flag} needs a value"));
         match flag.as_str() {
             "--reports" => reports = Some(PathBuf::from(value()?)),
-            "--sources" => sources = Some(PathBuf::from(value()?)),
+            "--sources" => sources.push(PathBuf::from(value()?)),
             "--out" => out = Some(PathBuf::from(value()?)),
             "--relays" => {
-                relays = value()?
-                    .split(',')
-                    .map(str::trim)
-                    .filter(|r| r.starts_with("https://"))
-                    .map(str::to_string)
-                    .collect()
+                for relay in value()?.split(',').map(str::trim) {
+                    // The same relay can come from the Cloudflare lookup and
+                    // from the CROWD_RELAYS variable.
+                    if relay.starts_with("https://") && !relays.iter().any(|r| r == relay) {
+                        relays.push(relay.to_string());
+                    }
+                }
             }
             other => return Err(format!("unknown argument {other:?}")),
         }
     }
     Ok(Args {
         reports: reports.ok_or("--reports is required")?,
-        sources: sources.ok_or("--sources is required")?,
+        sources: if sources.is_empty() {
+            return Err("--sources is required".into());
+        } else {
+            sources
+        },
         out: out.ok_or("--out is required")?,
         relays,
     })
@@ -72,11 +77,14 @@ fn run() -> Result<(), String> {
             .map_err(|e| format!("cannot read {}: {e}", args.reports.display()))?;
         serde_json::from_str(&text).map_err(|e| format!("reports are not valid JSON: {e}"))?
     };
-    let sources: Vec<FeedSource> = {
-        let text = std::fs::read_to_string(&args.sources)
-            .map_err(|e| format!("cannot read {}: {e}", args.sources.display()))?;
-        serde_json::from_str(&text).map_err(|e| format!("sources are not valid JSON: {e}"))?
-    };
+    let mut sources: Vec<FeedSource> = Vec::new();
+    for path in &args.sources {
+        let text = std::fs::read_to_string(path)
+            .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+        let list: Vec<FeedSource> = serde_json::from_str(&text)
+            .map_err(|e| format!("{} is not valid JSON: {e}", path.display()))?;
+        sources.extend(list);
+    }
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()

@@ -1,0 +1,37 @@
+{
+  "directories": [
+    "mahsa_net"
+  ],
+  "channels": [
+    "parsvpn",
+    "farsvpn",
+    "v2raybaz",
+    "internetazad",
+    "internet_azad",
+    "teymur_vpn",
+    "sosiranconnect",
+    "jusvpn",
+    "hermes_network_vpn",
+    "welcomgrf",
+    "azjahanam",
+    "meoow_vpn",
+    "azadnet",
+    "khosrow",
+    "v2freehub",
+    "ozumuz",
+    "borusli",
+    "bahamestan",
+    "nasnet",
+    "barayeiran",
+    "baraye_iran",
+    "uciranir",
+    "v2ray_configs_pool",
+    "v2rayng_org",
+    "configv2rayng",
+    "v2rayngvpn",
+    "freev2rays",
+    "v2ray_outlinevpn",
+    "iranvpnfree",
+    "vpnfree_iran"
+  ]
+}

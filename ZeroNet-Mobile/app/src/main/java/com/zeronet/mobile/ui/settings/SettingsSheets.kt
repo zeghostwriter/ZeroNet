@@ -193,6 +193,7 @@ fun SourcesSheet(visible: Boolean, s: Settings, subscriptions: List<Subscription
                     { on -> actions.onChange { it.copy(disabledSources = if (on) it.disabledSources - src.id else it.disabledSources + src.id) } },
                     subtitle = stringResource(
                         when (src.tier) {
+                            0 -> R.string.sources_tier_0
                             1 -> R.string.sources_tier_1
                             2 -> R.string.sources_tier_2
                             else -> R.string.sources_tier_3

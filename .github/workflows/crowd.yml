@@ -17,8 +17,9 @@ on:
 permissions:
   contents: write
 
+# Shared with the harvest workflow: both replace the crowd-data commit.
 concurrency:
-  group: crowd
+  group: crowd-data
   cancel-in-progress: false
 
 env:
@@ -101,24 +102,13 @@ jobs:
           target/release/zeronet-crowd \
             --reports reports.json \
             --sources deploy/crowd/sources.json \
+            --sources deploy/crowd/harvest-sources.json \
+            --sources deploy/crowd/verified-source.json \
             --out rankings.json \
             --relays "$RELAYS"
 
-      # The branch holds one commit, replaced every run: the history of
-      # who-could-connect-where is not worth keeping, and it would grow
-      # the repository by a copy every twenty minutes.
       - name: publish
         if: steps.relays.outputs.list != ''
-        run: |
-          mkdir publish
-          cp rankings.json publish/
-          cd publish
-          git init -q -b crowd-data
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add rankings.json
-          git commit -q -m "Crowd rankings $(date -u +%Y-%m-%dT%H:%MZ)"
-          git push -q --force "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" crowd-data
-          # Ask the jsDelivr mirror to drop its copy, which it otherwise
-          # keeps for up to a day.
-          curl -fsS --max-time 20 "https://purge.jsdelivr.net/gh/${{ github.repository }}@crowd-data/rankings.json" > /dev/null || true
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: .github/scripts/publish-crowd-data.sh rankings.json
