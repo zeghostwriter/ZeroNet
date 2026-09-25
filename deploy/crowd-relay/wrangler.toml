@@ -1,4 +1,7 @@
-name = "zeronet-crowd-relay"
+# The Worker's name is its address: https://<name>.<subdomain>.workers.dev.
+# A name that does not say "ZeroNet" draws less attention; the two
+# workflows below derive the address from it.
+name = "hellomrgoodytwoshoes"
 main = "src/worker.js"
 compatibility_date = "2026-09-01"
 
