@@ -78,5 +78,6 @@ jobs:
         run: |
           sub=$(curl -fsS -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
             "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/subdomain" | jq -r '.result.subdomain')
-          url="https://zeronet-crowd-relay.$sub.workers.dev"
+          name=$(sed -n 's/^name = "\(.*\)"$/\1/p' wrangler.toml)
+          url="https://$name.$sub.workers.dev"
           curl -fsS "$url/" > /dev/null && echo "Relay is up at $url" >> "$GITHUB_STEP_SUMMARY"

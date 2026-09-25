@@ -30,6 +30,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
+      # First: the relay's address comes from its wrangler.toml.
+      - uses: actions/checkout@v4
       - name: find the relays
         id: relays
         env:
@@ -42,15 +44,14 @@ jobs:
             sub=$(curl -fsS -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
               "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/subdomain" \
               | jq -r '.result.subdomain // empty') || sub=""
-            if [ -n "$sub" ]; then
-              relays="https://zeronet-crowd-relay.$sub.workers.dev${relays:+,$relays}"
+            name=$(sed -n 's/^name = "\(.*\)"$/\1/p' deploy/crowd-relay/wrangler.toml 2>/dev/null)
+            if [ -n "$sub" ] && [ -n "$name" ]; then
+              relays="https://$name.$sub.workers.dev${relays:+,$relays}"
             fi
           fi
           echo "list=$relays" >> "$GITHUB_OUTPUT"
           [ -n "$relays" ] || echo "No relay set up yet; nothing to do."
 
-      - uses: actions/checkout@v4
-        if: steps.relays.outputs.list != ''
       - uses: dtolnay/rust-toolchain@stable
         if: steps.relays.outputs.list != ''
       - uses: Swatinem/rust-cache@v2
