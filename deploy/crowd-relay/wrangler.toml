@@ -6,14 +6,13 @@ compatibility_date = "2026-09-01"
 [triggers]
 crons = ["17 * * * *"]
 
-# Create it with `wrangler d1 create zeronet-crowd`, paste the id it prints
-# here, then load the schema: `wrangler d1 execute zeronet-crowd --remote --file schema.sql`.
+# The "deploy crowd relay" workflow creates the database and fills in its id
+# at deploy time; the placeholder stays in the repository.
 [[d1_databases]]
 binding = "DB"
 database_name = "zeronet-crowd"
 database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
 
-# Secrets, never written here (this file is committed):
-#
-#   wrangler secret put SALT_SECRET    # any long random string; keys the daily reporter pseudonyms
-#   wrangler secret put EXPORT_TOKEN   # the GitHub Action's password for /v1/export
+# Secrets, never written here (this file is committed), set by the deploy
+# workflow: EXPORT_TOKEN (the crowd workflow's password for /v1/export) and
+# SALT_SECRET (keys the daily pseudonyms).

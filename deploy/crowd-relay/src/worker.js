@@ -5,18 +5,26 @@
 // repository. This Worker only queues: it ranks nothing, and all it tells
 // an app is the name of the network its results were counted under.
 //
-// What is stored, per result: the time, the network (a mobile carrier's
-// MCC+MNC, or the ISP's AS number, which Cloudflare supplies), a daily
-// pseudonym of the sender, the server's link key or the Cloudflare address,
-// success, and delay. The sender's IP address is only used to derive the
-// pseudonym and is never written anywhere. Rows are deleted after two days.
+// Apps send reports through their own tunnel once connected, so this runs
+// on a plain *.workers.dev address even though that is filtered in Iran.
+//
+// What is stored, per result: the time; the network (a mobile carrier's
+// MCC+MNC that the phone names, the ISP's AS number when the report comes
+// straight from the user's network, or "any" when neither is known); two
+// daily pseudonyms; the server's link key or the Cloudflare address;
+// success; delay. The pseudonyms are HMACs that change every day:
+// `source` of the sending address (for the tunnel, the VPN server's), used
+// for the rate limit and so one address cannot pose as many people, and
+// `reporter` of the address plus a random value the app picks each day, so
+// people sharing one VPN server still count separately. No address is ever
+// written. Rows are deleted after two days.
 
 const MAX_BODY = 8 * 1024;
 const MAX_RESULTS = 40;
 const MAX_CLEAN = 10;
-// Results one sender may add per hour: plenty for real use, a ceiling for
-// a flood.
-const PER_HOUR = 200;
+// Results one address may add per hour. Many people can share a VPN
+// server's address, so this is generous; it is a ceiling for a flood.
+const PER_HOUR = 2000;
 const KEEP_SECONDS = 2 * 24 * 3600;
 const EXPORT_LIMIT = 100000;
 
@@ -33,9 +41,9 @@ const isIpv4 = (s) =>
   s.split(".").every((p) => String(Number(p)) === p && Number(p) <= 255);
 const delay = (ms) => (Number.isInteger(ms) && ms >= 0 && ms <= 60000 ? ms : null);
 
-// The sender's pseudonym for today: an HMAC of the day and the address, so
-// it cannot be reversed, and it changes at midnight UTC.
-async function pseudonym(secret, ip, now) {
+// A pseudonym for today: an HMAC of the day and `value`, so it cannot be
+// reversed and changes at midnight UTC.
+async function pseudonym(secret, value, now) {
   const day = Math.floor(now / 86400);
   const key = await crypto.subtle.importKey(
     "raw",
@@ -44,7 +52,7 @@ async function pseudonym(secret, ip, now) {
     false,
     ["sign"],
   );
-  const mac = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(`${day}|${ip}`));
+  const mac = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(`${day}|${value}`));
   return [...new Uint8Array(mac).slice(0, 8)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
@@ -69,9 +77,11 @@ async function report(request, env) {
   }
   if (body?.v !== 1) return json({ error: "unsupported version" }, 400);
 
-  // A carrier the phone named, or else the ISP this request came from.
+  // A carrier the phone named; "any" when it came through a tunnel from a
+  // network the phone cannot name (Wi-Fi); otherwise the ISP this request
+  // came from.
   let net = null;
-  if (typeof body.net === "string" && /^cell:\d{5,6}$/.test(body.net)) {
+  if (typeof body.net === "string" && (/^cell:\d{5,6}$/.test(body.net) || body.net === "any")) {
     net = body.net;
   } else if (request.cf?.asn) {
     net = `asn:${request.cf.asn}`;
@@ -89,17 +99,21 @@ async function report(request, env) {
 
   const now = Math.floor(Date.now() / 1000);
   const ip = request.headers.get("CF-Connecting-IP") || "unknown";
-  const reporter = await pseudonym(env.SALT_SECRET, ip, now);
+  const nonce = typeof body.nonce === "string" ? body.nonce.slice(0, 64) : "";
+  const source = await pseudonym(env.SALT_SECRET, ip, now);
+  const reporter = await pseudonym(env.SALT_SECRET, `${ip}|${nonce}`, now);
 
-  const recent = await env.DB.prepare("SELECT COUNT(*) AS n FROM reports WHERE reporter = ? AND ts > ?")
-    .bind(reporter, now - 3600)
+  const recent = await env.DB.prepare("SELECT COUNT(*) AS n FROM reports WHERE source = ? AND ts > ?")
+    .bind(source, now - 3600)
     .first();
   if ((recent?.n ?? 0) + rows.length > PER_HOUR) return json({ error: "slow down", net }, 429);
 
   const insert = env.DB.prepare(
-    "INSERT INTO reports (ts, net, reporter, kind, item, ok, ms) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    "INSERT INTO reports (ts, net, reporter, source, kind, item, ok, ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
   );
-  await env.DB.batch(rows.map(([kind, item, ok, ms]) => insert.bind(now, net, reporter, kind, item, ok ? 1 : 0, ms)));
+  await env.DB.batch(
+    rows.map(([kind, item, ok, ms]) => insert.bind(now, net, reporter, source, kind, item, ok ? 1 : 0, ms)),
+  );
   return json({ net, accepted: rows.length });
 }
 
@@ -111,7 +125,7 @@ async function exportReports(request, env) {
   const url = new URL(request.url);
   const since = Number.parseInt(url.searchParams.get("since") || "0", 10) || 0;
   const { results } = await env.DB.prepare(
-    "SELECT ts, net, reporter, kind, item, ok, ms FROM reports WHERE ts >= ? ORDER BY id LIMIT ?",
+    "SELECT ts, net, reporter, source, kind, item, ok, ms FROM reports WHERE ts >= ? ORDER BY id LIMIT ?",
   )
     .bind(since, EXPORT_LIMIT)
     .all();

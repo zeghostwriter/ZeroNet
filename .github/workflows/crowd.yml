@@ -5,10 +5,10 @@ name: crowd
 # file is published on the `crowd-data` branch, where apps read it from
 # raw.githubusercontent.com and its jsDelivr mirror.
 #
-# Needs, in the repository settings:
-#   variable CROWD_RELAYS        relay URLs, comma-separated (https://…)
-#   secret   CROWD_EXPORT_TOKEN  the relays' EXPORT_TOKEN
-# Without CROWD_RELAYS the job does nothing. See deploy/crowd-relay/README.md.
+# Finds the relay deployed by the "deploy crowd relay" workflow through the
+# Cloudflare API (same secrets), or uses the repository variable
+# CROWD_RELAYS (comma-separated URLs) for relays hosted elsewhere. With
+# neither, it does nothing.
 on:
   schedule:
     - cron: "*/20 * * * *"
@@ -27,20 +27,43 @@ env:
 jobs:
   rank:
     name: rank reports
-    if: vars.CROWD_RELAYS != ''
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
+      - name: find the relays
+        id: relays
+        env:
+          CONFIGURED: ${{ vars.CROWD_RELAYS }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          relays="$CONFIGURED"
+          if [ -n "$CLOUDFLARE_API_TOKEN" ] && [ -n "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            sub=$(curl -fsS -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+              "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/subdomain" \
+              | jq -r '.result.subdomain // empty') || sub=""
+            if [ -n "$sub" ]; then
+              relays="https://zeronet-crowd-relay.$sub.workers.dev${relays:+,$relays}"
+            fi
+          fi
+          echo "list=$relays" >> "$GITHUB_OUTPUT"
+          [ -n "$relays" ] || echo "No relay set up yet; nothing to do."
+
       - uses: actions/checkout@v4
+        if: steps.relays.outputs.list != ''
       - uses: dtolnay/rust-toolchain@stable
+        if: steps.relays.outputs.list != ''
       - uses: Swatinem/rust-cache@v2
+        if: steps.relays.outputs.list != ''
         with:
           key: crowd
       - run: cargo build --release -p zero-discovery --bin zeronet-crowd
+        if: steps.relays.outputs.list != ''
 
       - name: export reports
+        if: steps.relays.outputs.list != ''
         env:
-          RELAYS: ${{ vars.CROWD_RELAYS }}
+          RELAYS: ${{ steps.relays.outputs.list }}
           EXPORT_TOKEN: ${{ secrets.CROWD_EXPORT_TOKEN }}
         run: |
           since=$(( $(date +%s) - 12 * 3600 ))
@@ -60,15 +83,19 @@ jobs:
             fi
           done
           if [ ${#parts[@]} -eq 0 ]; then
-            echo "::error::no relay answered"
-            exit 1
+            # Still publish: the rankings carry the relay addresses, which
+            # is how apps learn where to send their first reports.
+            echo "::warning::no relay answered; publishing without reports"
+            echo '[]' > reports.json
+          else
+            jq -s 'add' "${parts[@]}" > reports.json
           fi
-          jq -s 'add' "${parts[@]}" > reports.json
           echo "$(jq length reports.json) reports"
 
       - name: rank
+        if: steps.relays.outputs.list != ''
         env:
-          RELAYS: ${{ vars.CROWD_RELAYS }}
+          RELAYS: ${{ steps.relays.outputs.list }}
         run: |
           target/release/zeronet-crowd \
             --reports reports.json \
@@ -80,6 +107,7 @@ jobs:
       # who-could-connect-where is not worth keeping, and it would grow
       # the repository by a copy every twenty minutes.
       - name: publish
+        if: steps.relays.outputs.list != ''
         run: |
           mkdir publish
           cp rankings.json publish/

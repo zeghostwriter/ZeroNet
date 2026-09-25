@@ -18,10 +18,16 @@
 //!   report by mistake is dropped, and a report cannot put a new server into
 //!   anyone's list: at worst a false report reorders servers every client
 //!   already has, and every client tests before it connects.
-//! * **One reporter, one voice.** The relay tags each report with a daily
-//!   pseudonym of its sender (it never stores addresses). Per network and
-//!   server, only a reporter's latest report counts, and nothing is ranked
-//!   until at least [`MIN_REPORTERS`] different reporters agree.
+//! * **One reporter, one voice.** The relay tags each report with two daily
+//!   pseudonyms (it never stores addresses): `source`, of the sending
+//!   address, and `reporter`, of the address and a value the app picks each
+//!   day, so people sharing a VPN server's address still count apart. Per
+//!   network and server only a reporter's latest report counts, and nothing
+//!   is ranked until [`MIN_REPORTERS`] different reporters, from as many
+//!   different addresses, agree: one address cannot pose as a crowd.
+//!
+//! Reports that came through a tunnel from a network the phone cannot name
+//! (Wi-Fi) carry the network `any` and count towards [`ALL_NETS`] only.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::net::Ipv4Addr;
@@ -43,6 +49,9 @@ pub const CLEAN_IPS_PER_NET: usize = 20;
 /// Every network together: what an app uses on a network nobody has
 /// reported from yet.
 pub const ALL_NETS: &str = "all";
+/// A report from a network the app could not name; counts towards
+/// [`ALL_NETS`] only.
+pub const ANY_NET: &str = "any";
 
 /// One report, as the relay exports it.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -53,6 +62,9 @@ pub struct Report {
     pub net: String,
     /// The relay's daily pseudonym for the sender.
     pub reporter: String,
+    /// The relay's daily pseudonym for the sending address.
+    #[serde(default)]
+    pub source: String,
     /// `server` or `ip`.
     pub kind: String,
     /// A server's link key, or a Cloudflare IPv4 address.
@@ -216,6 +228,14 @@ fn score(reports: &[&Report], now: i64) -> Vec<Scored> {
         if by_reporter.len() < MIN_REPORTERS {
             continue;
         }
+        let sources: HashSet<&str> = by_reporter
+            .values()
+            .map(|r| r.source.as_str())
+            .filter(|s| !s.is_empty())
+            .collect();
+        if !sources.is_empty() && sources.len() < MIN_REPORTERS {
+            continue;
+        }
         let (mut ok, mut total) = (0.0, 0.0);
         let mut delays = Vec::new();
         for report in by_reporter.values() {
@@ -267,7 +287,7 @@ pub fn aggregate(
     let usable: Vec<&Report> = reports
         .iter()
         .filter(|r| r.ts <= now + 300 && now - r.ts <= WINDOW_SECS)
-        .filter(|r| valid_net(&r.net) && !r.reporter.is_empty())
+        .filter(|r| (valid_net(&r.net) || r.net == ANY_NET) && !r.reporter.is_empty())
         .filter(|r| match r.kind.as_str() {
             "server" => valid_server_id(&r.item) && known.contains_key(&r.item),
             "ip" => is_cloudflare_ip(&r.item),
@@ -277,7 +297,9 @@ pub fn aggregate(
 
     let mut groups: BTreeMap<String, Vec<&Report>> = BTreeMap::new();
     for report in &usable {
-        groups.entry(report.net.clone()).or_default().push(report);
+        if report.net != ANY_NET {
+            groups.entry(report.net.clone()).or_default().push(report);
+        }
         groups.entry(ALL_NETS.to_string()).or_default().push(report);
     }
 
@@ -346,6 +368,7 @@ mod tests {
             ts: NOW - age,
             net: net.into(),
             reporter: reporter.into(),
+            source: format!("src-{reporter}"),
             kind: kind.into(),
             item: item.into(),
             ok,
@@ -479,6 +502,29 @@ mod tests {
             ),
         ];
         assert!(aggregate(&stale, &known(), vec![], NOW).nets.is_empty());
+    }
+
+    #[test]
+    fn one_address_cannot_pose_as_a_crowd() {
+        // Two "reporters" from the same address: not enough.
+        let mut reports = vec![
+            report("cell:43211", "r1", "server", "aaaaaaaaaaaaaaaa", true, 60),
+            report("cell:43211", "r2", "server", "aaaaaaaaaaaaaaaa", true, 60),
+        ];
+        for r in &mut reports {
+            r.source = "same".into();
+        }
+        assert!(aggregate(&reports, &known(), vec![], NOW).nets.is_empty());
+    }
+
+    #[test]
+    fn unnamed_networks_count_towards_everyone_only() {
+        let reports = vec![
+            report("any", "r1", "server", "aaaaaaaaaaaaaaaa", true, 60),
+            report("any", "r2", "server", "aaaaaaaaaaaaaaaa", true, 60),
+        ];
+        let rankings = aggregate(&reports, &known(), vec![], NOW);
+        assert_eq!(rankings.nets.keys().collect::<Vec<_>>(), vec![ALL_NETS]);
     }
 
     #[test]
