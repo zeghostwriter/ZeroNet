@@ -331,12 +331,17 @@
     <string name="settings_evasion_off_hint">普通连接。最快，但更容易被封锁。</string>
     <string name="settings_evasion_auto_hint">仅在服务器被封锁时伪装流量</string>
     <string name="settings_evasion_strong_hint">始终伪装流量。略慢，但更难被封锁。</string>
+    <string name="settings_evasion_smart">智能</string>
+    <string name="settings_evasion_smart_hint">同时尝试多种伪装，保留你的网络能通过的那一种。应对严格封锁效果最好。</string>
     <string name="settings_block_quic">阻止 QUIC</string>
     <string name="settings_block_quic_hint">应用会回退到 TCP，而不是卡住</string>
     <string name="settings_remote_dns">被封锁站点的 DNS</string>
     <string name="settings_remote_dns_hint">通过隧道查询，因此你的 ISP 无法查看或篡改结果</string>
     <string name="settings_custom_dns_hint">自定义解析器（例如 8.8.8.8）</string>
     <string name="settings_custom_dns_note">留空则使用上方的提供商。支持 IP、tls://… 或 https://…/dns-query。</string>
+    <string name="settings_anti_sanction">受制裁服务的 DNS</string>
+    <string name="settings_anti_sanction_hint">封锁伊朗 IP 的站点（OpenAI、GitHub、…）在此查询并直连</string>
+    <string name="settings_anti_sanction_note">留空则使用上方的提供商。支持 IP，或带 IP 地址的 tls://… / https://…/dns-query。</string>
     <string name="settings_block_ads">拦截广告和跟踪器</string>
     <string name="settings_block_ads_hint">为所有应用过滤已知的广告域名</string>
 

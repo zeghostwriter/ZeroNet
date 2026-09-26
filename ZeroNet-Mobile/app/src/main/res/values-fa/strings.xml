@@ -335,12 +335,17 @@
     <string name="settings_evasion_off_hint">اتصال ساده. سریع‌ترین، ولی راحت‌تر مسدود می‌شود.</string>
     <string name="settings_evasion_auto_hint">فقط وقتی سروری مسدود شود ترافیک را پنهان می‌کند</string>
     <string name="settings_evasion_strong_hint">ترافیک همیشه پنهان می‌شود. کمی کندتر، ولی خیلی سخت‌تر مسدود می‌شود.</string>
+    <string name="settings_evasion_smart">هوشمند</string>
+    <string name="settings_evasion_smart_hint">چند پوشش را هم‌زمان امتحان می‌کند و همانی را نگه می‌دارد که شبکه‌ی شما عبورش می‌دهد. بهترین گزینه در برابر فیلترینگ سخت.</string>
     <string name="settings_block_quic">مسدود کردن QUIC</string>
     <string name="settings_block_quic_hint">برنامه‌ها به جای گیر کردن، سراغ TCP می‌روند</string>
     <string name="settings_remote_dns">DNS برای سایت‌های مسدود</string>
     <string name="settings_remote_dns_hint">از داخل VPN پرسیده می‌شود تا اپراتور نتواند جواب را ببیند یا عوض کند</string>
     <string name="settings_custom_dns_hint">DNS دلخواه (مثلاً ۸.۸.۸.۸)</string>
     <string name="settings_custom_dns_note">برای استفاده از یکی از گزینه‌های بالا خالی بگذارید. یک IP، ‏tls://…‎ یا ‏https://…/dns-query‎ پذیرفته می‌شود.</string>
+    <string name="settings_anti_sanction">DNS برای سرویس‌های تحریمی</string>
+    <string name="settings_anti_sanction_hint">سایت‌هایی که IP ایران را مسدود می‌کنند (OpenAI، GitHub، …) از این‌جا پرسیده و مستقیم باز می‌شوند</string>
+    <string name="settings_anti_sanction_note">برای استفاده از یکی از گزینه‌های بالا خالی بگذارید. یک IP یا ‏tls://…‎ / ‏https://…/dns-query‎ با نشانی IP پذیرفته می‌شود.</string>
     <string name="settings_block_ads">مسدود کردن تبلیغ و ردیاب</string>
     <string name="settings_block_ads_hint">دامنه‌های تبلیغاتی شناخته‌شده را برای همه‌ی برنامه‌ها فیلتر می‌کند</string>
 

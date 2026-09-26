@@ -343,12 +343,17 @@
     <string name="settings_evasion_off_hint">Обычные соединения. Быстрее всего, но легче заблокировать.</string>
     <string name="settings_evasion_auto_hint">Маскирует трафик, только когда сервер заблокирован</string>
     <string name="settings_evasion_strong_hint">Всегда маскирует трафик. Немного медленнее, но заблокировать гораздо сложнее.</string>
+    <string name="settings_evasion_smart">Умный</string>
+    <string name="settings_evasion_smart_hint">Пробует сразу несколько способов маскировки и оставляет тот, что проходит в вашей сети. Лучше всего против жёсткой фильтрации.</string>
     <string name="settings_block_quic">Блокировать QUIC</string>
     <string name="settings_block_quic_hint">Приложения переходят на TCP вместо зависаний</string>
     <string name="settings_remote_dns">DNS для заблокированных сайтов</string>
     <string name="settings_remote_dns_hint">Запрос идёт через туннель, поэтому провайдер не видит и не меняет ответ</string>
     <string name="settings_custom_dns_hint">Свой резолвер (например, 8.8.8.8)</string>
     <string name="settings_custom_dns_note">Оставьте пустым, чтобы использовать провайдера выше. Принимает IP, tls://… или https://…/dns-query.</string>
+    <string name="settings_anti_sanction">DNS для санкционных сервисов</string>
+    <string name="settings_anti_sanction_hint">Сайты, блокирующие иранские IP (OpenAI, GitHub, …), запрашиваются здесь и открываются напрямую</string>
+    <string name="settings_anti_sanction_note">Оставьте пустым, чтобы использовать провайдера выше. Принимает IP или tls://… / https://…/dns-query с IP-адресом.</string>
     <string name="settings_block_ads">Блокировать рекламу и трекеры</string>
     <string name="settings_block_ads_hint">Фильтрует известные рекламные домены для всех приложений</string>
 

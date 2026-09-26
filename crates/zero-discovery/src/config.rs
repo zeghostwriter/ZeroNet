@@ -42,6 +42,27 @@ pub const TUN_ADDRESS_V6: &str = "fdfe:dcba:9876::1/126";
 /// The observatory's probe for balancer ranking.
 pub const BALANCER_PROBE_URL: &str = "https://www.gstatic.com/generate_204";
 
+/// ClientHello byte-length ranges swept by `evasion = "smart"`. Each becomes
+/// one balanced outbound against the same server, so the `leastPing` balancer
+/// keeps whichever length the ISP still passes today and drops the rest.
+/// Ported from BPB's Smart Fragment `bestFragValues` (design, not source).
+const SMART_FRAGMENT_LENGTHS: [&str; 20] = [
+    "1-5", "1-10", "10-20", "20-30", "30-40", "40-50", "50-60", "60-70", "70-80", "80-90",
+    "90-100", "10-30", "20-40", "30-50", "40-60", "50-70", "60-80", "70-90", "80-100", "100-200",
+];
+
+/// How much the builder layers ClientHello fragmentation onto TLS/REALITY links.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Evasion {
+    /// No fragmentation; the link dials as described.
+    Off,
+    /// One fragment block per fragmentable link at a fixed 100-200 length.
+    Strong,
+    /// Expand each fragmentable link across `SMART_FRAGMENT_LENGTHS` behind the
+    /// balancer, so the client auto-selects the length that gets through.
+    Smart,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 struct BuildRequest {
@@ -55,6 +76,10 @@ struct BuildRequest {
     block_ads: bool,
     block_quic: bool,
     evasion: String,
+    /// ClientHello fragment packets for `strong`/`smart` evasion: `tlshello`
+    /// (the default, cheapest) or a write range such as `1-1` — the fallback
+    /// BPB documents for when `tlshello` fragmentation stops getting through.
+    fragment_packets: String,
     dns: DnsRequest,
     log_level: String,
     /// Scanner results (`ip:port`), ranked by the observatory for CDN-fronted
@@ -78,6 +103,7 @@ impl Default for BuildRequest {
             block_ads: true,
             block_quic: true,
             evasion: "auto".into(),
+            fragment_packets: "tlshello".into(),
             dns: DnsRequest::default(),
             log_level: "warning".into(),
             clean_ips: Vec::new(),
@@ -132,6 +158,15 @@ struct DnsRequest {
     /// `remote`".
     custom: String,
     local: String,
+    /// The Iranian anti-sanction resolver: a built-in name
+    /// (`shecan`/`electro`/`begzar`/`radar`), or `none`/`off` to disable the
+    /// third verdict. Sanctioned services resolve here and route direct.
+    anti_sanction: String,
+    /// Optional user-supplied anti-sanction resolver, overriding
+    /// `anti_sanction`. A bare IP or an IP-addressed DoH/DoT/DoQ URL; a
+    /// hostname is refused (the censored network cannot bootstrap it). Empty
+    /// means "use `anti_sanction`".
+    custom_anti_sanction: String,
     fakedns: bool,
 }
 
@@ -141,6 +176,8 @@ impl Default for DnsRequest {
             remote: "google".into(),
             custom: String::new(),
             local: "google".into(),
+            anti_sanction: "shecan".into(),
+            custom_anti_sanction: String::new(),
             fakedns: true,
         }
     }
@@ -169,19 +206,53 @@ pub fn build_config_with_assets(
     if request.links.is_empty() {
         return Err("at least one link is required".into());
     }
-    let strong = match request.evasion.as_str() {
-        "strong" => true,
-        "auto" | "off" => false,
+    let evasion = match request.evasion.as_str() {
+        "off" | "auto" => Evasion::Off,
+        "strong" => Evasion::Strong,
+        "smart" => Evasion::Smart,
         other => {
             return Err(format!(
-                "evasion must be \"off\", \"auto\" or \"strong\", got {other:?}"
+                "evasion must be \"off\", \"auto\", \"strong\" or \"smart\", got {other:?}"
             ))
+        }
+    };
+    // Fragment packets for strong/smart evasion: the cheap default `tlshello`,
+    // or a write-count range such as `1-1` — BPB's documented fallback for when
+    // ISPs learn to pass fragmented tlshello. Validated here so the error names
+    // the field rather than surfacing from the compiler.
+    let fragment_packets = {
+        let value = request.fragment_packets.trim();
+        if value.is_empty() || value == "tlshello" {
+            "tlshello".to_string()
+        } else if zero_config::RangeU32::parse(value).is_some() {
+            value.to_string()
+        } else {
+            return Err(format!(
+                "fragment_packets must be \"tlshello\" or a range like \"1-1\", got {value:?}"
+            ));
         }
     };
     let remote_dns = RemoteDns::parse(&request.dns.remote)
         .ok_or_else(|| format!("unknown remote DNS {:?}", request.dns.remote))?;
     let local_dns = LocalDns::parse(&request.dns.local)
         .ok_or_else(|| format!("unknown local DNS {:?}", request.dns.local))?;
+    let anti_sanction_dns = zero_config::AntiSanctionDns::parse(&request.dns.anti_sanction)
+        .ok_or_else(|| format!("unknown anti-sanction DNS {:?}", request.dns.anti_sanction))?;
+    // A user-supplied anti-sanction resolver overrides the built-in one, with
+    // the same rule as the remote tier: a bare IP or an IP-addressed
+    // DoH/DoT/DoQ URL only, because a hostname cannot be bootstrapped on the
+    // censored network.
+    let custom_anti_sanction_dns = {
+        let trimmed = request.dns.custom_anti_sanction.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            match zero_config::dns::ResolverEndpoint::parse(trimmed) {
+                Some(endpoint) if !endpoint.needs_bootstrap() => Some(trimmed.to_string()),
+                _ => return Err(format!("unusable custom anti-sanction DNS {trimmed:?}")),
+            }
+        }
+    };
     // A user-supplied resolver overrides the built-in remote tier. Validated
     // here so a resolver the runtime cannot parse is reported to the app
     // rather than failing the whole config at connect time. A resolver named
@@ -217,19 +288,35 @@ pub fn build_config_with_assets(
             .outbound
             .validate()
             .map_err(|error| format!("links[{index}]: {error}"))?;
-        let mut outbound = json!({"link": parsed.link});
-        if strong && fragmentable(&parsed.outbound) {
-            // A link describes the server, not this network, so evasion is
-            // layered on. ECH and plaintext carriers are skipped, as the
-            // preset's own fragment switch does for expanded outbounds.
-            outbound["evasion"] = json!({"fragment": {
-                "packets": "tlshello",
-                "length": "100-200",
-                "interval": "1-1",
-            }});
+        // A link describes the server, not this network, so fragmentation is
+        // layered on rather than folded into it. ECH and plaintext carriers are
+        // skipped (see `fragmentable`), matching the preset's own switch.
+        let can_fragment = fragmentable(&parsed.outbound);
+        match evasion {
+            Evasion::Smart if can_fragment => {
+                // Expand this link across the fragment-length sweep; the
+                // balancer below keeps whichever length the ISP still passes
+                // today and routes around the rest.
+                for length in SMART_FRAGMENT_LENGTHS {
+                    outbounds.push(json!({
+                        "link": parsed.link,
+                        "evasion": fragment_evasion(&fragment_packets, length),
+                    }));
+                }
+            }
+            Evasion::Strong if can_fragment => {
+                outbounds.push(json!({
+                    "link": parsed.link,
+                    "evasion": fragment_evasion(&fragment_packets, "100-200"),
+                }));
+            }
+            _ => outbounds.push(json!({"link": parsed.link})),
         }
-        outbounds.push(outbound);
     }
+    // The balancer is keyed off how many proxy outbounds exist, not how many
+    // links: one link under Smart Fragment still expands into a sweep that
+    // needs the balancer to choose among.
+    let proxy_count = outbounds.len();
 
     let assets_dir = request
         .assets_dir
@@ -259,6 +346,8 @@ pub fn build_config_with_assets(
         remote_dns,
         custom_remote_dns,
         local_dns,
+        anti_sanction_dns,
+        custom_anti_sanction_dns,
         block_ads: request.block_ads,
         // Applied per link above, where ECH can be skipped.
         fragment: false,
@@ -367,7 +456,7 @@ pub fn build_config_with_assets(
             "outboundTag": "block",
         }));
     }
-    let multi = request.links.len() > 1;
+    let multi = proxy_count > 1;
     if multi {
         rules.push(json!({
             "type": "field",
@@ -416,6 +505,15 @@ pub fn build_config_with_assets(
 
 /// Whether ClientHello fragmentation applies to this outbound.
 fn fragmentable(outbound: &zero_config::Outbound) -> bool {
+    // QUIC carriers (Hysteria2/TUIC) run over UDP: there is no TCP ClientHello
+    // to split, and the model forbids layering TCP-shaped evasion on them. They
+    // manage their own QUIC handshake, so leave them untouched.
+    if matches!(
+        outbound.protocol,
+        zero_config::OutboundProtocol::Hysteria2(_) | zero_config::OutboundProtocol::Tuic(_)
+    ) {
+        return false;
+    }
     match &outbound.stream.security {
         zero_config::Security::None => false,
         zero_config::Security::Tls(tls) => tls.ech.is_none(),
@@ -423,10 +521,22 @@ fn fragmentable(outbound: &zero_config::Outbound) -> bool {
     }
 }
 
+/// A `{"fragment": {…}}` evasion block for one outbound. `packets` is the
+/// ClientHello write mode (`tlshello` or a range like `1-1`), `length` the
+/// byte-length range each write is split into; `interval` is the inter-write
+/// delay BPB fixes at `1-1`.
+fn fragment_evasion(packets: &str, length: &str) -> Value {
+    json!({"fragment": {
+        "packets": packets,
+        "length": length,
+        "interval": "1-1",
+    }})
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::link::tests::{REALITY, SS, TROJAN, WS_TLS};
+    use crate::link::tests::{HYSTERIA2, REALITY, SS, TROJAN, WS_TLS};
 
     fn compile(config: &Value) -> std::sync::Arc<zero_config::RuntimeConfig> {
         let (generation, _) = zero_config::compile_config(config, zero_core::GenerationId(1))
@@ -514,6 +624,56 @@ mod tests {
             &remote.endpoint,
             zero_config::dns::ResolverEndpoint::Udp { address, .. } if address.is_ip()
         ));
+    }
+
+    #[test]
+    fn the_anti_sanction_resolver_is_selectable_and_overridable() {
+        // A built-in name selects that resolver's addresses for the tag.
+        let config = build_config(&json!({
+            "links": [REALITY], "dns": {"anti_sanction": "electro"}
+        }))
+        .unwrap();
+        let servers = config["dns"]["servers"].as_array().unwrap();
+        assert!(servers
+            .iter()
+            .any(|s| s["tag"] == "anti-sanction" && s["address"] == "78.157.42.100"));
+
+        // A usable custom resolver replaces the built-in addresses.
+        let config = build_config(&json!({
+            "links": [REALITY], "dns": {"anti_sanction": "shecan", "custom_anti_sanction": "10.202.10.10"}
+        }))
+        .unwrap();
+        let servers = config["dns"]["servers"].as_array().unwrap();
+        let anti: Vec<&str> = servers
+            .iter()
+            .filter(|s| s["tag"] == "anti-sanction")
+            .filter_map(|s| s["address"].as_str())
+            .collect();
+        assert_eq!(anti, ["10.202.10.10"]);
+        compile(&config);
+
+        // "none" removes the third verdict entirely.
+        let config = build_config(&json!({
+            "links": [REALITY], "dns": {"anti_sanction": "none"}
+        }))
+        .unwrap();
+        assert!(!config["dns"]["servers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|s| s["tag"] == "anti-sanction"));
+
+        // Unknown names and un-bootstrappable custom resolvers are errors.
+        assert!(build_config(&json!({
+            "links": [REALITY], "dns": {"anti_sanction": "nowhere"}
+        }))
+        .unwrap_err()
+        .contains("anti-sanction"));
+        assert!(build_config(&json!({
+            "links": [REALITY], "dns": {"custom_anti_sanction": "resolver.example.com"}
+        }))
+        .unwrap_err()
+        .contains("anti-sanction"));
     }
 
     #[test]
@@ -633,6 +793,120 @@ mod tests {
                 "{}",
                 outbound.tag
             );
+        }
+    }
+
+    #[test]
+    fn smart_fragment_sweeps_one_link_into_a_balanced_length_range() {
+        // A single fragmentable link expands into the full length sweep, each
+        // variant fragmented, all balanced — so one server still gets the
+        // balancer that picks whichever length the ISP passes.
+        let config = build_config(&json!({
+            "links": [REALITY], "evasion": "smart"
+        }))
+        .unwrap();
+        let proxies = config["outbounds"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|o| {
+                o["tag"]
+                    .as_str()
+                    .is_some_and(|t| t == "proxy" || t.starts_with("proxy-"))
+            })
+            .count();
+        assert_eq!(proxies, SMART_FRAGMENT_LENGTHS.len());
+
+        let compiled = compile(&config);
+        // vpn mode appends direct + block + dns-out to the swept proxies.
+        assert_eq!(compiled.outbounds.len(), SMART_FRAGMENT_LENGTHS.len() + 3);
+        // Every swept outbound carries the same packets mode and its own length.
+        let lengths: Vec<_> = compiled
+            .outbounds
+            .iter()
+            .filter_map(|o| o.stream.evasion.tcp_fragment.as_ref())
+            .map(|f| (f.length.min, f.length.max))
+            .collect();
+        assert_eq!(lengths.len(), SMART_FRAGMENT_LENGTHS.len());
+        assert!(lengths.contains(&(1, 5)));
+        assert!(lengths.contains(&(100, 200)));
+        // The balancer exists even though only one link was supplied.
+        assert_eq!(compiled.routing.balancers.len(), 1);
+        assert_eq!(
+            compiled.expand_balancer(&compiled.routing.balancers[0]).len(),
+            SMART_FRAGMENT_LENGTHS.len()
+        );
+    }
+
+    #[test]
+    fn the_one_one_packets_fallback_reaches_every_fragment() {
+        // BPB's fallback: when tlshello fragmentation stops getting through,
+        // switch the write mode to a `1-1` range. It must apply to each swept
+        // variant, not just the first.
+        let config = build_config(&json!({
+            "links": [REALITY], "evasion": "smart", "fragment_packets": "1-1"
+        }))
+        .unwrap();
+        let modes: Vec<&str> = config["outbounds"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|o| o["evasion"]["fragment"]["packets"].as_str())
+            .collect();
+        assert_eq!(modes.len(), SMART_FRAGMENT_LENGTHS.len());
+        assert!(modes.iter().all(|m| *m == "1-1"));
+        compile(&config);
+
+        // A nonsense packets value is rejected by name.
+        assert!(build_config(&json!({
+            "links": [REALITY], "evasion": "strong", "fragment_packets": "nonsense"
+        }))
+        .unwrap_err()
+        .contains("fragment_packets"));
+    }
+
+    #[test]
+    fn smart_fragment_leaves_non_tls_links_alone() {
+        // A Shadowsocks link has no ClientHello to split, so the sweep must not
+        // touch it: one outbound, no fragment, no balancer.
+        let config = build_config(&json!({
+            "links": [SS], "evasion": "smart"
+        }))
+        .unwrap();
+        let compiled = compile(&config);
+        // proxy + direct + block + dns-out (vpn mode); the SS link is untouched.
+        assert_eq!(compiled.outbounds.len(), 4);
+        assert!(compiled.outbounds[0].stream.evasion.tcp_fragment.is_none());
+        assert!(compiled.routing.balancers.is_empty());
+    }
+
+    #[test]
+    fn quic_carriers_are_left_unfragmented() {
+        // Hysteria2/TUIC run over QUIC/UDP: no TCP ClientHello to split, and the
+        // model forbids TCP-shaped evasion on a QUIC carrier. So the fragment
+        // sweep must skip them — one plain outbound, no fragment, no balancer,
+        // whichever evasion mode is asked for.
+        for mode in ["strong", "smart"] {
+            let config = build_config(&json!({
+                "links": [HYSTERIA2], "evasion": mode
+            }))
+            .unwrap();
+            let proxies = config["outbounds"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|o| o["tag"].as_str().is_some_and(|t| t.starts_with("proxy")))
+                .count();
+            assert_eq!(proxies, 1, "mode {mode}");
+
+            let compiled = compile(&config);
+            let quic = compiled
+                .outbounds
+                .iter()
+                .find(|o| o.tag.as_ref() == "proxy")
+                .unwrap();
+            assert!(quic.stream.evasion.is_empty(), "mode {mode}");
+            assert!(compiled.routing.balancers.is_empty(), "mode {mode}");
         }
     }
 

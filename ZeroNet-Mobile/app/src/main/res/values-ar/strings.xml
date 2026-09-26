@@ -351,12 +351,17 @@
     <string name="settings_evasion_off_hint">اتصالات عادية. الأسرع، لكن أسهل في الحجب.</string>
     <string name="settings_evasion_auto_hint">يخفي حركة البيانات فقط عندما يُحجب خادم</string>
     <string name="settings_evasion_strong_hint">يخفي حركة البيانات دائمًا. أبطأ قليلًا، لكن أصعب بكثير في الحجب.</string>
+    <string name="settings_evasion_smart">ذكي</string>
+    <string name="settings_evasion_smart_hint">يجرّب عدة أساليب تمويه في آنٍ واحد ويُبقي ما تمرّره شبكتك. الأفضل ضد الحجب الصعب.</string>
     <string name="settings_block_quic">حظر QUIC</string>
     <string name="settings_block_quic_hint">تلجأ التطبيقات إلى TCP بدل التعطّل</string>
     <string name="settings_remote_dns">DNS للمواقع المحجوبة</string>
     <string name="settings_remote_dns_hint">يُطلب عبر النفق، فلا يستطيع مزوّد خدمتك رؤية الجواب أو تغييره</string>
     <string name="settings_custom_dns_hint">محلّل مخصص (مثل 8.8.8.8)</string>
     <string name="settings_custom_dns_note">اتركه فارغًا لاستخدام مزوّد من الأعلى. يقبل عنوان IP أو ‏tls://…‎ أو ‏https://…/dns-query‎.</string>
+    <string name="settings_anti_sanction">DNS للخدمات الخاضعة للعقوبات</string>
+    <string name="settings_anti_sanction_hint">المواقع التي تحجب عناوين IP الإيرانية (OpenAI، GitHub، …) تُطلب هنا وتُفتح مباشرة</string>
+    <string name="settings_anti_sanction_note">اتركه فارغًا لاستخدام مزوّد من الأعلى. يقبل عنوان IP أو ‏tls://…‎ / ‏https://…/dns-query‎ بعنوان IP.</string>
     <string name="settings_block_ads">حظر الإعلانات والمتتبّعات</string>
     <string name="settings_block_ads_hint">يفلتر نطاقات الإعلانات المعروفة لكل التطبيقات</string>
 

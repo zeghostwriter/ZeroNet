@@ -71,6 +71,7 @@ import com.zeronet.mobile.data.Sources
 import com.zeronet.mobile.data.Subscription
 import com.zeronet.mobile.model.AppFilterMode
 import com.zeronet.mobile.model.AppLanguage
+import com.zeronet.mobile.model.AntiSanctionDns
 import com.zeronet.mobile.model.AutoConnect
 import com.zeronet.mobile.model.ConnectionMode
 import com.zeronet.mobile.model.EvasionLevel
@@ -640,6 +641,7 @@ private fun EvasionCard(s: Settings, q: SettingsQuery, reconnect: Boolean, actio
                         EvasionLevel.Off -> R.string.settings_evasion_off_hint
                         EvasionLevel.Auto -> R.string.settings_evasion_auto_hint
                         EvasionLevel.Strong -> R.string.settings_evasion_strong_hint
+                        EvasionLevel.Smart -> R.string.settings_evasion_smart_hint
                     },
                 ),
             ) {
@@ -651,6 +653,7 @@ private fun EvasionCard(s: Settings, q: SettingsQuery, reconnect: Boolean, actio
                                 EvasionLevel.Off -> R.string.option_off
                                 EvasionLevel.Auto -> R.string.option_auto
                                 EvasionLevel.Strong -> R.string.settings_evasion_strong
+                                EvasionLevel.Smart -> R.string.settings_evasion_smart
                             },
                         )
                     },
@@ -694,6 +697,45 @@ private fun EvasionCard(s: Settings, q: SettingsQuery, reconnect: Boolean, actio
                 AnimatedVisibility(dirty) {
                     Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.End) {
                         ZeroChip(stringResource(R.string.action_save), onClick = commitCustom, icon = ZeroIcons.Check, selected = true)
+                    }
+                }
+            }
+        }
+        if (f.show(R.string.settings_anti_sanction)) {
+            LabeledBlock(stringResource(R.string.settings_anti_sanction), subtitle = stringResource(R.string.settings_anti_sanction_hint)) {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    AntiSanctionDns.entries.forEach { dns ->
+                        val enabled = s.customAntiSanction.isBlank()
+                        ZeroChip(
+                            text = when (dns) {
+                                AntiSanctionDns.Shecan -> "Shecan"
+                                AntiSanctionDns.Electro -> "Electro"
+                                AntiSanctionDns.Begzar -> "Begzar"
+                                AntiSanctionDns.Radar -> "Radar"
+                                AntiSanctionDns.Off -> stringResource(R.string.option_off)
+                            },
+                            selected = enabled && s.antiSanctionDns == dns,
+                            onClick = { actions.onChange { it.copy(antiSanctionDns = dns) } },
+                            modifier = Modifier.semantics { this.selected = enabled && s.antiSanctionDns == dns },
+                        )
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+                var customAs by rememberSaveable(s.customAntiSanction) { mutableStateOf(s.customAntiSanction) }
+                val commitCustomAs = { actions.onChange { it.copy(customAntiSanction = customAs.trim()) } }
+                ZeroTextField(
+                    value = customAs,
+                    onValueChange = { customAs = it },
+                    placeholder = stringResource(R.string.settings_custom_dns_hint),
+                    keyboardType = KeyboardType.Uri,
+                    onImeAction = commitCustomAs,
+                    clearLabel = stringResource(R.string.action_clear),
+                )
+                Note(stringResource(R.string.settings_anti_sanction_note))
+                val dirtyAs = customAs.trim() != s.customAntiSanction
+                AnimatedVisibility(dirtyAs) {
+                    Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.End) {
+                        ZeroChip(stringResource(R.string.action_save), onClick = commitCustomAs, icon = ZeroIcons.Check, selected = true)
                     }
                 }
             }

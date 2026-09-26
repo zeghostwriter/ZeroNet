@@ -508,7 +508,8 @@ object Engine {
     private fun topology(s: Settings) = listOf(s.lanShare, s.lanUser, s.lanPass, s.socksPort, s.httpPort)
 
     private fun routing(s: Settings) = listOf(
-        s.iranDirect, s.blockQuic, s.evasion, s.remoteDns, s.customDns, s.blockAds, s.logs,
+        s.iranDirect, s.blockQuic, s.evasion, s.fragmentPackets, s.remoteDns, s.customDns,
+        s.antiSanctionDns, s.customAntiSanction, s.blockAds, s.logs,
     )
 
     /**
@@ -905,8 +906,9 @@ object Engine {
             .put("iran_direct", s.iranDirect).put("block_ads", s.blockAds)
             .put("block_quic", s.blockQuic && s.profile != ConnectionProfile.Gaming)
             // Fragmenting the ClientHello costs round trips; Fast and Gaming skip it.
-            .put("evasion", if (s.profile != ConnectionProfile.Normal) "off" else when (s.evasion) { EvasionLevel.Off -> "off"; EvasionLevel.Auto -> "auto"; EvasionLevel.Strong -> "strong" })
-            .put("dns", JSONObject().put("remote", s.remoteDns.name.lowercase()).put("custom", s.customDns.trim()).put("local", "google").put("fakedns", s.fakeDns))
+            .put("evasion", if (s.profile != ConnectionProfile.Normal) "off" else when (s.evasion) { EvasionLevel.Off -> "off"; EvasionLevel.Auto -> "auto"; EvasionLevel.Strong -> "strong"; EvasionLevel.Smart -> "smart" })
+            .put("fragment_packets", s.fragmentPackets.trim().ifEmpty { "tlshello" })
+            .put("dns", JSONObject().put("remote", s.remoteDns.name.lowercase()).put("custom", s.customDns.trim()).put("local", "google").put("anti_sanction", s.antiSanctionDns.name.lowercase()).put("custom_anti_sanction", s.customAntiSanction.trim()).put("fakedns", s.fakeDns))
             // The user's own scan first, then what others found on this network.
             .put("clean_ips", JSONArray((scan.value.results.take(10).map { "${it.ip}:${it.port}" } + crowdCleanIps).distinct().take(20)))
             .put("log_level", if (s.logs) "info" else "warning")

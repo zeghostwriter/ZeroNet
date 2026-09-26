@@ -16,7 +16,7 @@ enum class ConnectionMode { Vpn, Proxy }
 enum class ConnectionProfile { Normal, Fast, Gaming }
 enum class AutoConnect { Off, OnAppStart, OnBoot }
 enum class AppFilterMode { All, OnlySelected, AllExceptSelected }
-enum class EvasionLevel { Off, Auto, Strong }
+enum class EvasionLevel { Off, Auto, Strong, Smart }
 
 /**
  * Slowest download ZeroNet tolerates before moving to another server.
@@ -37,6 +37,10 @@ enum class Palette { GoldenDark, Nightshade, Arctic, Sakura, Paper, Contrast }
 enum class MotionLevel { Full, Reduced }
 enum class AppLanguage { System, English, Persian, Azerbaijani, Kurdish, Arabic, Russian, Turkish, Chinese }
 enum class RemoteDns { Cloudflare, Google, Quad9, AdGuard }
+
+/** Iranian anti-sanction resolvers for services that block Iranian IPs. Mirrors
+ *  zero-config `AntiSanctionDns`; [Off] resolves those names like any other. */
+enum class AntiSanctionDns { Shecan, Electro, Begzar, Radar, Off }
 
 /**
  * Every user preference, as one immutable value. The UI process owns it
@@ -94,6 +98,15 @@ data class Settings(
     /** A user-supplied resolver that overrides [remoteDns] when non-blank.
      *  Accepts a bare IP (e.g. "8.8.8.8"), "tls://…", "https://…/dns-query". */
     val customDns: String = "",
+    /** Domestic resolver for sanctioned services (OpenAI, GitHub, …) that block
+     *  Iranian IPs; they resolve here and route direct. */
+    val antiSanctionDns: AntiSanctionDns = AntiSanctionDns.Shecan,
+    /** A user-supplied anti-sanction resolver that overrides [antiSanctionDns]
+     *  when non-blank. Same rule as [customDns]: an IP or IP-addressed DoH/DoT. */
+    val customAntiSanction: String = "",
+    /** ClientHello fragment writes for Strong/Smart evasion: "tlshello", or a
+     *  range like "1-1" as a fallback when tlshello stops getting through. */
+    val fragmentPackets: String = "tlshello",
     val fakeDns: Boolean = true,
     val blockAds: Boolean = true,
     // Appearance
@@ -155,6 +168,9 @@ data class Settings(
         .put("blockQuic", blockQuic)
         .put("remoteDns", remoteDns.name)
         .put("customDns", customDns)
+        .put("antiSanctionDns", antiSanctionDns.name)
+        .put("customAntiSanction", customAntiSanction)
+        .put("fragmentPackets", fragmentPackets)
         .put("fakeDns", fakeDns)
         .put("blockAds", blockAds)
         .put("themeMode", themeMode.name)
@@ -197,6 +213,9 @@ data class Settings(
                 blockQuic = o.optBoolean("blockQuic", d.blockQuic),
                 remoteDns = o.enumOr("remoteDns", d.remoteDns),
                 customDns = o.optString("customDns", d.customDns),
+                antiSanctionDns = o.enumOr("antiSanctionDns", d.antiSanctionDns),
+                customAntiSanction = o.optString("customAntiSanction", d.customAntiSanction),
+                fragmentPackets = o.optString("fragmentPackets", d.fragmentPackets),
                 fakeDns = o.optBoolean("fakeDns", d.fakeDns),
                 blockAds = o.optBoolean("blockAds", d.blockAds),
                 themeMode = o.enumOr("themeMode", d.themeMode),

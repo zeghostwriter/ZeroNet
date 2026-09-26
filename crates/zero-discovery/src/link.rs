@@ -496,6 +496,8 @@ pub(crate) mod tests {
     pub const TROJAN: &str =
         "trojan://secret@198.51.100.7:8443?security=tls&sni=t.example.com#Germany%20trojan";
     pub const SS: &str = "ss://YWVzLTI1Ni1nY206cGFzc3dvcmQ=@192.0.2.9:8388#plain";
+    pub const HYSTERIA2: &str =
+        "hysteria2://secret@203.0.113.20:443?security=tls&sni=h2.example.com#hy2";
 
     #[test]
     fn the_key_ignores_the_remark_and_surrounding_noise() {

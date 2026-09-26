@@ -337,12 +337,17 @@
     <string name="settings_evasion_off_hint">پەیوەندی ساکار. خێراترین، بەڵام ئاسانتر بلۆک دەکرێت.</string>
     <string name="settings_evasion_auto_hint">تەنها کاتێک سێرڤەرێک بلۆک دەکرێت ترافیک دەشارێتەوە</string>
     <string name="settings_evasion_strong_hint">هەمیشە ترافیک دەشارێتەوە. کەمێک خاوتر، بەڵام زۆر سەختتر بلۆک دەکرێت.</string>
+    <string name="settings_evasion_smart">زیرەک</string>
+    <string name="settings_evasion_smart_hint">چەند شێوازی شاردنەوە بە هەمان کات تاقی دەکاتەوە و ئەوە دەهێڵێتەوە کە تۆڕەکەت ڕێی پێدەدات. باشترین بۆ فلتەری قورس.</string>
     <string name="settings_block_quic">بلۆککردنی QUIC</string>
     <string name="settings_block_quic_hint">ئەپەکان لەبری گیرکردن، دەگەڕێنەوە بۆ TCP</string>
     <string name="settings_remote_dns">DNS بۆ ماڵپەڕە بلۆککراوەکان</string>
     <string name="settings_remote_dns_hint">بە تونێلدا دەپرسرێت، بۆیە ISPـەکەت ناتوانێت وەڵامەکە ببینێت یان بیگۆڕێت</string>
     <string name="settings_custom_dns_hint">DNSی دڵخواز (بۆ نموونە 8.8.8.8)</string>
     <string name="settings_custom_dns_note">بۆ بەکارهێنانی دابینکەرێکی سەرەوە بەتاڵی بهێڵەوە. IP، ‏tls://…‎ یان ‏https://…/dns-query‎ قبووڵ دەکات.</string>
+    <string name="settings_anti_sanction">DNS بۆ خزمەتگوزارییە ژێر-سزاکان</string>
+    <string name="settings_anti_sanction_hint">ئەو ماڵپەڕانەی IPی ئێران بلۆک دەکەن (OpenAI، GitHub، …) لێرە دەپرسرێن و ڕاستەوخۆ دەکرێنەوە</string>
+    <string name="settings_anti_sanction_note">بۆ بەکارهێنانی دابینکەرێکی سەرەوە بەتاڵی بهێڵەوە. IP یان ‏tls://…‎ / ‏https://…/dns-query‎ بە ناونیشانی IP قبووڵ دەکات.</string>
     <string name="settings_block_ads">بلۆککردنی ڕیکلام و شوێنکەرەوەکان</string>
     <string name="settings_block_ads_hint">دۆمەینە ناسراوەکانی ڕیکلام بۆ هەموو ئەپەکان پاڵاوتن دەکات</string>
 

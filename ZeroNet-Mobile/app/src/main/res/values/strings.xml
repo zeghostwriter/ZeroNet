@@ -334,15 +334,20 @@
     <string name="settings_evasion">Anti-censorship</string>
     <string name="settings_evasion_level">Strength</string>
     <string name="settings_evasion_strong">Strong</string>
+    <string name="settings_evasion_smart">Smart</string>
     <string name="settings_evasion_off_hint">Plain connections. Fastest, but easier to block.</string>
     <string name="settings_evasion_auto_hint">Disguises traffic only when a server gets blocked</string>
     <string name="settings_evasion_strong_hint">Always disguises traffic. A little slower, much harder to block.</string>
+    <string name="settings_evasion_smart_hint">Tries many disguises at once and keeps the one your network passes. Best against tough filtering.</string>
     <string name="settings_block_quic">Block QUIC</string>
     <string name="settings_block_quic_hint">Apps fall back to TCP instead of stalling</string>
     <string name="settings_remote_dns">DNS for blocked sites</string>
     <string name="settings_remote_dns_hint">Asked through the tunnel, so your ISP can’t see or change the answer</string>
     <string name="settings_custom_dns_hint">Custom resolver (e.g. 8.8.8.8)</string>
     <string name="settings_custom_dns_note">Leave empty to use a provider above. Accepts an IP, tls://…, or https://…/dns-query.</string>
+    <string name="settings_anti_sanction">DNS for sanctioned services</string>
+    <string name="settings_anti_sanction_hint">Sites that block Iranian IPs (OpenAI, GitHub, …) are looked up here and reached directly</string>
+    <string name="settings_anti_sanction_note">Leave empty to use a provider above. Accepts an IP or an IP-addressed tls://… / https://…/dns-query.</string>
     <string name="settings_block_ads">Block ads and trackers</string>
     <string name="settings_block_ads_hint">Filters known ad domains for every app</string>
 

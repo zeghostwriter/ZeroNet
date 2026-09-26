@@ -218,6 +218,11 @@ pub const SANCTIONED_DOMAINS: &[&str] = &[
     "codecov.io",
     "sentry.io",
     "datadoghq.com",
+    "asus.com",
+    "hp.com",
+    "lenovo.com",
+    "deepmind.com",
+    "deepmind.google",
 ];
 
 /// Domestic destinations that must never be tunnelled: sending them abroad is
@@ -281,6 +286,7 @@ pub struct IranPreset {
     pub custom_remote_dns: Option<String>,
     pub local_dns: LocalDns,
     pub anti_sanction_dns: AntiSanctionDns,
+    pub custom_anti_sanction_dns: Option<String>,
     pub block_ads: bool,
     /// Enable ClientHello fragmentation on every TLS-bearing outbound from the
     /// start, instead of waiting for the planner to climb to that rung.
@@ -303,6 +309,7 @@ impl Default for IranPreset {
             custom_remote_dns: None,
             local_dns: LocalDns::Google,
             anti_sanction_dns: AntiSanctionDns::Shecan,
+            custom_anti_sanction_dns: None,
             block_ads: true,
             fragment: false,
             manage_assets: true,
@@ -432,6 +439,32 @@ impl IranPreset {
         Value::Array(inbounds)
     }
 
+    /// The anti-sanction resolver addresses to use: the user's custom one when
+    /// it is set and usable (a bare IP or an IP-addressed DoH/DoT/DoQ URL —
+    /// a hostname is refused because a censored network cannot bootstrap it),
+    /// otherwise the built-in resolver's addresses. Empty means the third
+    /// verdict is off entirely (`AntiSanctionDns::None` with no custom).
+    fn anti_sanction_servers(&self) -> Vec<String> {
+        let custom = self
+            .custom_anti_sanction_dns
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .filter(|value| {
+                crate::dns::ResolverEndpoint::parse(value)
+                    .is_some_and(|endpoint| !endpoint.needs_bootstrap())
+            });
+        match custom {
+            Some(custom) => vec![custom.to_string()],
+            None => self
+                .anti_sanction_dns
+                .servers()
+                .iter()
+                .map(|address| (*address).to_string())
+                .collect(),
+        }
+    }
+
     /// Three resolver tiers plus pinned bootstrap addresses.
     fn dns(&self) -> Value {
         let mut servers: Vec<Value> = Vec::new();
@@ -439,7 +472,7 @@ impl IranPreset {
         // Tier 1 — sanctioned names, answered by a domestic resolver. Scoped
         // to the sanctioned list so it cannot become a general resolver, and
         // tagged so `DirectVia` can name it.
-        let anti_sanction = self.anti_sanction_dns.servers();
+        let anti_sanction = self.anti_sanction_servers();
         if !anti_sanction.is_empty() {
             for address in anti_sanction {
                 servers.push(json!({
@@ -509,8 +542,11 @@ impl IranPreset {
         }
 
         // Sanctioned services, before the domestic rules: several of them have
-        // domestic CDN presence and would otherwise match a broader rule.
-        if !matches!(self.anti_sanction_dns, AntiSanctionDns::None) {
+        // domestic CDN presence and would otherwise match a broader rule. The
+        // rule is emitted only when a resolver actually backs the tag — the
+        // built-in enum, or a usable custom resolver — so the two never
+        // disagree about whether the third verdict exists.
+        if !self.anti_sanction_servers().is_empty() {
             rules.push(json!({
                 "type": "field",
                 "domain": SANCTIONED_DOMAINS

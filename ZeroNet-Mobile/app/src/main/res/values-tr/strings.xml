@@ -335,12 +335,17 @@
     <string name="settings_evasion_off_hint">Düz bağlantılar. En hızlısı, ama engellenmesi daha kolay.</string>
     <string name="settings_evasion_auto_hint">Trafiği yalnızca bir sunucu engellendiğinde gizler</string>
     <string name="settings_evasion_strong_hint">Trafiği her zaman gizler. Biraz daha yavaş, engellenmesi çok daha zor.</string>
+    <string name="settings_evasion_smart">Akıllı</string>
+    <string name="settings_evasion_smart_hint">Aynı anda birçok gizleme dener ve ağınızın geçirdiğini tutar. Sıkı filtrelemeye karşı en iyisi.</string>
     <string name="settings_block_quic">QUIC\'i engelle</string>
     <string name="settings_block_quic_hint">Uygulamalar takılmak yerine TCP\'ye geri döner</string>
     <string name="settings_remote_dns">Engellenen siteler için DNS</string>
     <string name="settings_remote_dns_hint">Tünel üzerinden sorulur, böylece İSS\'niz yanıtı göremez veya değiştiremez</string>
     <string name="settings_custom_dns_hint">Özel çözümleyici (ör. 8.8.8.8)</string>
     <string name="settings_custom_dns_note">Yukarıdaki bir sağlayıcıyı kullanmak için boş bırakın. Bir IP, tls://… veya https://…/dns-query kabul eder.</string>
+    <string name="settings_anti_sanction">Yaptırımlı hizmetler için DNS</string>
+    <string name="settings_anti_sanction_hint">İran IP’lerini engelleyen siteler (OpenAI, GitHub, …) burada sorulur ve doğrudan açılır</string>
+    <string name="settings_anti_sanction_note">Yukarıdaki bir sağlayıcıyı kullanmak için boş bırakın. Bir IP veya IP adresli tls://… / https://…/dns-query kabul eder.</string>
     <string name="settings_block_ads">Reklamları ve izleyicileri engelle</string>
     <string name="settings_block_ads_hint">Her uygulama için bilinen reklam alan adlarını filtreler</string>
 

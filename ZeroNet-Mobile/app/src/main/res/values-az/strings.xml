@@ -336,12 +336,17 @@
     <string name="settings_evasion_off_hint">Adi bağlantılar. Ən sürətli, amma bloklamaq daha asan.</string>
     <string name="settings_evasion_auto_hint">Trafiki yalnız server bloklandıqda maskalayır</string>
     <string name="settings_evasion_strong_hint">Trafiki həmişə maskalayır. Bir az yavaş, amma bloklamaq çox çətin.</string>
+    <string name="settings_evasion_smart">Ağıllı</string>
+    <string name="settings_evasion_smart_hint">Eyni anda bir neçə maskalama sınayır və şəbəkənizin buraxdığını saxlayır. Ağır süzgəcə qarşı ən yaxşısı.</string>
     <string name="settings_block_quic">QUIC-i blokla</string>
     <string name="settings_block_quic_hint">Tətbiqlər donmaq əvəzinə TCP-yə keçir</string>
     <string name="settings_remote_dns">Bloklanmış saytlar üçün DNS</string>
     <string name="settings_remote_dns_hint">Tunel vasitəsilə soruşulur, ona görə ISP-niz cavabı görə və ya dəyişə bilmir</string>
     <string name="settings_custom_dns_hint">Fərdi resolver (məs. 8.8.8.8)</string>
     <string name="settings_custom_dns_note">Yuxarıdakı bir provayderdən istifadə üçün boş buraxın. IP, tls://… və ya https://…/dns-query qəbul edir.</string>
+    <string name="settings_anti_sanction">Sanksiyalı xidmətlər üçün DNS</string>
+    <string name="settings_anti_sanction_hint">İran IP-lərini bloklayan saytlar (OpenAI, GitHub, …) burada soruşulur və birbaşa açılır</string>
+    <string name="settings_anti_sanction_note">Yuxarıdakı bir provayderdən istifadə üçün boş buraxın. IP və ya IP ünvanlı tls://… / https://…/dns-query qəbul edir.</string>
     <string name="settings_block_ads">Reklam və izləyiciləri blokla</string>
     <string name="settings_block_ads_hint">Hər tətbiq üçün məlum reklam domenlərini süzgəcdən keçirir</string>
 
