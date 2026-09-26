@@ -1,6 +1,6 @@
 # Provenance
 
-- License: MPL-2.0, inherited from the workspace.
+- License: MIT, inherited from the workspace.
 - Ordinary TLS uses rustls. The minimal TLS 1.3/REALITY substrate is original
   Zray-Core Rust code whose wire behavior is checked against the MIT/MPL oracle
   material named in `PLAN-01.md`; no upstream REALITY or TLS 1.3 substrate source

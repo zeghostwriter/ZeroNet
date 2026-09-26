@@ -55,6 +55,7 @@ use zeronet_tui::theme::Theme;
 use zeronet_tui::toast::{ToastKind, ToastManager};
 use zeronet_tui::ui::{ActiveTab, UiRenderer};
 
+mod app_finder;
 mod app_tasks;
 mod app_update;
 mod launcher;
@@ -519,6 +520,8 @@ struct App<'a> {
     perf: PerfMeter,
     /// Update checks and downloads; see `app_update`.
     updater: app_update::Updater,
+    /// The config finder and its crowd reports; see `app_finder`.
+    finder: app_finder::FinderState,
     /// An installed update to start in place of this process on exit.
     relaunch: Option<std::path::PathBuf>,
 }
@@ -795,6 +798,7 @@ impl<'a> App<'a> {
             speed_history: SpeedHistory::default(),
             perf: PerfMeter::default(),
             updater: app_update::Updater::default(),
+            finder: app_finder::FinderState::new(),
             relaunch: None,
         })
     }
@@ -1071,6 +1075,17 @@ impl<'a> App<'a> {
                     self.dirty = true;
                 }
 
+                Some(event) = self.finder.rx.recv() => {
+                    if self.on_finder_event(event).await {
+                        self.dirty = true;
+                    }
+                    // Progress arrives several times a second: take what else
+                    // is queued in the same frame.
+                    while let Ok(event) = self.finder.rx.try_recv() {
+                        self.on_finder_event(event).await;
+                    }
+                }
+
                 // Finished background jobs: system proxy, TUN, password
                 // checks, housekeeping, termination signals.
                 Some(event) = self.bg.rx.recv() => {
@@ -1326,6 +1341,7 @@ impl<'a> App<'a> {
             system_history: &self.usage.system_history,
             sort: self.activity_sort,
         };
+        let finder_status = self.finder_status();
         let mut renderer = UiRenderer {
             theme: &self.theme,
             caps: &self.caps,
@@ -1368,6 +1384,7 @@ impl<'a> App<'a> {
             session: self.connected_since.map(|since| since.elapsed()),
             speed_history: (&self.speed_history.up, &self.speed_history.down),
             update_status: &self.updater.status,
+            finder_status,
         };
         renderer.render(frame);
     }
@@ -2352,8 +2369,9 @@ impl<'a> App<'a> {
                     self.connection.select(id);
                 }
                 None => {
-                    self.toasts
-                        .warning("No profiles yet. Press Ctrl+V to paste a share link.");
+                    // Nothing to connect to yet: find something, as the
+                    // phone app does on its first connect.
+                    self.start_finder(true);
                     return Ok(());
                 }
             }
@@ -2385,6 +2403,7 @@ impl<'a> App<'a> {
                 self.apply_engine_action(action).await?;
             }
             Command::Disconnect => {
+                self.cancel_finder();
                 let action = self.connection.disconnect();
                 self.apply_engine_action(action).await?;
             }
@@ -2507,6 +2526,7 @@ impl<'a> App<'a> {
                 self.refresh_latencies();
             }
             Command::TestLatency => self.refresh_latencies(),
+            Command::FindServers => self.start_finder(true),
             Command::ExportAll => self.export_all_profiles(),
             Command::AddSubscription => self.open_text_modal(
                 "Add Subscription Feed",
@@ -4013,6 +4033,15 @@ impl App<'_> {
 
     /// Turn a parsed share link into a stored profile.
     fn store_share_link(&self, link: &zero_config::ShareLink) -> Result<i64> {
+        let (json, remark, proto_name, address, port) = self.profile_from_link(link)?;
+        Ok(self
+            .db
+            .insert_config(&remark, &proto_name, &address, port, &json, None)?)
+    }
+
+    /// The runnable profile for a share link: its JSON config, name,
+    /// protocol and endpoint. Fails with the reason when it would not run.
+    fn profile_from_link(&self, link: &zero_config::ShareLink) -> Result<(String, String, String, String, u16)> {
         let proto_name = link.outbound.protocol.name().to_string();
         let preset = zero_config::IranPreset {
             outbounds: zero_config::presets::outbounds_from_links([link.link.as_str()]),
@@ -4042,9 +4071,7 @@ impl App<'_> {
             .map_err(|reason| anyhow::anyhow!("{remark}: {reason}"))?;
 
         let (address, port) = endpoint_of(&link.outbound.protocol);
-        Ok(self
-            .db
-            .insert_config(&remark, &proto_name, &address, port, &json, None)?)
+        Ok((json, remark, proto_name, address, port))
     }
 
     /// Highlight a profile by id without changing the connection.
@@ -4259,6 +4286,7 @@ impl App<'_> {
 
             ComponentId::FooterTab => self.active_tab = next_tab(self.active_tab),
             ComponentId::FooterShowQr => self.show_qr_code(),
+            ComponentId::FooterFindServers => self.start_finder(true),
             ComponentId::FooterFind => {
                 self.filter_focused = true;
                 self.active_tab = ActiveTab::Dashboard;
@@ -4333,6 +4361,19 @@ impl App<'_> {
                 }
             }
             ComponentId::SettingCheckUpdates => self.check_for_update(true),
+            ComponentId::SettingShareResultsToggle => {
+                self.settings.share_results = !self.settings.share_results;
+                self.persist_settings();
+                self.toasts.info(if self.settings.share_results {
+                    "Sharing which found servers work, anonymously. Your own profiles are never sent."
+                } else {
+                    "No longer sharing results."
+                });
+            }
+            ComponentId::SettingFinderDepthCycle => {
+                self.settings.finder_max_tier = (self.settings.finder_max_tier + 1) % 4;
+                self.persist_settings();
+            }
             ComponentId::SettingAutoUpdateToggle => {
                 self.settings.auto_update_check = !self.settings.auto_update_check;
                 self.persist_settings();

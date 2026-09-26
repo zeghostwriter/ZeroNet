@@ -1,0 +1,514 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Central Kurdish/Sorani (ckb) — machine-assisted; needs native review before release. -->
+<resources>
+
+    <!-- Service notification and quick-settings tile (used by the :vpn process). -->
+    <string name="notification_channel">دۆخی پەیوەندی</string>
+    <string name="notification_connected">پەیوەست بوو</string>
+    <string name="notification_searching">لە دۆزینەوەی سێرڤەردایە…</string>
+    <string name="notification_searching_detail">%1$d تاقیکرایەوە · %2$d سەرکەوتوو</string>
+    <string name="notification_connecting">لە پەیوەستبووندایە…</string>
+    <string name="notification_reconnecting">دووبارە پەیوەستبوونەوە…</string>
+    <string name="notification_disconnect">پچڕاندن</string>
+    <string name="notification_switch">گۆڕینی سێرڤەر</string>
+    <string name="notification_server_ping">%1$s · %2$d میلیچرکە</string>
+    <string name="tile_connected">پەیوەست</string>
+    <string name="tile_disconnected">کوژاوە</string>
+    <string name="tile_searching">لە گەڕاندایە…</string>
+
+    <!-- Tabs -->
+    <string name="tab_home">ماڵەوە</string>
+    <string name="tab_servers">سێرڤەرەکان</string>
+    <string name="tab_scanner">سکانەر</string>
+    <string name="tab_settings">ڕێکخستنەکان</string>
+
+    <!-- Common actions -->
+    <string name="action_add">زیادکردن</string>
+    <string name="action_back">گەڕانەوە</string>
+    <string name="action_cancel">هەڵوەشاندنەوە</string>
+    <string name="action_clear">پاککردنەوە</string>
+    <string name="action_close">داخستن</string>
+    <string name="action_collapse">شاردنەوەی سێرڤەرەکان</string>
+    <string name="action_connect">پەیوەستبوون</string>
+    <string name="action_copy_link">لەبەرگرتنەوەی بەستەر</string>
+    <string name="action_copy_value">لەبەرگرتنەوەی %1$s</string>
+    <string name="action_delete">سڕینەوە</string>
+    <string name="action_details">وردەکاری</string>
+    <string name="action_expand">پیشاندانی سێرڤەرەکان</string>
+    <string name="action_favorite">زیادکردن بۆ دڵخوازەکان</string>
+    <string name="action_find_servers">دۆزینەوەی سێرڤەر</string>
+    <string name="action_grant_permission">ڕێگەدان بە VPN</string>
+    <string name="action_hide_qr">شاردنەوەی کۆدی QR</string>
+    <string name="action_paste">لکاندن</string>
+    <string name="action_refresh_servers">نوێکردنەوەی سێرڤەرەکان</string>
+    <string name="action_remove_subscription">سڕینەوەی %1$s</string>
+    <string name="action_save">پاشەکەوتکردن</string>
+    <string name="action_share">پیشاندانی کۆدی QR</string>
+    <string name="action_test">تاقیکردنەوە</string>
+    <string name="action_test_servers">تاقیکردنەوەی سێرڤەرەکان</string>
+    <string name="action_try_again">دووبارە هەوڵبدەوە</string>
+    <string name="action_unfavorite">لابردن لە دڵخوازەکان</string>
+
+    <!-- Home: the orb -->
+    <string name="orb_connect">پەیوەستبوون</string>
+    <string name="orb_connecting">پەیوەستبوون</string>
+    <string name="orb_connected">پەیوەست بوو</string>
+    <string name="orb_disconnecting">وەستان</string>
+    <string name="orb_failed">دووبارە</string>
+    <string name="orb_action_connect">پەیوەستبوون</string>
+    <string name="orb_action_disconnect">پچڕاندن</string>
+    <string name="state_disconnected">پەیوەست نییە</string>
+    <string name="state_connecting">لە پەیوەستبووندایە</string>
+    <string name="state_connected_to">پەیوەست بە %1$s</string>
+    <string name="state_active">ئێستا پەیوەستە</string>
+
+    <!-- Home: the stage line under the orb -->
+    <string name="stage_history">تاقیکردنەوەی ئەو سێرڤەرانەی پێشتر کاریان کردووە…</string>
+    <string name="stage_fetch">وەرگرتنی لیستە نوێیەکانی سێرڤەر…</string>
+    <string name="stage_parse">خوێندنەوەی %1$s سێرڤەر…</string>
+    <string name="stage_tcp">پشکنینی %1$s سێرڤەر · %2$s بەردەست</string>
+    <string name="stage_real">تاقیکردنەوەی %1$s سێرڤەر · %2$s سەرکەوتوو</string>
+    <string name="stage_connecting">دەستپێکردنی تونێل…</string>
+    <string name="stage_connecting_to">پەیوەستبوون بە %1$s…</string>
+    <string name="stage_reconnecting">پەیوەندی پچڕا. گۆڕینی سێرڤەر…</string>
+    <string name="stage_chosen_down">کۆنفیگەکەت وەڵام نادات. دووبارە هەوڵی بۆ دەدەینەوە…</string>
+    <string name="stage_disconnecting">لە پچڕاندندایە…</string>
+    <string name="stage_connected_pool">سێرڤەری پاڵپشت ئامادەیە: %1$s</string>
+
+    <!-- Home: why a connection failed -->
+    <string name="fail_no_server">لەسەر ئەم تۆڕە هیچ سێرڤەرێکی سەرکەوتوو نەدۆزرایەوە. دوای خولەکێک دووبارە هەوڵبدەوە، یان دژە-سانسۆر بخە سەر «بەهێز».</string>
+    <string name="fail_no_network">ئۆفڵاینیت. Wi-Fi یان داتای مۆبایل بپشکنە.</string>
+    <string name="fail_vpn_permission">ZeroNet بۆ دروستکردنی VPN پێویستی بە ڕێگەپێدانە.</string>
+    <string name="fail_vpn_revoked">ئەپێکی VPNی تر کۆنترۆڵی گرت.</string>
+    <string name="fail_core">نەتوانرا پەیوەندی دەست پێبکات. دووبارە هەوڵبدەوە.</string>
+    <string name="fail_server_unavailable">ئەو سێرڤەرە وەڵام نادات. لەبری ئەو خێراترینەکە تاقیبکەرەوە.</string>
+
+    <!-- Home: server card and stats -->
+    <string name="server_fastest">خێراترین سێرڤەر</string>
+    <string name="server_fastest_hint">ZeroNet خۆی بۆت هەڵدەبژێرێت</string>
+    <string name="server_fastest_picked">خێراترین</string>
+    <string name="server_country_best">باشترین سێرڤەری ئەم وڵاتە</string>
+    <string name="server_card_action">هەڵبژاردنی سێرڤەر</string>
+    <string name="stats_download">داگرتن</string>
+    <string name="stats_upload">بارکردن</string>
+    <string name="stats_session">ماوەی پەیوەندی</string>
+
+    <!-- Units and time -->
+    <string name="unit_bps">bps</string>
+    <string name="unit_kbps">Kbps</string>
+    <string name="unit_mbps">Mbps</string>
+    <string name="unit_gbps">Gbps</string>
+    <string name="unit_b_value">%1$s B</string>
+    <string name="unit_kb_value">%1$s KB</string>
+    <string name="unit_mb_value">%1$s MB</string>
+    <string name="unit_gb_value">%1$s GB</string>
+    <!-- Isolated LTR so "140 ms" never renders as "ms 140" inside Sorani text. -->
+    <string name="delay_ms">⁦%1$s ms⁩</string>
+    <string name="delay_unknown">—</string>
+    <string name="delay_failed">سەرنەکەوت</string>
+    <string name="ago_never">هەرگیز</string>
+    <string name="ago_now">هەر ئێستا</string>
+    <string name="ago_minutes">%1$s خولەک لەمەوپێش</string>
+    <string name="ago_hours">%1$s کاتژمێر لەمەوپێش</string>
+    <string name="ago_days">%1$s ڕۆژ لەمەوپێش</string>
+
+    <!-- Server words -->
+    <string name="country_unknown">شوێنی نەزانراو</string>
+    <string name="kind_direct">ڕاستەوخۆ</string>
+    <string name="kind_cdn">CDN</string>
+    <string name="kind_other">ئاسایی</string>
+    <string name="source_user">تۆ زیادت کردووە</string>
+    <string name="source_subscription">بەشداریبوونی تۆ</string>
+    <string name="source_feed">لیستی گشتی · %1$s</string>
+    <string name="source_public">لیستی گشتی</string>
+
+    <!-- Server picker sheet -->
+    <string name="picker_title">هەڵبژاردنی سێرڤەر</string>
+    <string name="picker_favorites">دڵخوازەکان</string>
+    <string name="picker_mine">کۆنفیگەکانت</string>
+    <string name="picker_subscriptions">بەشداریبوونەکانت</string>
+    <string name="server_subscription_hint">تەنها لەنێوان کۆنفیگەکانی ئەم بەشداریبوونە دەگۆڕێت</string>
+    <string name="picker_countries">وڵاتان</string>
+    <string name="picker_empty">هێشتا هیچ سێرڤەرێک نییە. جارێک پەیوەست بە و ZeroNet هەندێک دەدۆزێتەوە.</string>
+
+    <!-- Servers tab -->
+    <plurals name="servers_count">
+        <item quantity="one">%1$s سێرڤەر</item>
+        <item quantity="other">%1$s سێرڤەر</item>
+    </plurals>
+    <plurals name="servers_subtitle">
+        <item quantity="one">%1$s سێرڤەر · %2$s سەرکەوتوو</item>
+        <item quantity="other">%1$s سێرڤەر · %2$s سەرکەوتوو</item>
+    </plurals>
+    <string name="servers_subtitle_empty">هێشتا هیچ نەدۆزراوەتەوە</string>
+    <string name="servers_search">گەڕان بەدوای وڵات یان ناو</string>
+    <string name="servers_recommended">پێشنیارکراو</string>
+    <string name="servers_countries">وڵاتان</string>
+    <string name="servers_mine">هی من</string>
+    <string name="servers_rec_empty_title">هێشتا هیچ سێرڤەرێک تاقی نەکراوەتەوە</string>
+    <string name="servers_rec_empty_body">لیستەکە تاقیبکەرەوە تاکو ببینیت کام سێرڤەر لەسەر پەیوەندییەکەت کاردەکات.</string>
+    <string name="servers_testing">تاقیکردنەوەی %1$s لە %2$s…</string>
+    <string name="servers_working_count">%1$s سەرکەوتوو</string>
+    <string name="servers_subscriptions">بەشداریبوونەکان</string>
+    <string name="servers_your_servers">کۆنفیگەکانت</string>
+    <string name="servers_mine_empty_title">هێشتا هیچ زیاد نەکراوە</string>
+    <string name="servers_mine_empty_body">بەستەری کۆنفیگ یان بەستەری بەشداریبوون بلکێنە.</string>
+    <string name="servers_add_title">زیادکردنی کۆنفیگ</string>
+    <string name="servers_add_body">بەستەری کۆنفیگ یان بەستەری بەشداریبوون</string>
+    <string name="servers_no_matches">هیچ لەگەڵ «%1$s» ناگونجێت</string>
+    <string name="servers_empty_title">هێشتا هیچ سێرڤەرێک نییە</string>
+    <string name="servers_empty_body">لە «دۆزینەوەی سێرڤەر» بدە. ZeroNet لیستە گشتییەکان دادەگرێت و لەسەر پەیوەندییەکەت تاقیان دەکاتەوە.</string>
+    <string name="servers_finding">لە گەڕاندایە…</string>
+
+    <!-- Server detail sheet -->
+    <string name="detail_delay">دواکەوتن</string>
+    <string name="detail_error">هۆکاری سەرنەکەوتن</string>
+    <string name="detail_last_tested">دوایین تاقیکردنەوە</string>
+    <string name="detail_protocol">پرۆتۆکۆڵ</string>
+    <string name="detail_transport">گواستنەوە</string>
+    <string name="detail_security">ئاسایش</string>
+    <string name="detail_address">ناونیشان</string>
+    <string name="detail_source">سەرچاوە</string>
+    <string name="detail_history">ڕێژەی سەرکەوتن</string>
+    <string name="detail_history_value">%1$s لە %2$s تاقیکردنەوە</string>
+    <string name="detail_testing">لە تاقیکردنەوەدایە…</string>
+    <string name="detail_qr_description">کۆدی QRی بەستەری ئەم سێرڤەرە</string>
+    <string name="detail_share_warning">هەرکەسێک ئەم کۆدەی هەبێت دەتوانێت سێرڤەرەکە بەکاربهێنێت. تەنها لەگەڵ ئەو کەسانە هاوبەشی بکە کە متمانەیان پێدەکەیت.</string>
+    <string name="detail_delete_confirm">ئەم سێرڤەرە بسڕدرێتەوە؟ ئەمە ناگەڕێتەوە.</string>
+
+    <!-- Import sheet -->
+    <string name="import_title">زیادکردنی کۆنفیگ</string>
+    <string name="scan_qr">سکانی کۆدی QR</string>
+    <string name="scan_from_photo">لە وێنەیەکەوە</string>
+    <string name="scan_hint">کامێرا بگرە سەر کۆدی QRی کۆنفیگ یان بەشداریبوون.</string>
+    <string name="scan_no_camera">دەستڕاگەیشتن بە کامێرا نییە. هێشتا دەتوانیت وێنە یان سکرینشۆتی کۆدەکە هەڵبژێریت.</string>
+    <string name="scan_not_found">لەو وێنەیەدا هیچ کۆدی QRێک نەدۆزرایەوە.</string>
+    <string name="import_body">یەک یان چەند بەستەری کۆنفیگ، یان بەستەری بەشداریبوون بلکێنە.</string>
+    <string name="import_links">بەستەرەکان</string>
+    <string name="import_subscription">بەشداریبوون</string>
+    <string name="import_links_placeholder">vless://، vmess://، trojan://، ss://…</string>
+    <string name="import_result">%1$s زیادکرا · %2$s پێشتر هەبوو · %3$s نەناسرایەوە</string>
+    <string name="import_error">نەتوانرا هاوردە بکرێت: %1$s</string>
+    <string name="import_sub_url">https://…</string>
+    <string name="import_sub_name">ناو (ئارەزوومەندانە)</string>
+    <string name="import_sub_invalid">ناونیشانێک بنووسە کە بە https:// دەست پێبکات</string>
+    <string name="import_sub_hint">ZeroNet لەگەڵ لیستە گشتییەکان نوێی دەکاتەوە.</string>
+
+    <!-- Transient messages -->
+    <string name="msg_copied">لەبەرگیرایەوە</string>
+    <string name="msg_deleted">سێرڤەر سڕایەوە</string>
+    <string name="msg_subscription_added">بەشداریبوون زیادکرا. لە وەرگرتنی سێرڤەرەکانیدایە…</string>
+    <string name="msg_vpn_permission_denied">بەبێ ڕێگەپێدانی VPN ناتوانرێت پەیوەست بکرێت</string>
+    <string name="msg_history_cleared">سێرڤەرە دۆزراوەکان پاککرانەوە</string>
+
+    <!-- Scanner tab -->
+    <string name="scanner_explainer">ئەو ناونیشانانەی Cloudflare بدۆزەرەوە کە هێشتا لەسەر تۆڕەکەت وەڵام دەدەن</string>
+    <string name="scanner_ready">ئامادە</string>
+    <string name="scanner_scanning">لە سکاندایە…</string>
+    <string name="scanner_done">تەواوبوو</string>
+    <string name="scanner_idle_hint">نزیکەی خولەکێک</string>
+    <string name="scanner_progress_description">پێشکەوتنی سکان</string>
+    <string name="scanner_progress_state">%1$s لەسەدا</string>
+    <string name="scanner_scanned">سکانکراو</string>
+    <string name="scanner_responsive">وەڵامدراوە</string>
+    <string name="scanner_best">باشترین</string>
+    <string name="scanner_start">دەستپێکردنی سکان</string>
+    <string name="scanner_stop">وەستاندن</string>
+    <string name="scanner_again">دووبارە سکان</string>
+    <string name="scanner_error_title">سکان وەستا</string>
+    <string name="scanner_results">خێراترین ناونیشانەکان</string>
+    <string name="scanner_copy_best">لەبەرگرتنەوەی %1$s سەرەوە</string>
+    <string name="scanner_how_title">بۆچی سکان؟</string>
+    <string name="scanner_how_body">زۆربەی سێرڤەرەکان لە پشت Cloudflare دان. کاتێک IPە ئاساییەکانی بلۆک دەکرێن، IPێکی پاک کە هێشتا لەسەر ISPـەکەت کاردەکات دووبارە کاریان دەخاتەوە. ZeroNet خۆی باشترین ئەنجامەکان بەکاردەهێنێت.</string>
+    <string name="scanner_none_found">ئەم جارە هیچ ناونیشانێک وەڵامی نەدایەوە. دواتر یان لەسەر تۆڕێکی تر دووبارە هەوڵبدەوە.</string>
+    <string name="scanner_port">پۆرت %1$s</string>
+    <string name="scanner_copy_ip">لەبەرگرتنەوەی %1$s</string>
+
+    <!-- Settings: shared -->
+    <string name="settings_search">گەڕان لە ڕێکخستنەکان</string>
+    <string name="settings_no_results">هیچ ڕێکخستنێک لەگەڵ «%1$s» ناگونجێت</string>
+    <string name="settings_applies_next">لە پەیوەندی داهاتوودا جێبەجێ دەبێت</string>
+    <string name="settings_reconnect_now">ئێستا دووبارە پەیوەست ببە</string>
+    <string name="option_off">کوژاوە</string>
+    <string name="option_auto">خۆکار</string>
+    <string name="option_system">سیستەم</string>
+
+    <!-- Settings: connection -->
+    <string name="settings_connection">پەیوەندی</string>
+    <string name="settings_mode">دۆخ</string>
+    <string name="settings_mode_vpn">VPN</string>
+    <string name="settings_mode_proxy">تەنها پرۆکسی</string>
+    <string name="settings_mode_vpn_hint">هەموو ئەپەکان بە ZeroNetدا تێدەپەڕن.</string>
+    <string name="settings_mode_proxy_hint">تەنها ئەو ئەپانەی بۆ پرۆکسی ناوخۆیی ڕێکیان دەخەیت بەکاری دەهێنن. ئایکۆنی VPN نییە.</string>
+    <string name="settings_autoconnect">پەیوەستبوونی خۆکار</string>
+    <string name="settings_autoconnect_app">کاتی کردنەوەی ئەپ</string>
+    <string name="settings_autoconnect_boot">کاتی هەڵساندنی مۆبایل</string>
+    <string name="settings_autoswitch">گۆڕین بۆ سێرڤەری خێراتر</string>
+    <string name="settings_autoswitch_hint">کاتێک ئەوەی ئێستا خاو دەبێت یان دەپچڕێت</string>
+    <string name="settings_speed_floor">کەمترین خێرایی</string>
+    <string name="settings_speed_floor_off_hint">تەنها کاتێک سێرڤەری ئێستا دەپچڕێت بگۆڕە</string>
+    <string name="settings_speed_floor_low_hint">لە سێرڤەری خوار 1 Mbps بڕۆ</string>
+    <string name="settings_speed_floor_medium_hint">لە سێرڤەری خوار 3 Mbps بڕۆ</string>
+    <string name="settings_speed_floor_custom_hint">خێرایی بە kbps</string>
+    <string name="settings_speed_floor_low">1 Mbps</string>
+    <string name="settings_speed_floor_medium">3 Mbps</string>
+    <string name="settings_speed_floor_custom">دڵخواز</string>
+    <string name="settings_more_connection">کلیلی کوژاندنەوە، IPv6، MTU</string>
+    <string name="settings_more_connection_hint">هەڵبژاردنی پێشکەوتووی پەیوەندی</string>
+    <string name="settings_kill_switch">کلیلی کوژاندنەوە</string>
+    <string name="settings_kill_switch_body">ئەندرۆید دەتوانێت هەر کاتێک ZeroNet پەیوەست نەبێت هەموو ئینتەرنێت ببەستێت. لە ڕێکخستنی VPNی سیستەم، ZeroNet بکەرەوە و «VPNی هەمیشە چالاک» و «بەستنی پەیوەندی بەبێ VPN» چالاک بکە.</string>
+    <string name="settings_kill_switch_open">کردنەوەی ڕێکخستنی VPN</string>
+    <string name="settings_ipv6">IPv6 بە تونێلدا</string>
+    <string name="settings_ipv6_hint">کوژاوە بمێنێتەوە، مەگەر تۆڕەکەت پێویستی پێی بێت</string>
+    <string name="settings_mtu">قەبارەی پاکێت (MTU)</string>
+    <string name="settings_mtu_hint">%1$s تەقریبەن لە هەموو شوێنێک کاردەکات. ئەگەر هەندێک ماڵپەڕ گیر دەکەن، کەمتری بکە.</string>
+
+    <!-- Settings: servers & sources -->
+    <string name="settings_sources_card">سێرڤەرەکان &amp; سەرچاوەکان</string>
+    <string name="settings_sources">سەرچاوەکانی سێرڤەر</string>
+    <string name="settings_sources_value">%1$s لە %2$s لیستی گشتی چالاک</string>
+    <plurals name="subscriptions_count">
+        <item quantity="one">%1$s بەشداریبوون</item>
+        <item quantity="other">%1$s بەشداریبوون</item>
+    </plurals>
+    <string name="settings_preferred_countries">وڵاتانی پەسەندکراو</string>
+    <string name="settings_preferred_countries_hint">«خێراترین» یەکەم جار ئەمانە تاقی دەکاتەوە</string>
+    <string name="settings_refresh">نوێکردنەوەی لیستەکان</string>
+    <string name="settings_refresh_auto">خۆکار</string>
+    <string name="settings_refresh_manual">دەستی</string>
+    <string name="settings_refresh_auto_hint">لیستەکان کاتی پەیوەستبوون نوێ دەبنەوە</string>
+    <string name="settings_refresh_manual_hint">تەنها کاتێک لە پەڕەی سێرڤەرەکان بۆ خوارەوە ڕایدەکێشیت</string>
+    <string name="settings_subscriptions">بەشداریبوونەکانت</string>
+    <string name="sources_body">ئەو لیستە گشتییانەی ZeroNet دەیگەڕێت، و بەشداریبوونەکانی خۆت.</string>
+    <string name="sources_public">لیستە گشتییەکان</string>
+    <string name="sources_tier_0">هەر دوو کاتژمێر تاقی دەکرێتەوە؛ یەکەم جار تاقی دەکرێت</string>
+    <string name="sources_tier_1">لە هەر پەیوەستبوونێکدا پشکنراوە</string>
+    <string name="sources_tier_2">کاتی پێویست پشکنراوە</string>
+    <string name="sources_tier_3">لە گەڕانی قووڵدا پشکنراوە</string>
+    <string name="sources_no_subscriptions">هێشتا هیچت زیاد نەکردووە.</string>
+    <string name="sources_add_title">زیادکردنی بەشداریبوون</string>
+    <string name="countries_search">گەڕان بەدوای وڵاتان</string>
+
+    <!-- Settings: split tunnelling -->
+    <string name="settings_split">تونێلی جیاکراوە</string>
+    <string name="settings_iran_direct">ماڵپەڕە ئێرانییەکان VPN تێناپەڕن</string>
+    <string name="settings_iran_direct_hint">ماڵپەڕە ئێرانییەکان و ئەپە بانکییەکان بەبێ VPN دەکرێنەوە</string>
+    <string name="settings_apps">ئەپەکان</string>
+    <string name="settings_apps_all">هەموو</string>
+    <string name="settings_apps_only">تەنها هەڵبژێردراوەکان</string>
+    <string name="settings_apps_except">هەموو جگە لە هەڵبژێردراوەکان</string>
+    <string name="settings_apps_proxy_note">تەنها لە دۆخی VPNدا جێبەجێ دەبێت</string>
+    <string name="settings_choose_apps">هەڵبژاردنی ئەپەکان</string>
+    <string name="settings_apps_none">هیچ هەڵنەبژێردراوە</string>
+    <plurals name="apps_selected">
+        <item quantity="one">%1$s ئەپ</item>
+        <item quantity="other">%1$s ئەپ</item>
+    </plurals>
+    <string name="settings_bypass_lan">تۆڕی ناوخۆیی VPN تێناپەڕێت</string>
+    <string name="settings_bypass_lan_hint">پرینتەر، تەلەڤیزیۆن و ڕووتەرەکەت بەردەست دەمێننەوە</string>
+    <string name="apps_body_only">تەنها ئەو ئەپانەی نیشانەیان لێدەدەیت VPN بەکاردەهێنن.</string>
+    <string name="apps_body_except">ئەو ئەپانەی نیشانەیان لێدەدەیت VPN تێناپەڕن.</string>
+    <string name="apps_search">گەڕان بەدوای ئەپەکان</string>
+
+    <!-- Settings: share over Wi-Fi -->
+    <string name="settings_share">هاوبەشکردن لەسەر Wi-Fi</string>
+    <string name="settings_share_toggle">هاوبەشکردنی ئەم پەیوەندییە</string>
+    <string name="settings_share_hint">ئامێرەکانی سەر Wi-Fi یان هۆتسپۆتەکەت دەتوانن بە ڕێگەی پرۆکسییەکەوە ZeroNet بەکاربهێنن</string>
+    <string name="settings_share_permission_denied">ئەندرۆید ڕێگەی بە دەستڕاگەیشتنی تۆڕی ناوخۆیی نەدا، بۆیە هاوبەشکردن کوژاوە ماوەتەوە.</string>
+    <string name="settings_share_live">لە هاوبەشکردندایە</string>
+    <string name="settings_share_when_connected">کاتێک پەیوەست دەبیت دەست پێدەکات</string>
+    <string name="settings_share_no_network">بۆ هاوبەشکردن پەیوەست ببە بە تۆڕی Wi-Fi یان هۆتسپۆت چالاک بکە.</string>
+    <string name="settings_share_auth">پاراستن بە وشەی نهێنی</string>
+    <string name="settings_share_auth_hint">ئارەزوومەندانە. ئامێرەکانی تر بۆ بەکارهێنانی پرۆکسی پێویستیان پێیەتی.</string>
+    <string name="settings_share_user">ناوی بەکارهێنەر</string>
+    <string name="settings_share_pass">وشەی نهێنی</string>
+    <string name="settings_share_http_off">هەتا وشەی نهێنی دانراوە، هاوبەشکردنی HTTP کوژاوەیە</string>
+    <string name="settings_share_address">ناونیشان لەسەر ئەم تۆڕە</string>
+    <string name="settings_share_socks">SOCKS5</string>
+    <string name="settings_share_http">HTTP</string>
+    <string name="settings_share_port">پۆرت %1$s</string>
+    <string name="settings_share_qr_description">کۆدی QRی پرۆکسی لە %1$s</string>
+    <string name="settings_share_qr_hint">لەسەر ئامێرەکەی تر بە هەر ئەپێکی پرۆکسی سکانی بکە.</string>
+
+    <!-- Settings: anti-censorship -->
+    <string name="settings_evasion">دژە-سانسۆر</string>
+    <string name="settings_evasion_level">هێز</string>
+    <string name="settings_evasion_strong">بەهێز</string>
+    <string name="settings_evasion_off_hint">پەیوەندی ساکار. خێراترین، بەڵام ئاسانتر بلۆک دەکرێت.</string>
+    <string name="settings_evasion_auto_hint">تەنها کاتێک سێرڤەرێک بلۆک دەکرێت ترافیک دەشارێتەوە</string>
+    <string name="settings_evasion_strong_hint">هەمیشە ترافیک دەشارێتەوە. کەمێک خاوتر، بەڵام زۆر سەختتر بلۆک دەکرێت.</string>
+    <string name="settings_block_quic">بلۆککردنی QUIC</string>
+    <string name="settings_block_quic_hint">ئەپەکان لەبری گیرکردن، دەگەڕێنەوە بۆ TCP</string>
+    <string name="settings_remote_dns">DNS بۆ ماڵپەڕە بلۆککراوەکان</string>
+    <string name="settings_remote_dns_hint">بە تونێلدا دەپرسرێت، بۆیە ISPـەکەت ناتوانێت وەڵامەکە ببینێت یان بیگۆڕێت</string>
+    <string name="settings_custom_dns_hint">DNSی دڵخواز (بۆ نموونە 8.8.8.8)</string>
+    <string name="settings_custom_dns_note">بۆ بەکارهێنانی دابینکەرێکی سەرەوە بەتاڵی بهێڵەوە. IP، ‏tls://…‎ یان ‏https://…/dns-query‎ قبووڵ دەکات.</string>
+    <string name="settings_block_ads">بلۆککردنی ڕیکلام و شوێنکەرەوەکان</string>
+    <string name="settings_block_ads_hint">دۆمەینە ناسراوەکانی ڕیکلام بۆ هەموو ئەپەکان پاڵاوتن دەکات</string>
+
+    <!-- Settings: appearance -->
+    <string name="settings_appearance">دیمەن</string>
+    <string name="settings_palette">ڕووکار</string>
+    <string name="settings_palette_dynamic_note">ڕەنگەکانی وێنەی پاشبنەما چالاکن، بۆیە ڕووکار تەنها ڕەنگەکانی پەیوەندی دیاری دەکات</string>
+    <string name="settings_theme_mode">ڕووناک یان تاریک</string>
+    <string name="settings_theme_light">ڕووناک</string>
+    <string name="settings_theme_dark">تاریک</string>
+    <string name="settings_amoled">ڕەشی ڕەسەن</string>
+    <string name="settings_amoled_hint">لە شاشەکانی OLED وزە دەپارێزێت</string>
+    <string name="settings_dynamic">ڕەنگەکانی وێنەی پاشبنەما</string>
+    <string name="settings_dynamic_hint">ڕەنگەکانی Material You لە وێنەی پاشبنەماکەتەوە</string>
+    <string name="settings_language">زمان</string>
+    <string name="settings_motion">جووڵە</string>
+    <string name="settings_motion_full">تەواو</string>
+    <string name="settings_motion_reduced">کەمکراوە</string>
+    <string name="settings_motion_full_hint">هەموو ئەنیمەیشنەکان</string>
+    <string name="settings_motion_reduced_hint">تەنها لابردنی سادە</string>
+    <string name="palette_golden">زێڕین</string>
+    <string name="palette_nightshade">شەوانە</string>
+    <string name="palette_arctic">قوتبی</string>
+    <string name="palette_sakura">ساکورا</string>
+    <string name="palette_paper">کاغەزی</string>
+    <string name="palette_contrast">پێچەوانەیی</string>
+
+    <!-- Settings: data & privacy -->
+    <string name="settings_privacy">داتا &amp; تایبەتێتی</string>
+    <string name="settings_logs">پاشەکەوتکردنی لۆگەکان</string>
+    <string name="settings_logs_hint">بەشێوەی بنەڕەتی کوژاوە. لۆگەکان تەنها لەسەر ئەم مۆبایلە دەمێننەوە.</string>
+    <string name="settings_clear_history">پاککردنەوەی سێرڤەرە دۆزراوەکان</string>
+    <string name="settings_clear_history_hint">سێرڤەرە گشتییەکان و ئەنجامی تاقیکردنەوەکان لەبیر دەکرێن. ئەو سێرڤەرانەی تۆ زیادت کردووە دەمێننەوە.</string>
+    <plurals name="clear_history_body">
+        <item quantity="one">%1$s سێرڤەری دۆزراوە و ئەنجامی تاقیکردنەوەکانی لەبیر بکرێت؟ ئەو سێرڤەرانەی زیادت کردووە دەمێننەوە.</item>
+        <item quantity="other">%1$s سێرڤەری دۆزراوە و ئەنجامی تاقیکردنەوەکانیان لەبیر بکرێن؟ ئەو سێرڤەرانەی زیادت کردووە دەمێننەوە.</item>
+    </plurals>
+    <string name="clear_history_nothing">هیچ سێرڤەرێکی دۆزراوە نییە بۆ پاککردنەوە.</string>
+
+    <!-- Settings: about -->
+    <string name="settings_about">دەربارە</string>
+    <string name="settings_version">وەشان</string>
+    <string name="settings_engine">بزوێنەر</string>
+    <string name="settings_engine_hint">ئەو ناوکە سەرچاوە-کراوەیەی پەیوەندی دەگێڕێت</string>
+    <string name="settings_licences">مۆڵەتە سەرچاوە-کراوەکان</string>
+    <string name="settings_licences_hint">ZeroNet نەرمەکاڵایەکی ئازادە لەژێر MIT</string>
+    <string name="licences_body">ZeroNet لەسەر ئەم پڕۆژانە بنیاتنراوە.</string>
+
+    <!-- Settings search keywords: extra words that find each card (both languages are searched). -->
+    <string name="kw_connection">vpn پرۆکسی پەیوەندی خۆکار دووبارە پەیوەستبوون هەمیشە چالاک کلیلی کوژاندنەوە mtu ipv6 تۆڕ</string>
+    <string name="kw_sources">سەرچاوە بەشداریبوون فید لیست github وڵات وڵاتان نوێکردنەوە نوێکردن</string>
+    <string name="kw_split">جیاکردن تێپەڕاندن هەر-ئەپ ئەپەکان دەرکردن ڕێڕەو ڕێنمایی ئێران ناوخۆیی lan</string>
+    <string name="kw_share">هاوبەشکردن lan wifi هۆتسپۆت تیزەرینگ socks http پرۆکسی پۆرت qr وشەی نهێنی</string>
+    <string name="kw_evasion">سانسۆر پاڵاوتن فراگمێنت dpi sni dns doh quic ڕیکلام دژەڕیکلام شوێنکەرەوە</string>
+    <string name="kw_appearance">ڕووکار ڕەنگ colour color تاریک ڕووناک amoled ڕەش زمان کوردی فارسی ئینگلیزی ئەنیمەیشن جووڵە</string>
+    <string name="kw_privacy">لۆگ مێژوو سڕینەوە پاککردنەوە داتا تایبەتێتی هاوبەشکردن نەناسراو کۆمەڵ ئەوانیتر یارمەتی</string>
+    <string name="kw_about">وەشان مۆڵەت license سەرچاوە کۆد سەرچاوە-کراوە بزوێنەر zray نوێکردنەوە بەرزکردنەوە نوێ</string>
+
+    <!-- Onboarding -->
+    <string name="onboarding_perm_title">ZeroNet پێویستی بە دوو ڕێگەپێدانە</string>
+    <string name="onboarding_perm_text">VPN، تاکو ترافیکی ئەپەکانت بە تونێلدا بڕوات، و ئاگادارکردنەوە، تاکو ببینیت پەیوەستیت یان نا. ئەندرۆید هەر یەکێکیان یەک جار دەپرسێت، و دواتر لە ڕێکخستنی سیستەم دەتوانیت بیانگۆڕیت.</string>
+    <string name="onboarding_allow">ڕێگەپێدان</string>
+    <string name="onboarding_later">ئێستا نا</string>
+
+    <!-- Connection profiles -->
+    <string name="profile_normal">ئاسایی</string>
+    <string name="profile_fast">خێرا</string>
+    <string name="profile_gaming">گەیمینگ</string>
+    <string name="profile_normal_hint">تەنها سێرڤەری کۆدکراو، لەگەڵ پاڵپشتی ئامادە</string>
+    <string name="profile_fast_hint">بە یەکەم سێرڤەرێک کە کاردەکات پەیوەست دەبێت</string>
+    <string name="profile_gaming_hint">کەمترین پینگ، UDP چالاک، بێ گۆڕینی سێرڤەر لە ناوەڕاستی یاریدا</string>
+    <string name="gaming_title">دۆخی یاری</string>
+    <string name="gaming_ping">پینگ %1$s ms</string>
+
+    <!-- In-app updates -->
+    <string name="update_sheet_title">نوێکردنەوە</string>
+    <string name="update_title_available">ZeroNet %1$s دەرچوو</string>
+    <string name="update_title_downloading">لە داگرتنی %1$s</string>
+    <string name="update_title_ready">%1$s ئامادەیە بۆ دامەزراندن</string>
+    <string name="update_title_reinstall">ئەم نوێکردنەوەیە ناتوانرێت بەسەر وەشانەکەتدا دابمەزرێت</string>
+    <string name="update_title_failed">نوێکردنەوە تەواو نەبوو</string>
+    <string name="update_whats_new">نوێیەکان</string>
+    <string name="update_size">داگرتنی %1$s. سێرڤەر و ڕێکخستنەکانت وەک خۆیان دەمێننەوە.</string>
+    <string name="update_progress">%1$s لە %2$s</string>
+    <string name="update_ready_hint">ئەندرۆید داوای دووپاتکردنەوەی دامەزراندنت لێدەکات.</string>
+    <string name="update_allow_hint">ئەندرۆید یەک جار دەپرسێت: ڕێگە بدە بە ZeroNet ئەپ دابمەزرێنێت، پاشان بگەڕێوە و لە «دامەزراندن» بدە.</string>
+    <string name="update_reinstall_body">بە کلیلێکی جیاواز لەو ZeroNetـەی سەر ئەم مۆبایلە واژۆکراوە، بۆیە ئەندرۆید بەسەریدا داینامەزرێنێت. بۆ وەرگرتنی، ZeroNet بسڕەوە و وەشانە نوێیەکە لە پەڕەی بڵاوکردنەوە دابمەزرێنە. سێرڤەر و ڕێکخستنەکانت دەسڕدرێنەوە.</string>
+    <string name="update_now">ئێستا نوێی بکەوە</string>
+    <string name="update_later">دواتر</string>
+    <string name="update_cancel">هەڵوەشاندنەوە</string>
+    <string name="update_install">دامەزراندن</string>
+    <string name="update_allow">ڕێگەدان بە دامەزراندن</string>
+    <string name="update_open_page">کردنەوەی پەڕەی بڵاوکردنەوە</string>
+    <string name="update_retry">دووبارە هەوڵبدەوە</string>
+    <string name="settings_updates">نوێکردنەوەکان</string>
+    <string name="settings_update_check">پشکنین بۆ نوێکردنەوە</string>
+    <string name="settings_update_checking">لە پشکنیندایە…</string>
+    <string name="settings_update_latest">دوایین وەشانت هەیە</string>
+    <string name="settings_update_available">وەشانی %1$s بەردەستە</string>
+    <string name="settings_update_downloading">لە داگرتندایە… %1$s</string>
+    <string name="settings_update_ready">وەشانی %1$s ئامادەیە بۆ دامەزراندن</string>
+    <string name="settings_update_failed">نەتوانرا بپشکنرێت: %1$s</string>
+    <string name="settings_share_results">یارمەتیدانی ئەوانیتر بۆ پەیوەستبوون</string>
+    <string name="settings_share_results_hint">بەشێوەیەکی نەناسراو ئاشکرا دەکات کە کام سێرڤەری گشتی و IPی پاک لەسەر تۆڕەکەت کاریان کرد، تاکو ئەوانیتری سەر هەمان تۆڕ خێراتر پەیوەست بن. کۆنفیگە تایبەتەکانی خۆت هەرگیز نانێردرێن.</string>
+    <string name="settings_kill_switch_app">بلۆککردنی ترافیک بەبێ سێرڤەر</string>
+    <string name="settings_kill_switch_app_hint">لە کاتی گەڕان، دووبارە دەستپێکردنەوە، یان نەدۆزینەوەی ZeroNet، ئەپەکان ئینتەرنێتیان نابێت لەبری ئەوەی بەبێ پارێزگاری بچنە دەرەوە. ZeroNet بەردەوام هەوڵ دەداتەوە تا سێرڤەرێک کار دەکات.</string>
+    <string name="stage_blocked">هێشتا سێرڤەری کارکەر نییە. ترافیک بلۆک کراوە (کیڵ سویچ) لە کاتێکدا ZeroNet بەردەوامە بە هەوڵدان…</string>
+    <string name="widget_blocked">بلۆک کراوە — گەڕان</string>
+    <string name="notification_blocked_detail">کیڵ سویچ: ئەپەکان ئۆفڵاینن تا سێرڤەرێک کار دەکات</string>
+    <string name="widget_failed">نەیتوانی پەیوەندی بگرێت</string>
+    <string name="widget_tap_connect">بۆ پەیوەندیکردن بیدە</string>
+    <string name="widget_tap_disconnect">بۆ پچڕاندن بیدە</string>
+    <string name="widget_toggle">پەیوەندیکردن یان پچڕاندن</string>
+    <string name="widget_description">بە یەک لێدان پەیوەندی بگرە و ئەو سێرڤەرە ببینە کە بەکاردێت</string>
+    <string name="trusted_title">تۆڕە متمانەپێکراوەکان</string>
+    <string name="trusted_body">ZeroNet لەسەر ئەمانە کوژاوە دەمێنێتەوە: بەخۆکاری پەیوەندی ناگرێت لەوێ، و کاتێک دەچیتە سەر یەکێکیان پچڕ دەبێت.</string>
+    <string name="trusted_add">متمانە بەم تۆڕە بکە (%1$s)</string>
+    <string name="trusted_none">هیچ تۆڕێکی متمانەپێکراو نییە.</string>
+    <string name="trusted_current">تۆ لەسەر ئەم تۆڕەیت</string>
+    <string name="trusted_remove">متمانە مەکە بە %1$s</string>
+    <string name="trusted_unknown_network">ئەم تۆڕە</string>
+    <string name="kind_split">ڕێڕەوی جیاکراوە</string>
+    <string name="kind_quic">QUIC</string>
+    <string name="kind_crowd">بۆ ئەوانی تر کار دەکات</string>
+    <string name="kind_hint_split">XHTTP بە ڕێڕەوی جیاوازی بارکردن و داگرتن: سەختترین جۆر بۆ ناسینەوە لەلایەن فیلتەرەکانەوە.</string>
+    <string name="kind_hint_direct">REALITY: وەک سەردانی ماڵپەڕێکی ڕاستەقینەی فیلتەرنەکراو دیارە.</string>
+    <string name="kind_hint_cdn">لە پشت CDN وەک Cloudflare: بلۆککردنی زۆربەی ئینتەرنێت بلۆک دەکات.</string>
+    <string name="kind_hint_quic">Hysteria2 یان TUIC لەسەر UDP: خێرایە کاتێک UDP تێدەپەڕێت، بێسوودە کاتێک نایپەڕێت.</string>
+    <string name="kind_hint_other">کۆنفیگێکی ساکار بەبێ شاردنەوە: تەنها لەوێ کار دەکات کە هێشتا فیلتەر نەکراوە.</string>
+    <string name="kind_hint_crowd">بەکارهێنەرانی تری ZeroNet ڕایانگەیاند کە ئەم سێرڤەرە لەسەر تۆڕەکانیان کار دەکات.</string>
+    <string name="settings_diagnostics">دەستنیشانکردنی کێشە</string>
+    <string name="settings_diag_test">تاقیکردنەوەی پەیوەندییەکەم</string>
+    <string name="settings_diag_test_hint">بزانە تۆڕەکەت چی بلۆک دەکات و چ جۆرێک لە سێرڤەر تێدەپەڕێت</string>
+    <string name="settings_diag_logs">بینینی لۆگەکان</string>
+    <string name="settings_diag_logs_hint">ZeroNet چی تاقی کردەوە، چی وەڵامی دایەوە و بۆچی شتەکان شکستیان هێنا</string>
+    <string name="kw_diagnostics">دەستنیشانکردنی کێشە تاقیکردنەوە چارەسەرکردن لۆگ کێشە کارنەکردن dpi dns</string>
+    <string name="diag_title">تاقیکردنەوەی پەیوەندی</string>
+    <string name="diag_body">تۆڕەکەت دەرەوەی تونێل دەپشکنێت، پاشان چەند سێرڤەرێکی پاشەکەوتکراوی هەموو جۆرێک تاقی دەکاتەوە.</string>
+    <string name="diag_not_run">هێشتا نەکراوە.</string>
+    <string name="diag_run">تاقیکردنەوە بکە</string>
+    <string name="diag_run_again">دووبارە بیکەرەوە</string>
+    <string name="diag_network">تۆڕ</string>
+    <string name="diag_internet">ئینتەرنێتی ساکار</string>
+    <string name="diag_dns">DNS (ماڵپەڕە فیلتەرکراوەکان)</string>
+    <string name="diag_tls">ناوی سێرڤەری TLS (DPI)</string>
+    <string name="diag_tunnel">لە ڕێی تونێلەوە</string>
+    <string name="diag_family">سێرڤەرەکان: %1$s</string>
+    <string name="diag_status_pending">چاوەڕوان</string>
+    <string name="diag_status_running">تاقیکردنەوە…</string>
+    <string name="diag_status_ok">کار دەکات</string>
+    <string name="diag_status_warn">بەشێکی</string>
+    <string name="diag_status_bad">بلۆک کراوە</string>
+    <string name="diag_status_skipped">تێپەڕێنراو</string>
+    <string name="diag_verdict_offline">هیچ تۆڕێک نییە. سەرەتا پەیوەندی بە Wi-Fi یان داتای مۆبایل بگرە.</string>
+    <string name="diag_verdict_no_internet">ئەم تۆڕە هیچ ناگاتە ئینتەرنێت، و هیچ سێرڤەرێک وەڵامی نەدایەوە.</string>
+    <string name="diag_verdict_families">ئێستا ئەم جۆرانە تێدەپەڕن: %1$s. ZeroNet بەخۆکاری ئەوانی پێباشترە.</string>
+    <string name="diag_verdict_no_servers">هێشتا هیچ سێرڤەرێکی پاشەکەوتکراو نییە بۆ تاقیکردنەوە. یەکجار پەیوەندی بگرە (یان لیستی سێرڤەرەکان نوێ بکەرەوە) و دووبارە تاقیکردنەوەکە بکەرەوە.</string>
+    <string name="diag_verdict_none_work">هیچ کام لە سێرڤەرە پاشەکەوتکراوەکان وەڵامیان نەدایەوە. لیستی سێرڤەرەکان نوێ بکەرەوە، سکانەری IP پاک تاقی بکەرەوە، یان کۆنفیگی خۆت زیاد بکە.</string>
+    <string name="logs_title">لۆگەکان</string>
+    <string name="logs_body">لۆگی پەیوەندی تۆمار دەکات کە ZeroNet چی تاقی کردەوە. لۆگی وردی بۆ زیاتر لە کۆرەکەوە لە پاراستنی تایبەتیدا بکەرەوە.</string>
+    <string name="logs_body_detailed">لۆگی ورد کراوەتەوە. کاتێک داوای یارمەتی دەکەیت ئەمانە هاوبەش بکە؛ ناوی سێرڤەر و هەڵەکان لەخۆدەگرن، نەک ئەو ماڵپەڕانەی سەردانیان دەکەیت.</string>
+    <string name="logs_connection">پەیوەندی</string>
+    <string name="logs_core">کۆر</string>
+    <string name="logs_empty">هێشتا هیچ تۆمار نەکراوە.</string>
+    <string name="logs_refresh">نوێکردنەوە</string>
+    <string name="logs_copy">کۆپی</string>
+    <string name="logs_share">هاوبەشکردن</string>
+    <string name="logs_clear">پاککردنەوە</string>
+</resources>

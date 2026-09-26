@@ -1,6 +1,6 @@
 # Provenance
 
-- License: MPL-2.0, inherited from the workspace.
+- License: MIT, inherited from the workspace.
 - Implementation: original protocol framing and stream adapters for VLESS,
   Trojan, legacy Shadowsocks AEAD TCP, VMess AEAD TCP, AnyTLS v2,
   SOCKS5/HTTP, and Vision.

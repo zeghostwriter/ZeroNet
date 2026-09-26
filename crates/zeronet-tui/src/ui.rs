@@ -119,6 +119,8 @@ pub struct UiRenderer<'a> {
     pub speed_history: (&'a [u64], &'a [u64]),
     /// Where updating stands, for the settings page.
     pub update_status: &'a crate::update::Status,
+    /// What the config finder is doing, while it searches.
+    pub finder_status: Option<String>,
 }
 
 /// What the F12 overlay shows.
@@ -513,6 +515,23 @@ impl<'a> UiRenderer<'a> {
                     Span::styled(
                         truncate(err, inner.width.saturating_sub(6) as usize),
                         Style::default().fg(self.theme.err),
+                    ),
+                ]));
+            }
+        }
+        // The finder's progress, when it searches and the row is free.
+        if lines.len() == 1 {
+            if let Some(status) = self.finder_status.as_deref() {
+                let throbber = Throbber::default()
+                    .throbber_set(BRAILLE_SIX)
+                    .throbber_style(Style::default().fg(self.theme.accent));
+                lines.push(Line::from(vec![
+                    Span::raw("   "),
+                    throbber.to_symbol_span(self.throbber_state),
+                    Span::raw(" "),
+                    Span::styled(
+                        truncate(status, inner.width.saturating_sub(6) as usize),
+                        Style::default().fg(self.theme.accent),
                     ),
                 ]));
             }
@@ -1241,7 +1260,18 @@ impl<'a> UiRenderer<'a> {
                 } else {
                     cfg.remark.clone()
                 };
-                Cell::from(name)
+                // Found by the finder: a public feed (◇) or others' reports (✦).
+                match cfg.origin.as_str() {
+                    "found" => Cell::from(Line::from(vec![
+                        Span::styled("◇ ", Style::default().fg(self.theme.info)),
+                        Span::raw(name),
+                    ])),
+                    "crowd" => Cell::from(Line::from(vec![
+                        Span::styled("✦ ", Style::default().fg(self.theme.ok)),
+                        Span::raw(name),
+                    ])),
+                    _ => Cell::from(name),
+                }
             };
 
             let ping_text = cfg
@@ -1919,8 +1949,9 @@ impl<'a> UiRenderer<'a> {
 
         // Sharing and finding live on the rows and in the filter box now, so
         // the footer keeps only what has nowhere else to be.
-        let items: [(ComponentId, &str, &str); 5] = [
+        let items: [(ComponentId, &str, &str); 6] = [
             (ComponentId::FooterConnect, "↵", "Connect"),
+            (ComponentId::FooterFindServers, "F", "Find server"),
             (ComponentId::FooterAddConfig, "^V", "Paste"),
             (ComponentId::FooterAddSub, "^R", "Update subs"),
             (ComponentId::FooterHelp, "F1", "Help"),
@@ -1929,7 +1960,7 @@ impl<'a> UiRenderer<'a> {
 
         let chunks = Layout::default()
             .direction(Direction::Horizontal)
-            .constraints([Constraint::Ratio(1, 5); 5])
+            .constraints([Constraint::Ratio(1, 6); 6])
             .split(area);
 
         for (i, (id, key, label)) in items.iter().enumerate() {

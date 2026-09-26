@@ -21,6 +21,7 @@
 
 pub mod config;
 pub mod crowd;
+pub mod crowd_client;
 pub mod discover;
 pub mod events;
 pub mod feed;
@@ -29,6 +30,8 @@ pub mod link;
 pub mod order;
 pub mod probe;
 pub mod scan;
+pub mod sign;
+pub mod sources;
 pub mod telegram;
 pub mod test_links;
 

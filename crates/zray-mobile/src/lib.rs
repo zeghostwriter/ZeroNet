@@ -577,6 +577,12 @@ fn network_changed_inner() -> c_int {
     let Some(running) = slot.as_mut() else {
         return ZRAY_OK;
     };
+    // QUIC carriers keep their connections across the switch instead of
+    // re-dialling every one of them.
+    let migrated = zero_runtime::migrate_quic_connections();
+    if migrated > 0 {
+        tracing::info!(migrated, "network changed: QUIC connections migrated");
+    }
     match running
         .server
         .reload(Arc::clone(&running.config), next_generation())

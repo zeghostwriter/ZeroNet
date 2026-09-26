@@ -18,12 +18,16 @@
 //! returned: a config that would not start is reported as an error here, where
 //! the app can show it, rather than as a failed `start`.
 //!
-//! **FakeDNS is not emitted**, even when requested. The runtime keeps one
-//! resolver for everything — the tunnel's DNS answers *and* its own lookups of
-//! proxy server names — so a catch-all FakeDNS server would hand the dialer a
-//! synthetic 198.18.0.0/15 address for the proxy server itself. The request's
-//! `dns.fakedns` flag is accepted and ignored until the runtime separates the
-//! two.
+//! **FakeDNS** (`dns.fakedns`, VPN mode only): a catch-all `fakedns` server
+//! goes in front of the encrypted remote tier, so an application's query for
+//! a foreign name is answered at once with a synthetic 198.18.0.0/15 address
+//! and the name itself travels to the proxy, which resolves it on the far
+//! side: no DNS round trip through the tunnel before every new site, and no
+//! answer for a filtered resolver to poison. Domain-scoped tiers (domestic
+//! names, sanctioned names) still get real answers, so direct routing by
+//! address keeps working. The runtime answers only the applications from
+//! FakeDNS; its own lookups (proxy server names, direct connections) use a
+//! view of the resolver without it (`zero_dns::Resolver::without_fake`).
 
 use std::path::{Path, PathBuf};
 
@@ -128,7 +132,6 @@ struct DnsRequest {
     /// `remote`".
     custom: String,
     local: String,
-    #[allow(dead_code)]
     fakedns: bool,
 }
 
@@ -388,6 +391,18 @@ pub fn build_config_with_assets(
     }
     config["routing"]["rules"] = Value::Array(rules);
 
+    // ---- DNS: FakeDNS answers the applications behind the TUN for every
+    // name no domain-scoped tier claims (see the module documentation).
+    if vpn && request.dns.fakedns {
+        if let Some(servers) = config["dns"]["servers"].as_array_mut() {
+            let catch_all = servers
+                .iter()
+                .position(|server| server.get("domains").is_none())
+                .unwrap_or(servers.len());
+            servers.insert(catch_all, json!({"address": "fakedns", "tag": "fakedns"}));
+        }
+    }
+
     // ---- DNS: without IPv6 in the tunnel, AAAA answers would only make
     // applications try a family that goes nowhere.
     if vpn && !request.tun.ipv6 {
@@ -508,6 +523,31 @@ mod tests {
         }))
         .unwrap_err();
         assert!(error.contains("custom DNS"), "{error}");
+    }
+
+    #[test]
+    fn fakedns_answers_applications_but_not_domain_scoped_tiers() {
+        let config = build_config(&json!({"links": [REALITY], "dns": {"fakedns": true}})).unwrap();
+        let servers = config["dns"]["servers"].as_array().unwrap();
+        let fake = servers.iter().position(|s| s["address"] == "fakedns").expect("fakedns server");
+        // Every domain-scoped tier comes first, the catch-all remote after it.
+        assert!(servers[..fake].iter().all(|s| s.get("domains").is_some()));
+        assert!(servers[fake + 1..].iter().any(|s| s.get("domains").is_none()));
+        let compiled = compile(&config);
+        assert!(compiled
+            .dns
+            .servers
+            .iter()
+            .any(|s| s.endpoint == zero_config::dns::ResolverEndpoint::FakeDns));
+
+        // Off, and in proxy mode (no TUN, no applications to answer): absent.
+        for request in [
+            json!({"links": [REALITY], "dns": {"fakedns": false}}),
+            json!({"links": [REALITY], "mode": "proxy", "dns": {"fakedns": true}}),
+        ] {
+            let config = build_config(&request).unwrap();
+            assert!(!config["dns"]["servers"].as_array().unwrap().iter().any(|s| s["address"] == "fakedns"));
+        }
     }
 
     #[test]

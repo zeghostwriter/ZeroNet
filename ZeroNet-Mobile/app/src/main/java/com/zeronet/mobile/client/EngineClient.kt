@@ -57,6 +57,10 @@ class EngineClient private constructor(private val context: Context) {
     private val _testProgress = MutableStateFlow<Pair<Int, Int>?>(null)
     val testProgress: StateFlow<Pair<Int, Int>?> = _testProgress.asStateFlow()
 
+    /** The latest connection self-test (see `Engine.diagnose`). */
+    private val _diagnosis = MutableStateFlow(com.zeronet.mobile.model.Diagnosis())
+    val diagnosis: StateFlow<com.zeronet.mobile.model.Diagnosis> = _diagnosis.asStateFlow()
+
     /** Emits whenever the server table changed in the :vpn process. */
     private val _serversChanged = MutableSharedFlow<Unit>(extraBufferCapacity = 1, onBufferOverflow = BufferOverflow.DROP_OLDEST)
     val serversChanged: SharedFlow<Unit> = _serversChanged.asSharedFlow()
@@ -120,6 +124,9 @@ class EngineClient private constructor(private val context: Context) {
     fun startScan(count: Int = 2000) = send(Ipc.SCAN_START, JSONObject().put("count", count).toString())
     fun stopScan() = send(Ipc.SCAN_STOP, null)
 
+    /** Run the connection self-test; results arrive in [diagnosis]. */
+    fun diagnose() = send(Ipc.DIAGNOSE, null)
+
     /** Tell the engine settings changed (applies LAN/routing changes to a live connection). */
     fun pushSettings() = send(Ipc.SETTINGS, SettingsStore.get(context).current.toJson().toString())
 
@@ -174,6 +181,7 @@ class EngineClient private constructor(private val context: Context) {
                     val o = JSONObject(it)
                     if (o.optBoolean("done")) null else o.optInt("d") to o.optInt("t")
                 }
+                Ipc.DIAGNOSIS -> json?.let { _diagnosis.value = Ipc.diagnosisFromJson(it) }
                 Ipc.IMPORT_RESULT -> json?.let { pendingImport?.complete(Ipc.importFromJson(it)); pendingImport = null }
             }
         }

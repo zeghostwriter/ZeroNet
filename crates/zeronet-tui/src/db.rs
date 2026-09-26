@@ -23,6 +23,44 @@ pub struct ConfigRecord {
     pub subscription_id: Option<i64>,
     pub ping_ms: Option<f64>,
     pub last_used: Option<i64>,
+    /// Where the profile came from: `user` (imported, typed or from the
+    /// user's own subscription), `found` (the config finder found it in a
+    /// public feed) or `crowd` (other users' rankings). Only `found` and
+    /// `crowd` profiles are ever part of a crowd report.
+    #[serde(default = "user_origin")]
+    pub origin: String,
+}
+
+fn user_origin() -> String {
+    ORIGIN_USER.to_string()
+}
+
+/// [`ConfigRecord::origin`] of everything the user added themselves.
+pub const ORIGIN_USER: &str = "user";
+
+impl ConfigRecord {
+    /// Whether the finder found this profile (public feed or crowd), so its
+    /// test results may be shared.
+    pub fn is_found(&self) -> bool {
+        self.origin != ORIGIN_USER
+    }
+}
+
+/// A server the finder found, as it is stored.
+#[derive(Debug, Clone)]
+pub struct FoundServer<'a> {
+    pub remark: &'a str,
+    pub protocol: &'a str,
+    pub address: &'a str,
+    pub port: u16,
+    /// The runnable JSON config.
+    pub raw_content: &'a str,
+    /// The share link it was built from.
+    pub link: &'a str,
+    /// `zero_discovery::link_key` of [`FoundServer::link`].
+    pub link_key: &'a str,
+    pub origin: &'a str,
+    pub delay_ms: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -125,6 +163,14 @@ pub struct AppSettings {
     pub muted_notices: String,
     /// Look for a new release at start (release builds only).
     pub auto_update_check: bool,
+
+    // ------------------------------------------------------- config finder
+    /// Share which public servers the finder saw working (and not), anonymously.
+    pub share_results: bool,
+    /// Highest feed tier a search reaches (0 = the project's tested list only).
+    pub finder_max_tier: u32,
+    /// Keep this many found servers; the least useful beyond it are pruned.
+    pub finder_keep: usize,
 }
 
 impl Default for AppSettings {
@@ -182,6 +228,9 @@ impl Default for AppSettings {
             secret_theme_unlocked: false,
             muted_notices: String::new(),
             auto_update_check: true,
+            share_results: true,
+            finder_max_tier: 2,
+            finder_keep: 40,
         }
     }
 }
@@ -194,7 +243,7 @@ const METRICS_RETENTION_SECS: i64 = 7 * 24 * 60 * 60;
 /// Minimum spacing between two metrics prunes.
 const METRICS_PRUNE_INTERVAL_SECS: i64 = 60 * 60;
 /// Schema revision this build migrates databases up to.
-const SCHEMA_VERSION: i64 = 1;
+const SCHEMA_VERSION: i64 = 2;
 
 #[derive(Clone)]
 pub struct Database {
@@ -362,6 +411,22 @@ impl Database {
                     ON metrics(config_id, timestamp);
                 CREATE INDEX IF NOT EXISTS idx_metrics_time
                     ON metrics(timestamp);
+                "#,
+            )?;
+        }
+        if version < 2 {
+            // Profiles the config finder adds: where they came from (only
+            // found ones are ever reported to the crowd), the share link's
+            // key to recognise a server found again, and how it fared.
+            tx.execute_batch(
+                r#"
+                ALTER TABLE configs ADD COLUMN origin TEXT NOT NULL DEFAULT 'user';
+                ALTER TABLE configs ADD COLUMN link_key TEXT;
+                ALTER TABLE configs ADD COLUMN share_link TEXT;
+                ALTER TABLE configs ADD COLUMN found_ok INTEGER NOT NULL DEFAULT 0;
+                ALTER TABLE configs ADD COLUMN found_fail INTEGER NOT NULL DEFAULT 0;
+                ALTER TABLE configs ADD COLUMN last_ok INTEGER;
+                CREATE INDEX IF NOT EXISTS idx_configs_link_key ON configs(link_key);
                 "#,
             )?;
         }
@@ -535,6 +600,17 @@ impl Database {
                     "secret_theme_unlocked" => settings.secret_theme_unlocked = truthy(&item.1),
                     "muted_notices" => settings.muted_notices = item.1,
                     "auto_update_check" => settings.auto_update_check = truthy(&item.1),
+                    "share_results" => settings.share_results = truthy(&item.1),
+                    "finder_max_tier" => {
+                        if let Ok(v) = item.1.parse::<u32>() {
+                            settings.finder_max_tier = v.min(3);
+                        }
+                    }
+                    "finder_keep" => {
+                        if let Ok(v) = item.1.parse::<usize>() {
+                            settings.finder_keep = v.clamp(5, 500);
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -672,6 +748,9 @@ impl Database {
                 "auto_update_check",
                 if settings.auto_update_check { "1" } else { "0" },
             ),
+            ("share_results", if settings.share_results { "1" } else { "0" }),
+            ("finder_max_tier", &settings.finder_max_tier.to_string()),
+            ("finder_keep", &settings.finder_keep.to_string()),
         ];
 
         for (k, v) in pairs {
@@ -683,7 +762,7 @@ impl Database {
     pub fn get_configs(&self) -> SqlResult<Vec<ConfigRecord>> {
         let conn = self.lock();
         let mut stmt = conn.prepare_cached(
-            "SELECT id, remark, protocol, address, port, raw_content, is_active, subscription_id, ping_ms, last_used
+            "SELECT id, remark, protocol, address, port, raw_content, is_active, subscription_id, ping_ms, last_used, origin
              FROM configs ORDER BY is_active DESC, id ASC"
         )?;
 
@@ -699,6 +778,7 @@ impl Database {
                 subscription_id: row.get(7)?,
                 ping_ms: row.get(8)?,
                 last_used: row.get(9)?,
+                origin: row.get(10)?,
             })
         })?;
 
@@ -945,6 +1025,140 @@ impl Database {
         Ok(())
     }
 
+    // ------------------------------------------------------- config finder
+
+    /// Store a server the finder saw working, or refresh the one already
+    /// stored for the same link. A server the user added themselves is never
+    /// touched or re-labelled: only found profiles are matched by key.
+    /// Returns the profile id.
+    pub fn upsert_found(&self, found: &FoundServer<'_>) -> SqlResult<i64> {
+        let mut conn = self.lock();
+        let tx = conn.transaction()?;
+        let now = now_secs();
+        let existing: Option<i64> = tx
+            .query_row(
+                "SELECT id FROM configs WHERE link_key = ?1 AND origin != 'user' LIMIT 1",
+                params![found.link_key],
+                |row| row.get(0),
+            )
+            .ok();
+        let id = match existing {
+            Some(id) => {
+                tx.execute(
+                    "UPDATE configs SET ping_ms = ?2, found_ok = found_ok + 1, last_ok = ?3 WHERE id = ?1",
+                    params![id, found.delay_ms, now],
+                )?;
+                id
+            }
+            None => {
+                tx.execute(
+                    "INSERT INTO configs (remark, protocol, address, port, raw_content, is_active,
+                                          subscription_id, ping_ms, origin, link_key, share_link,
+                                          found_ok, last_ok)
+                     VALUES (?1, ?2, ?3, ?4, ?5, 0, NULL, ?6, ?7, ?8, ?9, 1, ?10)",
+                    params![
+                        found.remark,
+                        found.protocol,
+                        found.address,
+                        found.port,
+                        found.raw_content,
+                        found.delay_ms,
+                        found.origin,
+                        found.link_key,
+                        found.link,
+                        now
+                    ],
+                )?;
+                tx.last_insert_rowid()
+            }
+        };
+        tx.execute(
+            "INSERT INTO metrics (config_id, latency_ms, timestamp) VALUES (?1, ?2, ?3)",
+            params![id, found.delay_ms, now],
+        )?;
+        tx.commit()?;
+        Ok(id)
+    }
+
+    /// A found server failed a test (or its health check): count it.
+    pub fn record_found_failure(&self, link_key: &str) -> SqlResult<()> {
+        let conn = self.lock();
+        conn.execute(
+            "UPDATE configs SET found_fail = found_fail + 1, ping_ms = NULL
+             WHERE link_key = ?1 AND origin != 'user'",
+            params![link_key],
+        )?;
+        Ok(())
+    }
+
+    /// The link key of a found profile, if it is one.
+    pub fn found_link_key(&self, id: i64) -> Option<String> {
+        let conn = self.lock();
+        conn.query_row(
+            "SELECT link_key FROM configs WHERE id = ?1 AND origin != 'user'",
+            params![id],
+            |row| row.get::<_, Option<String>>(0),
+        )
+        .ok()
+        .flatten()
+    }
+
+    /// Share links of found servers that worked, most recent success first:
+    /// what the next search tests before anything else.
+    pub fn found_history(&self, limit: usize) -> SqlResult<Vec<String>> {
+        let conn = self.lock();
+        let mut stmt = conn.prepare_cached(
+            "SELECT share_link FROM configs
+             WHERE origin != 'user' AND share_link IS NOT NULL AND last_ok IS NOT NULL
+             ORDER BY last_ok DESC, found_ok - found_fail DESC LIMIT ?1",
+        )?;
+        let rows = stmt.query_map(params![limit as i64], |row| row.get::<_, String>(0))?;
+        rows.collect()
+    }
+
+    /// Found profiles, best first: the working ones by delay, then the rest.
+    pub fn found_ranked(&self) -> SqlResult<Vec<i64>> {
+        let conn = self.lock();
+        let mut stmt = conn.prepare_cached(
+            "SELECT id FROM configs WHERE origin != 'user'
+             ORDER BY CASE WHEN ping_ms IS NULL THEN 1 ELSE 0 END, ping_ms ASC, last_ok DESC",
+        )?;
+        let rows = stmt.query_map([], |row| row.get::<_, i64>(0))?;
+        rows.collect()
+    }
+
+    /// Keep at most `keep` found profiles: the active one always stays, then
+    /// the most useful (successes minus failures, most recent success).
+    /// Returns how many were removed.
+    pub fn prune_found(&self, keep: usize) -> SqlResult<usize> {
+        let conn = self.lock();
+        conn.execute(
+            "DELETE FROM configs WHERE origin != 'user' AND is_active = 0 AND id NOT IN (
+                 SELECT id FROM configs WHERE origin != 'user'
+                 ORDER BY is_active DESC, found_ok - found_fail DESC, last_ok DESC
+                 LIMIT ?1)",
+            params![keep as i64],
+        )
+    }
+
+    /// A small named value outside [`AppSettings`] (the crowd network name,
+    /// the daily report nonce).
+    pub fn get_value(&self, key: &str) -> Option<String> {
+        let conn = self.lock();
+        conn.query_row("SELECT value FROM settings WHERE key = ?1", params![key], |row| row.get(0))
+            .ok()
+    }
+
+    pub fn set_value(&self, key: &str, value: &str) -> SqlResult<()> {
+        let conn = self.lock();
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES (?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            params![key, value],
+        )?;
+        Ok(())
+    }
+
     pub fn get_active_config(&self) -> SqlResult<Option<ConfigRecord>> {
         let list = self.get_configs()?;
         Ok(list.into_iter().find(|c| c.is_active))
@@ -1127,6 +1341,9 @@ mod tests {
             secret_theme_unlocked: true,
             muted_notices: "startup.elevated,startup.no-elevator".into(),
             auto_update_check: false,
+            share_results: false,
+            finder_max_tier: 3,
+            finder_keep: 12,
         }
     }
 
@@ -1299,10 +1516,90 @@ mod tests {
         let configs = db.get_configs().unwrap();
         assert_eq!(configs.len(), 1);
         assert_eq!(configs[0].subscription_id, None);
+        // Profiles from before the finder are the user's own.
+        assert_eq!(configs[0].origin, ORIGIN_USER);
+        assert!(!configs[0].is_found());
         // And the orphan can still be written to with keys enforced.
         db.set_active_config(configs[0].id).unwrap();
         db.record_pings(&[(configs[0].id, 5.0)]).unwrap();
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn found<'a>(key: &'a str, link: &'a str, origin: &'a str, delay: f64) -> FoundServer<'a> {
+        FoundServer {
+            remark: "Found",
+            protocol: "vless",
+            address: "1.2.3.4",
+            port: 443,
+            raw_content: "{}",
+            link,
+            link_key: key,
+            origin,
+            delay_ms: delay,
+        }
+    }
+
+    #[test]
+    fn a_server_found_twice_is_one_profile_and_user_profiles_are_never_relabelled() {
+        let db = Database::open_temporary("found").unwrap();
+        let mine = db.insert_config("Mine", "vless", "1.2.3.4", 443, "{}", None).unwrap();
+        let a = db.upsert_found(&found("aaaa", "vless://a", "found", 120.0)).unwrap();
+        let again = db.upsert_found(&found("aaaa", "vless://a", "crowd", 90.0)).unwrap();
+        assert_eq!(a, again);
+        assert_ne!(a, mine);
+        let configs = db.get_configs().unwrap();
+        let row = configs.iter().find(|c| c.id == a).unwrap();
+        assert_eq!(row.origin, "found", "the first origin sticks");
+        assert_eq!(row.ping_ms, Some(90.0));
+        assert!(row.is_found());
+        assert!(!configs.iter().find(|c| c.id == mine).unwrap().is_found());
+        assert_eq!(db.found_link_key(a).as_deref(), Some("aaaa"));
+        assert_eq!(db.found_link_key(mine), None);
+
+        // A failure clears the delay; history lists only servers that worked.
+        db.upsert_found(&found("bbbb", "vless://b", "crowd", 300.0)).unwrap();
+        db.record_found_failure("aaaa").unwrap();
+        let history = db.found_history(10).unwrap();
+        assert_eq!(history.len(), 2);
+        assert_eq!(db.found_ranked().unwrap().first().copied(), db.get_configs().unwrap().iter().find(|c| c.remark == "Found" && c.ping_ms == Some(300.0)).map(|c| c.id));
+    }
+
+    #[test]
+    fn pruning_keeps_the_active_and_the_most_useful_found_servers_and_every_user_profile() {
+        let db = Database::open_temporary("prune").unwrap();
+        db.insert_config("Mine", "vless", "1.2.3.4", 443, "{}", None).unwrap();
+        let mut ids = Vec::new();
+        for i in 0..6 {
+            let key = format!("k{i}");
+            let link = format!("vless://{i}");
+            ids.push(db.upsert_found(&found(&key, &link, "found", 100.0)).unwrap());
+        }
+        // k5 is the most useful; k0 is the one in use.
+        for _ in 0..3 {
+            db.upsert_found(&found("k5", "vless://5", "found", 100.0)).unwrap();
+        }
+        db.set_active_config(ids[0]).unwrap();
+        for i in 0..5 {
+            db.record_found_failure(&format!("k{i}")).unwrap();
+        }
+        let removed = db.prune_found(2).unwrap();
+        assert_eq!(removed, 4);
+        let left: Vec<_> = db.get_configs().unwrap();
+        assert!(left.iter().any(|c| c.remark == "Mine"));
+        assert!(left.iter().any(|c| c.id == ids[0]), "the active profile stays");
+        assert!(left.iter().any(|c| c.id == ids[5]), "the most useful stays");
+        assert_eq!(left.len(), 3);
+    }
+
+    #[test]
+    fn named_values_round_trip_beside_the_settings() {
+        let db = Database::open_temporary("values").unwrap();
+        assert_eq!(db.get_value("crowd_net"), None);
+        db.set_value("crowd_net", "asn:58224").unwrap();
+        db.set_value("crowd_net", "asn:12880").unwrap();
+        assert_eq!(db.get_value("crowd_net").as_deref(), Some("asn:12880"));
+        // Unknown keys do not disturb the settings.
+        assert_eq!(db.load_settings(), AppSettings::default());
     }
 
     #[test]

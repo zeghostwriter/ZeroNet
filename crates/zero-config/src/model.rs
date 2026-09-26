@@ -914,6 +914,9 @@ pub struct AmneziaWireguardConfig {
     pub h2: AmneziaHeaderRange,
     pub h3: AmneziaHeaderRange,
     pub h4: AmneziaHeaderRange,
+    /// The three reserved bytes of every WireGuard message; Cloudflare WARP
+    /// uses them as a client id (its `client_id`). Zero otherwise.
+    pub reserved: [u8; 3],
 }
 
 #[derive(Debug, Clone)]

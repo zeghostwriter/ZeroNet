@@ -31,19 +31,40 @@ data class Server(
 ) {
     val isUser: Boolean get() = source == SOURCE_USER || source.startsWith(SOURCE_SUB_PREFIX)
 
-    /** Short, jargon-free label for the class of config: shown as a badge. */
+    /**
+     * Short, jargon-free label for the class of config: shown as a badge.
+     * The same families discovery interleaves by (the core's `LinkClass`),
+     * plus QUIC, because they fail differently under filtering: a split
+     * XHTTP path is the hardest to classify, REALITY impersonates a real
+     * site, CDN-fronted configs hide behind Cloudflare's addresses, and QUIC
+     * lives or dies with UDP.
+     */
     val kind: ServerKind
         get() = when {
+            protocol == "hysteria2" || protocol == "tuic" -> ServerKind.Quic
+            transport == "xhttp" && hasParam(link, "extra") -> ServerKind.Split
             security == "reality" -> ServerKind.Direct
             transport in CDN_TRANSPORTS && security == "tls" -> ServerKind.Cdn
             else -> ServerKind.Other
         }
+
+    /** Found working by other ZeroNet users (the crowd rankings), not just listed in a feed. */
+    val crowdVerified: Boolean get() = source == SOURCE_FEED_PREFIX + "crowd"
 
     companion object {
         const val SOURCE_USER = "user"
         const val SOURCE_SUB_PREFIX = "sub:"
         const val SOURCE_FEED_PREFIX = "feed:"
         private val CDN_TRANSPORTS = setOf("ws", "grpc", "xhttp", "httpupgrade")
+
+        /** Whether the link's query has a non-empty [name] parameter (as the core's `link_has_param`). */
+        private fun hasParam(link: String, name: String): Boolean {
+            val query = link.substringBefore('#').substringAfter('?', "")
+            if (query.isEmpty()) return false
+            return query.split('&').any { pair ->
+                pair.substringBefore('=').equals(name, ignoreCase = true) && pair.substringAfter('=', "").isNotBlank()
+            }
+        }
 
         fun fromLinkInfo(info: JSONObject, source: String): Server = Server(
             key = info.optString("key"),
@@ -60,7 +81,7 @@ data class Server(
     }
 }
 
-enum class ServerKind { Direct, Cdn, Other }
+enum class ServerKind { Split, Direct, Cdn, Quic, Other }
 
 /** What the user asked to connect to. */
 sealed interface ConnectTarget {
@@ -173,3 +194,20 @@ data class ImportResult(val added: Int, val duplicates: Int, val rejected: Int, 
 /** LAN sharing endpoint shown to the user while connected. */
 @Immutable
 data class LanEndpoint(val address: String, val socksPort: Int, val httpPort: Int)
+
+enum class CheckStatus { Pending, Running, Ok, Warn, Bad, Skipped }
+
+/**
+ * One line of the connection self-test. [id] names the check (the UI
+ * translates it); [detail] is the short technical finding: numbers,
+ * addresses, the error the network produced.
+ */
+@Immutable
+data class DiagCheck(val id: String, val status: CheckStatus, val detail: String = "")
+
+@Immutable
+data class Diagnosis(
+    val running: Boolean = false,
+    val checks: List<DiagCheck> = emptyList(),
+    val finishedAt: Long = 0,
+)

@@ -1,4 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <color name="zn_window_bg">#FF0D0F12</color>
+    <!-- Home-screen widget -->
+    <color name="zn_widget_bg">#EB1A1D22</color>
+    <color name="zn_widget_text">#FFF2F2F2</color>
+    <color name="zn_widget_muted">#FFA0A4AB</color>
+    <color name="zn_widget_button_off">#FF3A3F47</color>
+    <color name="zn_widget_button_on">#FF16A34A</color>
+    <color name="zn_widget_button_busy">#FFD48806</color>
 </resources>

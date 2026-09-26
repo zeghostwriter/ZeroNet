@@ -78,6 +78,7 @@ import com.zeronet.mobile.model.MotionLevel
 import com.zeronet.mobile.model.Palette
 import com.zeronet.mobile.model.RemoteDns
 import com.zeronet.mobile.model.Settings
+import com.zeronet.mobile.model.SpeedFloor
 import com.zeronet.mobile.model.ThemeMode
 import com.zeronet.mobile.ui.components.Hairline
 import com.zeronet.mobile.ui.components.IconAction
@@ -107,9 +108,9 @@ import androidx.compose.animation.togetherWith
 import dev.chrisbanes.haze.hazeSource
 import dev.chrisbanes.haze.rememberHazeState
 
-enum class SettingsCardId { Connection, Sources, Split, Share, Evasion, Appearance, Privacy, About }
+enum class SettingsCardId { Connection, Sources, Split, Share, Evasion, Appearance, Privacy, Diagnostics, About }
 
-enum class SettingsSheet { ConnectionMore, Sources, Countries, Apps, Licences, ClearHistory }
+enum class SettingsSheet { ConnectionMore, Sources, Countries, Apps, Licences, ClearHistory, Diagnostics, Logs }
 
 @Immutable
 data class SettingsUiState(
@@ -127,6 +128,8 @@ data class SettingsUiState(
     val versionCode: Int = 0,
     val update: com.zeronet.mobile.update.UpdateState = com.zeronet.mobile.update.UpdateState.Idle,
     val dynamicColorAvailable: Boolean = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S,
+    /** The latest connection self-test. */
+    val diagnosis: com.zeronet.mobile.model.Diagnosis = com.zeronet.mobile.model.Diagnosis(),
 )
 
 @Immutable
@@ -142,6 +145,8 @@ data class SettingsActions(
     val onCopy: (String) -> Unit = {},
     /** Check for an update, or reopen the one in progress. */
     val onUpdates: () -> Unit = {},
+    /** Run the connection self-test. */
+    val onDiagnose: () -> Unit = {},
 )
 
 @Composable
@@ -205,6 +210,11 @@ fun SettingsScreen(
                             SettingsCardId.Evasion -> EvasionCard(s, q, reconnect, actions)
                             SettingsCardId.Appearance -> AppearanceCard(state, q, actions)
                             SettingsCardId.Privacy -> PrivacyCard(state, q, actions) { sheet = SettingsSheet.ClearHistory }
+                            SettingsCardId.Diagnostics -> DiagnosticsCard(
+                                q,
+                                onTest = { sheet = SettingsSheet.Diagnostics; if (state.diagnosis.checks.isEmpty()) actions.onDiagnose() },
+                                onLogs = { sheet = SettingsSheet.Logs },
+                            )
                             SettingsCardId.About -> AboutCard(state, actions.onUpdates) { sheet = SettingsSheet.Licences }
                         }
                     }
@@ -220,6 +230,8 @@ fun SettingsScreen(
     AppPickerSheet(sheet == SettingsSheet.Apps, s, actions) { sheet = null }
     LicencesSheet(sheet == SettingsSheet.Licences) { sheet = null }
     ClearHistorySheet(sheet == SettingsSheet.ClearHistory, state.discoveredCount, actions) { sheet = null }
+    DiagnosticsSheet(sheet == SettingsSheet.Diagnostics, state.diagnosis, actions.onDiagnose, onLogs = { sheet = SettingsSheet.Logs }) { sheet = null }
+    LogsSheet(sheet == SettingsSheet.Logs, s.logs, onDismiss = { sheet = null }, onCopy = actions.onCopy)
 }
 
 // ------------------------------------------------------------------ search keys
@@ -227,7 +239,8 @@ fun SettingsScreen(
 private val CONNECTION_KEYS = intArrayOf(
     R.string.settings_connection, R.string.settings_mode, R.string.settings_mode_vpn, R.string.settings_mode_proxy,
     R.string.settings_autoconnect, R.string.settings_autoswitch, R.string.settings_more_connection,
-    R.string.settings_kill_switch, R.string.settings_ipv6, R.string.settings_mtu, R.string.kw_connection,
+    R.string.settings_kill_switch, R.string.settings_kill_switch_app, R.string.trusted_title,
+    R.string.settings_ipv6, R.string.settings_mtu, R.string.kw_connection,
 )
 private val SOURCES_KEYS = intArrayOf(
     R.string.settings_sources_card, R.string.settings_sources, R.string.settings_preferred_countries,
@@ -246,6 +259,9 @@ private val APPEARANCE_KEYS = intArrayOf(
     R.string.settings_dynamic, R.string.settings_language, R.string.settings_motion, R.string.kw_appearance,
 )
 private val PRIVACY_KEYS = intArrayOf(R.string.settings_privacy, R.string.settings_logs, R.string.settings_share_results, R.string.settings_clear_history, R.string.kw_privacy)
+private val DIAGNOSTICS_KEYS = intArrayOf(
+    R.string.settings_diagnostics, R.string.settings_diag_test, R.string.settings_diag_logs, R.string.logs_title, R.string.kw_diagnostics,
+)
 private val ABOUT_KEYS = intArrayOf(R.string.settings_about, R.string.settings_version, R.string.settings_licences, R.string.settings_engine, R.string.kw_about)
 
 private fun cardVisible(id: SettingsCardId, q: SettingsQuery, state: SettingsUiState): Boolean = when (id) {
@@ -256,6 +272,7 @@ private fun cardVisible(id: SettingsCardId, q: SettingsQuery, state: SettingsUiS
     SettingsCardId.Evasion -> q.hit(*EVASION_KEYS)
     SettingsCardId.Appearance -> q.hit(*APPEARANCE_KEYS)
     SettingsCardId.Privacy -> q.hit(*PRIVACY_KEYS)
+    SettingsCardId.Diagnostics -> q.hit(*DIAGNOSTICS_KEYS)
     SettingsCardId.About -> q.hit(*ABOUT_KEYS)
 }
 
@@ -358,7 +375,46 @@ private fun ConnectionCard(s: Settings, q: SettingsQuery, reconnect: Boolean, ac
                 subtitle = stringResource(R.string.settings_autoswitch_hint),
             )
         }
-        if (f.show(R.string.settings_more_connection, R.string.settings_kill_switch, R.string.settings_ipv6, R.string.settings_mtu)) {
+        if (f.show(R.string.settings_speed_floor) && s.autoSwitch) {
+            LabeledBlock(
+                stringResource(R.string.settings_speed_floor),
+                subtitle = stringResource(
+                    when (s.speedFloor) {
+                        SpeedFloor.Off -> R.string.settings_speed_floor_off_hint
+                        SpeedFloor.Low -> R.string.settings_speed_floor_low_hint
+                        SpeedFloor.Medium -> R.string.settings_speed_floor_medium_hint
+                        SpeedFloor.Custom -> R.string.settings_speed_floor_custom_hint
+                    },
+                ),
+            ) {
+                Segmented(
+                    SpeedFloor.entries, s.speedFloor, { v -> actions.onChange { it.copy(speedFloor = v) } },
+                    label = {
+                        stringResource(
+                            when (it) {
+                                SpeedFloor.Off -> R.string.option_off
+                                SpeedFloor.Low -> R.string.settings_speed_floor_low
+                                SpeedFloor.Medium -> R.string.settings_speed_floor_medium
+                                SpeedFloor.Custom -> R.string.settings_speed_floor_custom
+                            },
+                        )
+                    },
+                )
+            }
+        }
+        if (f.show(R.string.settings_speed_floor) && s.autoSwitch && s.speedFloor == SpeedFloor.Custom) {
+            ZeroTextField(
+                value = s.speedFloorKbps.toString(),
+                onValueChange = { v ->
+                    val kbps = v.filter { it.isDigit() }.take(6).toIntOrNull()
+                    if (kbps != null) actions.onChange { it.copy(speedFloorKbps = kbps.coerceIn(0, 1_000_000)) }
+                },
+                keyboardType = KeyboardType.Number,
+                leading = ZeroIcons.Bolt,
+                placeholder = stringResource(R.string.settings_speed_floor_custom_hint),
+            )
+        }
+        if (f.show(R.string.settings_more_connection, R.string.settings_kill_switch, R.string.settings_kill_switch_app, R.string.trusted_title, R.string.settings_ipv6, R.string.settings_mtu)) {
             NavRow(
                 stringResource(R.string.settings_more_connection),
                 onMore,
@@ -700,16 +756,26 @@ private fun AppearanceCard(state: SettingsUiState, q: SettingsQuery, actions: Se
         }
         if (f.show(R.string.settings_language)) {
             LabeledBlock(stringResource(R.string.settings_language)) {
-                Segmented(
-                    AppLanguage.entries, s.language, { v -> actions.onChange { it.copy(language = v) } },
-                    label = {
-                        when (it) {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    AppLanguage.entries.forEach { lang ->
+                        val name = when (lang) {
                             AppLanguage.System -> stringResource(R.string.option_system)
                             AppLanguage.English -> "English"
                             AppLanguage.Persian -> "فارسی"
+                            AppLanguage.Azerbaijani -> "Azərbaycan"
+                            AppLanguage.Kurdish -> "کوردی"
+                            AppLanguage.Arabic -> "العربية"
+                            AppLanguage.Russian -> "Русский"
+                            AppLanguage.Turkish -> "Türkçe"
+                            AppLanguage.Chinese -> "中文"
                         }
-                    },
-                )
+                        ZeroChip(
+                            text = name,
+                            onClick = { actions.onChange { it.copy(language = lang) } },
+                            selected = s.language == lang,
+                        )
+                    }
+                }
             }
         }
         if (f.show(R.string.settings_motion)) {
@@ -797,6 +863,19 @@ private fun PrivacyCard(state: SettingsUiState, q: SettingsQuery, actions: Setti
                 tint = c.err,
                 icon = ZeroIcons.Trash,
             )
+        }
+    }
+}
+
+@Composable
+private fun DiagnosticsCard(q: SettingsQuery, onTest: () -> Unit, onLogs: () -> Unit) {
+    val f = CardFilter(q, R.string.settings_diagnostics, R.string.kw_diagnostics)
+    SettingsCard(ZeroIcons.Signal, stringResource(R.string.settings_diagnostics), tint = ZeroTheme.colors.info) {
+        if (f.show(R.string.settings_diag_test)) {
+            NavRow(stringResource(R.string.settings_diag_test), onTest, subtitle = stringResource(R.string.settings_diag_test_hint))
+        }
+        if (f.show(R.string.settings_diag_logs, R.string.logs_title)) {
+            NavRow(stringResource(R.string.settings_diag_logs), onLogs, subtitle = stringResource(R.string.settings_diag_logs_hint))
         }
     }
 }

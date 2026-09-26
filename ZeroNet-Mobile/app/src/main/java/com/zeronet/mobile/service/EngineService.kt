@@ -58,6 +58,7 @@ class EngineService : Service() {
                 }
             }
             launch { Engine.serversChanged.collect { broadcast(Ipc.SERVERS_CHANGED, null) } }
+            launch { Engine.diagnosis.collect { broadcast(Ipc.DIAGNOSIS, Ipc.diagnosisToJson(it)) } }
         }
     }
 
@@ -116,6 +117,7 @@ class EngineService : Service() {
                 Ipc.SETTINGS -> json?.let { Engine.applySettings(Settings.fromJson(JSONObject(it))) }
                 Ipc.SCAN_START -> Engine.startScan(json?.let { JSONObject(it).optInt("count", 2000) } ?: 2000)
                 Ipc.SCAN_STOP -> Engine.stopScan()
+                Ipc.DIAGNOSE -> Engine.diagnose()
                 Ipc.IMPORT -> {
                     val replyTo = msg.replyTo
                     val text = json.orEmpty()

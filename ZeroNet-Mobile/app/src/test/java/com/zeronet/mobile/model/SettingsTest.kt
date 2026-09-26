@@ -39,6 +39,8 @@ class SettingsTest {
             language = AppLanguage.Persian,
             motion = MotionLevel.Reduced,
             logs = true,
+            killSwitch = true,
+            trustedNetworks = listOf("0011223344556677|Home Wi-Fi", "8899aabbccddeeff|Office | 2nd floor"),
         )
         val decoded = Settings.fromJson(JSONObject(original.toJson().toString()))
         assertEquals(original, decoded)
@@ -73,5 +75,31 @@ class SettingsTest {
         assertEquals(ServerKind.Direct, base.kind)
         assertEquals(ServerKind.Cdn, base.copy(transport = "ws", security = "tls").kind)
         assertEquals(ServerKind.Other, base.copy(transport = "tcp", security = "tls").kind)
+        assertEquals(ServerKind.Quic, base.copy(protocol = "hysteria2", transport = "quic", security = "tls").kind)
+        assertEquals(ServerKind.Quic, base.copy(protocol = "tuic", transport = "quic", security = "tls").kind)
+        // XHTTP with an `extra` block is the split-path family, whatever its security.
+        val xhttp = base.copy(transport = "xhttp", security = "tls")
+        assertEquals(ServerKind.Split, xhttp.copy(link = "vless://id@h:443?type=xhttp&extra=%7B%7D#n").kind)
+        assertEquals(ServerKind.Cdn, xhttp.copy(link = "vless://id@h:443?type=xhttp&extra=#n").kind)
+        assertEquals(ServerKind.Cdn, xhttp.copy(link = "vless://id@h:443?type=xhttp#extra=1").kind)
+    }
+
+    @Test
+    fun `crowd picks are marked as verified by others`() {
+        val base = Server("k", "vless://x", "n", "vless", "tcp", "reality", "h", 443, "DE", "feed:crowd")
+        assertEquals(true, base.crowdVerified)
+        assertEquals(false, base.copy(source = "feed:discovered").crowdVerified)
+    }
+
+    @Test
+    fun `trusted networks match by identity, not label`() {
+        val s = Settings(trustedNetworks = listOf("0011223344556677|Home"))
+        assertEquals(true, s.trusts("0011223344556677"))
+        assertEquals(false, s.trusts("Home"))
+        assertEquals(false, s.trusts(null))
+        assertEquals("Home", s.trustedLabel("0011223344556677"))
+        // Malformed or duplicate entries are dropped when read back.
+        val decoded = Settings.fromJson(JSONObject("""{"trustedNetworks":["nolabel","a|One","a|Two"]}"""))
+        assertEquals(listOf("a|One"), decoded.trustedNetworks)
     }
 }

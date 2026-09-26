@@ -144,6 +144,8 @@ class MainActivity : ComponentActivity(), PlatformActions {
      */
     private fun maybeAutoConnect() {
         if (controller.settings.current.autoConnect != AutoConnect.OnAppStart) return
+        // Not on a network the user trusts: ZeroNet stays off there.
+        if (controller.settings.current.trusts(com.zeronet.mobile.data.NetworkIdentity.current(this))) return
         lifecycleScope.launch {
             val live = withTimeoutOrNull(AUTO_CONNECT_WAIT_MS) { controller.engine.state.first { it != ConnState.Idle } }
             if (live == null && controller.engine.state.value == ConnState.Idle && !showOnboarding) controller.connect()
@@ -231,8 +233,16 @@ class MainActivity : ComponentActivity(), PlatformActions {
         val locales = getSystemService(LocaleManager::class.java)?.applicationLocales ?: return
         val system = when {
             locales.isEmpty -> AppLanguage.System
-            locales[0].language == "fa" -> AppLanguage.Persian
-            else -> AppLanguage.English
+            else -> when (locales[0].language) {
+                "fa" -> AppLanguage.Persian
+                "az" -> AppLanguage.Azerbaijani
+                "ku", "ckb" -> AppLanguage.Kurdish
+                "ar" -> AppLanguage.Arabic
+                "ru" -> AppLanguage.Russian
+                "tr" -> AppLanguage.Turkish
+                "zh" -> AppLanguage.Chinese
+                else -> AppLanguage.English
+            }
         }
         val store = SettingsStore.get(this)
         if (store.current.language != system) store.update { it.copy(language = system) }
@@ -252,6 +262,12 @@ class MainActivity : ComponentActivity(), PlatformActions {
             AppLanguage.System -> null
             AppLanguage.English -> Locale.ENGLISH
             AppLanguage.Persian -> Locale.forLanguageTag("fa")
+            AppLanguage.Azerbaijani -> Locale.forLanguageTag("az")
+            AppLanguage.Kurdish -> Locale.forLanguageTag("ckb")
+            AppLanguage.Arabic -> Locale.forLanguageTag("ar")
+            AppLanguage.Russian -> Locale.forLanguageTag("ru")
+            AppLanguage.Turkish -> Locale.forLanguageTag("tr")
+            AppLanguage.Chinese -> Locale.forLanguageTag("zh-Hans")
         }
 
         private fun localeListFor(language: AppLanguage): LocaleList =

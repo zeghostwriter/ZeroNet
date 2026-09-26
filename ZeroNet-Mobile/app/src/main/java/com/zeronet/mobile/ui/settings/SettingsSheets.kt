@@ -88,7 +88,7 @@ import java.util.Locale
 
 /** Title and optional one-line explanation at the top of a settings sheet. */
 @Composable
-private fun SheetHeader(title: String, body: String? = null) {
+internal fun SheetHeader(title: String, body: String? = null) {
     val c = ZeroTheme.colors
     Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp).padding(bottom = 8.dp)) {
         Text(title, style = MaterialTheme.typography.titleLarge, color = c.text, modifier = Modifier.semantics { heading() })
@@ -101,7 +101,7 @@ private fun SheetHeader(title: String, body: String? = null) {
 
 /** A scrolling sheet body with the standard side padding. */
 @Composable
-private fun ColumnScope.SheetBody(content: @Composable ColumnScope.() -> Unit) {
+internal fun ColumnScope.SheetBody(content: @Composable ColumnScope.() -> Unit) {
     Column(
         Modifier
             .weight(1f, fill = false)
@@ -128,22 +128,29 @@ fun ConnectionMoreSheet(visible: Boolean, s: Settings, reconnect: Boolean, actio
             if (reconnect) {
                 ReconnectChip(actions.onReconnect, Modifier.padding(bottom = 8.dp))
             }
-            // Kill switch: Android owns it, so this explains and deep-links.
+            // Kill switch: ZeroNet's own, which holds a blocking interface
+            // whenever no server carries traffic, and Android's lock-down,
+            // which also covers the moments ZeroNet itself is not running.
             Column(
                 Modifier
                     .fillMaxWidth()
                     .padding(vertical = 8.dp)
                     .clip(RoundedCornerShape(20.dp))
                     .background(c.surfaceHi)
-                    .padding(16.dp),
+                    .padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 16.dp),
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     IconBadge(ZeroIcons.Lock, size = 36.dp)
                     Spacer(Modifier.width(12.dp))
                     Text(stringResource(R.string.settings_kill_switch), style = MaterialTheme.typography.titleSmall, color = c.text)
                 }
-                Spacer(Modifier.height(8.dp))
-                Text(stringResource(R.string.settings_kill_switch_body), style = MaterialTheme.typography.bodyMedium, color = c.muted)
+                ToggleRow(
+                    stringResource(R.string.settings_kill_switch_app),
+                    s.killSwitch,
+                    { v -> actions.onChange { it.copy(killSwitch = v) } },
+                    subtitle = stringResource(R.string.settings_kill_switch_app_hint),
+                )
+                Text(stringResource(R.string.settings_kill_switch_body), style = MaterialTheme.typography.bodySmall, color = c.muted)
                 Spacer(Modifier.height(12.dp))
                 TonalButton(
                     stringResource(R.string.settings_kill_switch_open),
@@ -152,6 +159,7 @@ fun ConnectionMoreSheet(visible: Boolean, s: Settings, reconnect: Boolean, actio
                     container = c.surface,
                 )
             }
+            TrustedNetworks(s, actions)
             ToggleRow(
                 stringResource(R.string.settings_ipv6),
                 s.ipv6,
@@ -167,6 +175,58 @@ fun ConnectionMoreSheet(visible: Boolean, s: Settings, reconnect: Boolean, actio
                     label = { Num.int(it, locale) },
                 )
             }
+        }
+    }
+}
+
+/**
+ * Networks where ZeroNet stays off (home Wi-Fi, a free network abroad):
+ * trust the current one, or remove one trusted earlier. Identified by
+ * [com.zeronet.mobile.data.NetworkIdentity]'s hash, which needs no location
+ * permission; the label is only what the user saw when trusting it.
+ */
+@Composable
+private fun TrustedNetworks(s: Settings, actions: SettingsActions) {
+    val c = ZeroTheme.colors
+    val context = LocalContext.current
+    val current by produceState<Pair<String, String>?>(null) {
+        value = withContext(Dispatchers.IO) {
+            com.zeronet.mobile.data.NetworkIdentity.current(context)?.let { id ->
+                id to com.zeronet.mobile.data.NetworkIdentity.label(context).ifBlank { context.getString(R.string.trusted_unknown_network) }
+            }
+        }
+    }
+    SectionTitle(stringResource(R.string.trusted_title), Modifier.padding(top = 12.dp))
+    Text(stringResource(R.string.trusted_body), style = MaterialTheme.typography.bodySmall, color = c.muted, modifier = Modifier.padding(bottom = 8.dp))
+    val here = current
+    if (here != null && !s.trusts(here.first)) {
+        TonalButton(
+            stringResource(R.string.trusted_add, here.second),
+            { actions.onChange { it.copy(trustedNetworks = (it.trustedNetworks + "${here.first}|${here.second}").distinctBy { e -> e.substringBefore('|') }) } },
+            icon = ZeroIcons.Plus,
+        )
+        Spacer(Modifier.height(8.dp))
+    }
+    if (s.trustedNetworks.isEmpty()) {
+        Text(stringResource(R.string.trusted_none), style = MaterialTheme.typography.bodyMedium, color = c.muted, modifier = Modifier.padding(vertical = 8.dp))
+    }
+    s.trustedNetworks.forEachIndexed { i, entry ->
+        if (i > 0) Hairline()
+        val id = entry.substringBefore('|')
+        val label = entry.substringAfter('|')
+        Row(Modifier.fillMaxWidth().heightIn(min = 52.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(ZeroIcons.Wifi, null, tint = c.muted, modifier = Modifier.size(20.dp))
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text(label, style = MaterialTheme.typography.bodyLarge, color = c.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                if (here?.first == id) Text(stringResource(R.string.trusted_current), style = MaterialTheme.typography.bodySmall, color = c.ok)
+            }
+            IconAction(
+                ZeroIcons.Trash,
+                stringResource(R.string.trusted_remove, label),
+                onClick = { actions.onChange { it.copy(trustedNetworks = it.trustedNetworks.filterNot { e -> e.substringBefore('|') == id }) } },
+                tint = c.err,
+            )
         }
     }
 }
@@ -475,8 +535,8 @@ private fun AppIcon(pkg: String) {
 private data class Licence(val name: String, val licence: String, val asset: String)
 
 private val LICENCES = listOf(
-    Licence("ZeroNet", "GPL-3.0", "GPL-3.0.txt"),
-    Licence("Zray-Core", "MPL-2.0", "MPL-2.0.txt"),
+    Licence("ZeroNet · Zray-Core", "MIT", "MIT.txt"),
+    Licence("shaped-rustls (rustls fork)", "MPL-2.0", "MPL-2.0.txt"),
     Licence("Vazirmatn", "SIL OFL 1.1", "Vazirmatn-OFL.txt"),
     Licence("AndroidX · Jetpack Compose", "Apache-2.0", "Apache-2.0.txt"),
     Licence("Kotlin · kotlinx.coroutines", "Apache-2.0", "Apache-2.0.txt"),

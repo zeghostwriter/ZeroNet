@@ -38,3 +38,12 @@ pub fn tune_allocator() {
     }
 }
 pub use server::{asset_specs_for, asset_store_for, Server, ServerConfig};
+
+/// After the device's network changed: move the pooled Hysteria2/TUIC
+/// connections (QUIC connection migration) and the WireGuard tunnels
+/// (WireGuard roaming) onto sockets on the new network, so they and the
+/// streams they carry survive the switch. Returns how many moved. Safe to
+/// call from any thread.
+pub fn migrate_quic_connections() -> usize {
+    zero_transport::quic_pool::rebind_all() + zero_protocol::wg_stack::rebind_all()
+}

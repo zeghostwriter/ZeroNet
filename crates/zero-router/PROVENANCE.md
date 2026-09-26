@@ -1,6 +1,6 @@
 # Provenance
 
-- License: MPL-2.0, inherited from the workspace.
+- License: MIT, inherited from the workspace.
 - Implementation: original compiled matcher/router code.
 - Behavioral references: Xray routing semantics and the geodata safety rules
   in `PLAN-01.md`; no upstream source file is copied into this crate.

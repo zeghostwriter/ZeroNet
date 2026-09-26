@@ -1,6 +1,6 @@
 # Provenance
 
-- License: MPL-2.0, inherited from the workspace.
+- License: MIT, inherited from the workspace.
 - Implementation: original WebSocket, HTTP Upgrade, gRPC, and XHTTP stream
   code.
 - Behavioral references: RFC 6455 and the Xray transport contracts described in

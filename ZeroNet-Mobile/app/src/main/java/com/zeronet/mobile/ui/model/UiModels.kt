@@ -48,9 +48,22 @@ fun serverTitle(context: Context, server: Server, locale: Locale): String {
 
 fun kindLabel(context: Context, kind: ServerKind): String = context.getString(
     when (kind) {
+        ServerKind.Split -> R.string.kind_split
         ServerKind.Direct -> R.string.kind_direct
         ServerKind.Cdn -> R.string.kind_cdn
+        ServerKind.Quic -> R.string.kind_quic
         ServerKind.Other -> R.string.kind_other
+    },
+)
+
+/** Why a kind of server resists filtering (or does not): shown in the detail sheet. */
+fun kindHint(context: Context, kind: ServerKind): String = context.getString(
+    when (kind) {
+        ServerKind.Split -> R.string.kind_hint_split
+        ServerKind.Direct -> R.string.kind_hint_direct
+        ServerKind.Cdn -> R.string.kind_hint_cdn
+        ServerKind.Quic -> R.string.kind_hint_quic
+        ServerKind.Other -> R.string.kind_hint_other
     },
 )
 

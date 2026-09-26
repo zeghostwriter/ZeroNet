@@ -1,6 +1,6 @@
 # Provenance
 
-- License: MPL-2.0, inherited from the workspace.
+- License: MIT, inherited from the workspace.
 - Implementation: original command-line wrapper and diagnostics.
 - It depends only on workspace crates and does not include quarantined
   reference code.

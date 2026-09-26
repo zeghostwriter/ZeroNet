@@ -1,7 +1,7 @@
 //! Inbound listeners and dispatch.
 
 use std::collections::HashMap;
-use std::net::{IpAddr, SocketAddr};
+use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 
@@ -173,6 +173,12 @@ async fn within_handshake<F: std::future::Future>(future: F) -> Result<F::Output
 struct ServerState {
     config: Arc<RuntimeConfig>,
     router: Arc<Router>,
+    /// The resolver as configured, FakeDNS included: it answers the
+    /// applications' own queries (`dns-out`) and maps synthetic addresses
+    /// back to names.
+    client_resolver: Arc<zero_dns::Resolver>,
+    /// The same resolver without FakeDNS, for every lookup the runtime makes
+    /// to connect somewhere (see [`zero_dns::Resolver::without_fake`]).
     resolver: Arc<zero_dns::Resolver>,
     generation: GenerationId,
     /// Per-inbound material derived from configuration once per generation
@@ -305,10 +311,6 @@ pub struct Server {
     /// one. Mirrored here for the same reason the rung is — materialising an
     /// outbound must not take the planner lock on every new session.
     planner_flow_lifetime_ms: AtomicU64,
-    /// Persistent AmneziaWG sessions keyed by outbound tag. The entry is
-    /// replaced when a reload changes the resolved peer or cryptographic
-    /// parameters, while the per-session mutex serializes boringtun state.
-    amnezia_sessions: Arc<Mutex<HashMap<Arc<str>, AmneziaSessionEntry>>>,
     pub stats: Arc<Stats>,
 }
 
@@ -345,12 +347,6 @@ struct AssetStatus {
     at: std::time::SystemTime,
 }
 
-struct AmneziaSessionEntry {
-    peer_endpoints: Vec<SocketAddr>,
-    params: zero_protocol::amnezia::WireGuardParams,
-    session: Arc<Mutex<zero_protocol::amnezia::AmneziaSession>>,
-}
-
 impl Server {
     pub fn new(cfg: ServerConfig) -> Self {
         let geodata = Arc::new(arc_swap::ArcSwap::from_pointee(Self::initial_geodata(
@@ -372,7 +368,6 @@ impl Server {
             listening: tokio::sync::watch::channel(false).0,
             planner_strategy: AtomicU8::new(zero_observatory::PathStrategy::DirectReality.as_u8()),
             planner_flow_lifetime_ms: AtomicU64::new(0),
-            amnezia_sessions: Arc::new(Mutex::new(HashMap::new())),
             stats: Arc::new(Stats::default()),
         }
     }
@@ -465,8 +460,10 @@ impl Server {
         geodata: &zero_router::GeoData,
     ) -> ServerState {
         let router = Self::build_router(&config, geodata);
+        let client_resolver = Arc::new(zero_dns::Resolver::new(config.dns.clone()));
         ServerState {
-            resolver: Arc::new(zero_dns::Resolver::new(config.dns.clone())),
+            resolver: Arc::new(client_resolver.without_fake()),
+            client_resolver,
             inbounds: config
                 .inbounds
                 .iter()
@@ -524,11 +521,18 @@ impl Server {
                 }
             }
         }
-        self.state.store(Arc::new(Self::build_state(
-            config,
-            generation,
-            &self.geodata.load_full(),
-        )));
+        let mut next = Self::build_state(config, generation, &self.geodata.load_full());
+        // A reload builds a fresh resolver on purpose: a network change is a
+        // reload too (`zray_network_changed`), and pooled DoH/DoT connections
+        // bound to the old interface must go. The FakeDNS mappings the
+        // applications already hold must survive it, though, or every
+        // address they cached would lead nowhere.
+        if next.client_resolver.has_fake() {
+            let adopted = (*next.client_resolver).clone().adopt_fake_state(&current.client_resolver);
+            next.resolver = Arc::new(adopted.without_fake());
+            next.client_resolver = Arc::new(adopted);
+        }
+        self.state.store(Arc::new(next));
         Ok(())
     }
 
@@ -550,6 +554,7 @@ impl Server {
         self.state.rcu(|current| ServerState {
             config: Arc::clone(&current.config),
             router: Self::build_router(&current.config, &geodata),
+            client_resolver: Arc::clone(&current.client_resolver),
             resolver: Arc::clone(&current.resolver),
             generation: current.generation,
             inbounds: Arc::clone(&current.inbounds),
@@ -1382,7 +1387,7 @@ impl Server {
         let Some(ip) = destination.address.as_ip() else {
             return destination.clone();
         };
-        let Some(domain) = self.resolver().reverse_fake(ip).await else {
+        let Some(domain) = self.client_resolver().reverse_fake(ip).await else {
             return destination.clone();
         };
         let mut restored = destination.clone();
@@ -1394,8 +1399,14 @@ impl Server {
         Arc::clone(&self.state.load_full().router)
     }
 
+    /// The resolver for the runtime's own connections: never FakeDNS.
     fn resolver(&self) -> Arc<zero_dns::Resolver> {
         Arc::clone(&self.state.load_full().resolver)
+    }
+
+    /// The resolver that answers applications, FakeDNS included.
+    fn client_resolver(&self) -> Arc<zero_dns::Resolver> {
+        Arc::clone(&self.state.load_full().client_resolver)
     }
 
     fn generation(&self) -> GenerationId {
@@ -3557,99 +3568,23 @@ impl Server {
                 .into_iter()
                 .map(|ip| SocketAddr::new(ip, port))
                 .collect::<Vec<_>>();
+            let peer = *peer_endpoints
+                .first()
+                .ok_or_else(|| "AmneziaWG peer has no address".to_string())?;
+            let stack =
+                zero_protocol::wg_stack::shared(peer, outbound::wireguard_stack_params(wireguard))?;
             let destination = match &datagram.destination.address {
-                Address::Ip(IpAddr::V4(ip)) => {
-                    SocketAddr::new(IpAddr::V4(*ip), datagram.destination.port)
-                }
-                Address::Ip(IpAddr::V6(ip)) => {
-                    SocketAddr::new(IpAddr::V6(*ip), datagram.destination.port)
-                }
-                Address::Domain(_) => self
-                    .resolver()
-                    .resolve_address(
-                        &datagram.destination.address,
-                        self.resolver().settings().query_strategy,
-                    )
-                    .await
-                    .map_err(|error| error.to_string())?
+                Address::Ip(ip) => SocketAddr::new(*ip, datagram.destination.port),
+                // Resolved inside the tunnel, like the TCP path.
+                Address::Domain(name) => stack
+                    .resolve(name)
+                    .await?
                     .into_iter()
-                    .next()
+                    .find(|ip| stack.carries(*ip))
                     .map(|ip| SocketAddr::new(ip, datagram.destination.port))
-                    .ok_or_else(|| "AmneziaWG destination has no IP address".to_string())?,
+                    .ok_or_else(|| "AmneziaWG destination has no usable address".to_string())?,
             };
-            let params = zero_protocol::amnezia::WireGuardParams {
-                private_key: wireguard.private_key,
-                peer_public_key: wireguard.peer_public_key,
-                preshared_key: wireguard.preshared_key,
-                tunnel_address: wireguard.tunnel_address,
-                persistent_keepalive: wireguard.persistent_keepalive,
-                obfuscation: zero_protocol::amnezia::AmneziaParams {
-                    junk_count: wireguard.junk_count,
-                    junk_size: zero_protocol::amnezia::RangeU16 {
-                        min: wireguard.junk_min,
-                        max: wireguard.junk_max,
-                    },
-                    init_padding: zero_protocol::amnezia::RangeU16::fixed(wireguard.s1),
-                    response_padding: zero_protocol::amnezia::RangeU16::fixed(wireguard.s2),
-                    cookie_padding: zero_protocol::amnezia::RangeU16::fixed(wireguard.s3),
-                    transport_padding: zero_protocol::amnezia::RangeU16::fixed(wireguard.s4),
-                    init_header: zero_protocol::amnezia::HeaderRange {
-                        min: wireguard.h1.min,
-                        max: wireguard.h1.max,
-                    },
-                    response_header: zero_protocol::amnezia::HeaderRange {
-                        min: wireguard.h2.min,
-                        max: wireguard.h2.max,
-                    },
-                    cookie_header: zero_protocol::amnezia::HeaderRange {
-                        min: wireguard.h3.min,
-                        max: wireguard.h3.max,
-                    },
-                    transport_header: zero_protocol::amnezia::HeaderRange {
-                        min: wireguard.h4.min,
-                        max: wireguard.h4.max,
-                    },
-                },
-            };
-            let cached = {
-                let sessions = self.amnezia_sessions.lock().await;
-                sessions.get(&outbound.tag).and_then(|entry| {
-                    (entry.peer_endpoints == peer_endpoints && entry.params == params)
-                        .then(|| Arc::clone(&entry.session))
-                })
-            };
-            let session = if let Some(session) = cached {
-                session
-            } else {
-                let session = Arc::new(Mutex::new(
-                    zero_protocol::amnezia::AmneziaSession::connect(&peer_endpoints, params)
-                        .await?,
-                ));
-                let mut sessions = self.amnezia_sessions.lock().await;
-                sessions.insert(
-                    outbound.tag.clone(),
-                    AmneziaSessionEntry {
-                        peer_endpoints: peer_endpoints.clone(),
-                        params,
-                        session: Arc::clone(&session),
-                    },
-                );
-                session
-            };
-            let result = session
-                .lock()
-                .await
-                .exchange(destination, &datagram.payload)
-                .await;
-            if result.is_err() {
-                let mut sessions = self.amnezia_sessions.lock().await;
-                if sessions
-                    .get(&outbound.tag)
-                    .is_some_and(|entry| Arc::ptr_eq(&entry.session, &session))
-                {
-                    sessions.remove(&outbound.tag);
-                }
-            }
+            let result = stack.exchange_udp(destination, &datagram.payload).await;
             let (source, response) = result?;
             return Ok((
                 Destination::udp(Address::Ip(source.ip()), source.port()),
@@ -4724,7 +4659,7 @@ where
                 .stats
                 .uploaded
                 .fetch_add(payload.len() as u64, Ordering::Relaxed);
-            let resolver = server.resolver();
+            let resolver = server.client_resolver();
             let Some(response) = crate::dns_out::answer(&resolver, &payload).await else {
                 server.stats.failed.fetch_add(1, Ordering::Relaxed);
                 debug!(%destination, "dropping a datagram that is not a DNS query");
@@ -5535,6 +5470,65 @@ mod tests {
             config: Arc::clone(&generation.config),
             generation: generation.id,
         }))
+    }
+
+    /// FakeDNS answers the applications, never the runtime itself, and a
+    /// reload — which is also how a network change resets DNS — keeps every
+    /// synthetic address an application already holds.
+    #[tokio::test]
+    async fn fake_addresses_survive_a_reload_and_never_reach_the_dialer() {
+        let config = serde_json::json!({
+            "inbounds": [{"tag": "socks", "listen": "127.0.0.1", "port": 1080, "protocol": "socks"}],
+            "outbounds": [{"tag": "direct", "protocol": "freedom"}],
+            "dns": {
+                "servers": [
+                    "fakedns",
+                    {"address": "127.0.0.1", "port": 9, "tag": "real"},
+                ],
+                "hosts": {"pinned.example": "203.0.113.7"},
+            },
+        });
+        let (generation, _) =
+            zero_config::compile_config(&config, zero_core::GenerationId(1)).expect("config");
+        let server = Server::new(ServerConfig {
+            config: Arc::clone(&generation.config),
+            generation: generation.id,
+        });
+        let strategy = zero_config::dns::QueryStrategy::UseIpv4;
+        let fake = server
+            .client_resolver()
+            .lookup("app.example", strategy)
+            .await
+            .expect("fake answer");
+        assert!(matches!(fake[0], std::net::IpAddr::V4(v4) if v4.octets()[..2] == [198, 18]));
+        // The runtime's own view has no FakeDNS: hosts still answer, and a
+        // name nobody pins goes to the (unreachable) real resolver, never to
+        // a synthetic address.
+        assert!(!server.resolver().has_fake());
+        assert_eq!(
+            server.resolver().lookup("pinned.example", strategy).await.unwrap(),
+            vec!["203.0.113.7".parse::<std::net::IpAddr>().unwrap()]
+        );
+
+        let restored = server
+            .restore_fake_destination(&zero_core::Destination::tcp(
+                zero_core::Address::Ip(fake[0]),
+                443,
+            ))
+            .await;
+        assert_eq!(restored.address, zero_core::Address::domain("app.example"));
+
+        server
+            .reload(Arc::clone(&generation.config), zero_core::GenerationId(2))
+            .expect("reload");
+        let after = server
+            .restore_fake_destination(&zero_core::Destination::tcp(
+                zero_core::Address::Ip(fake[0]),
+                443,
+            ))
+            .await;
+        assert_eq!(after.address, zero_core::Address::domain("app.example"), "the mapping was lost on reload");
+        assert!(!server.resolver().has_fake());
     }
 
     fn sample_outbound(server: &Server) -> zero_config::Outbound {

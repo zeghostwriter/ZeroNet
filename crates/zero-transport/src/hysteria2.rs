@@ -139,10 +139,53 @@ fn decode_varint_slice(bytes: &[u8]) -> Result<(u64, usize), String> {
     Ok((value, width))
 }
 
-async fn connect_authenticated(
+/// The pooled, authenticated connection to a Hysteria2 server (see
+/// [`crate::quic_pool`]).
+async fn pooled(
     addrs: &[SocketAddr],
     tls: &zero_security::TlsParams,
     password: &str,
+) -> Result<(String, std::sync::Arc<crate::quic_pool::Pooled>), String> {
+    let key = crate::quic_pool::key("hysteria2", addrs, tls, password.as_bytes());
+    let pooled = crate::quic_pool::get(&key, || connect_resumed(addrs, tls, password)).await?;
+    Ok((key, pooled))
+}
+
+/// Connect and authenticate, in 0-RTT when a session ticket from an earlier
+/// connection allows it: the QUIC handshake and the HTTP/3 authentication
+/// then share the first flight, and the connection is usable one round trip
+/// sooner. A server that rejects the early data costs one more attempt, in
+/// ordinary 1-RTT.
+async fn connect_resumed(
+    addrs: &[SocketAddr],
+    tls: &zero_security::TlsParams,
+    password: &str,
+) -> Result<(h3_quinn::quinn::Endpoint, h3_quinn::quinn::Connection), String> {
+    match connect_authenticated_with(addrs, tls, password, true).await {
+        Err(error) if error.contains(ZERO_RTT_REJECTED) => {
+            tracing::debug!(%error, "Hysteria2 0-RTT rejected; reconnecting in 1-RTT");
+            connect_authenticated_with(addrs, tls, password, false).await
+        }
+        other => other,
+    }
+}
+
+/// Marker in the error of an attempt whose early data the server refused.
+const ZERO_RTT_REJECTED: &str = "0-RTT rejected";
+
+static ZERO_RTT_ACCEPTED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// Connections that were set up in 0-RTT and whose early data the server
+/// took, since the process started (for tests and diagnostics).
+pub fn zero_rtt_accepted() -> usize {
+    ZERO_RTT_ACCEPTED.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+async fn connect_authenticated_with(
+    addrs: &[SocketAddr],
+    tls: &zero_security::TlsParams,
+    password: &str,
+    early: bool,
 ) -> Result<(h3_quinn::quinn::Endpoint, h3_quinn::quinn::Connection), String> {
     if addrs.is_empty() {
         return Err("Hysteria2 has no resolved endpoint".into());
@@ -151,7 +194,11 @@ async fn connect_authenticated(
     tls.alpn = vec![b"h3".to_vec()];
     let rustls = zero_security::try_client_config(&tls)
         .map_err(|error| format!("Hysteria2 TLS configuration: {error}"))?;
-    let crypto = h3_quinn::quinn::crypto::rustls::QuicClientConfig::try_from((*rustls).clone())
+    // The cached configuration shares its session store with every clone,
+    // so a ticket from one connection resumes the next.
+    let mut rustls = (*rustls).clone();
+    rustls.enable_early_data = early;
+    let crypto = h3_quinn::quinn::crypto::rustls::QuicClientConfig::try_from(rustls)
         .map_err(|error| format!("Hysteria2 TLS configuration: {error}"))?;
     let mut client_config = h3_quinn::quinn::ClientConfig::new(Arc::new(crypto));
     client_config.transport_config(Arc::new(crate::relay::quic_transport(
@@ -168,15 +215,32 @@ async fn connect_authenticated(
     endpoint.set_default_client_config(client_config);
     let mut last_error = None;
     let mut connection = None;
+    // Resolves to whether the server took the early data, when there was any.
+    let mut zero_rtt = None;
     for address in addrs {
         match endpoint.connect(*address, &tls.server_name) {
-            Ok(connecting) => match connecting.await {
-                Ok(value) => {
-                    connection = Some(value);
-                    break;
+            Ok(connecting) => {
+                let connecting = if early {
+                    match connecting.into_0rtt() {
+                        Ok((value, accepted)) => {
+                            zero_rtt = Some(accepted);
+                            connection = Some(value);
+                            break;
+                        }
+                        // No ticket (yet): an ordinary handshake.
+                        Err(connecting) => connecting,
+                    }
+                } else {
+                    connecting
+                };
+                match connecting.await {
+                    Ok(value) => {
+                        connection = Some(value);
+                        break;
+                    }
+                    Err(error) => last_error = Some(error.to_string()),
                 }
-                Err(error) => last_error = Some(error.to_string()),
-            },
+            }
             Err(error) => last_error = Some(error.to_string()),
         }
     }
@@ -186,6 +250,22 @@ async fn connect_authenticated(
             last_error.unwrap_or_else(|| "no candidate succeeded".into())
         )
     })?;
+    let result = authenticate_client(&connection, password).await;
+    if let Some(accepted) = zero_rtt {
+        // The authentication went out as early data; it only counts if the
+        // server took it. Rejected, the streams it used are gone.
+        if !accepted.await {
+            connection.close(0u32.into(), b"0-RTT rejected");
+            return Err(format!("Hysteria2 {ZERO_RTT_REJECTED}"));
+        }
+        ZERO_RTT_ACCEPTED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+    result?;
+    Ok((endpoint, connection))
+}
+
+/// The HTTP/3 authentication exchange on a fresh connection.
+async fn authenticate_client(connection: &h3_quinn::quinn::Connection, password: &str) -> Result<(), String> {
 
     let (mut driver, mut requests) = h3::client::new(h3_quinn::Connection::new(connection.clone()))
         .await
@@ -240,8 +320,7 @@ async fn connect_authenticated(
         let _requests = requests;
         held.closed().await;
     });
-
-    Ok((endpoint, connection))
+    Ok(())
 }
 
 /// Send one Hysteria2 UDP datagram and wait for the matching response.
@@ -257,38 +336,63 @@ pub async fn exchange_udp(
     destination: &Destination,
     payload: &[u8],
 ) -> Result<(Destination, Vec<u8>), String> {
-    let (endpoint, connection) = connect_authenticated(addrs, tls, password).await?;
-    let max_size = connection
-        .max_datagram_size()
-        .ok_or_else(|| "Hysteria2 peer does not support QUIC datagrams".to_string())?;
-    let session_id = rand::random::<u32>();
-    let packet_id = rand::random::<u16>();
-    let datagram = encode_udp_datagram(session_id, packet_id, destination, payload)?;
-    if datagram.len() > max_size {
-        return Err("Hysteria2 UDP payload exceeds the negotiated datagram size".into());
-    }
-    connection
-        .send_datagram(Bytes::from(datagram))
-        .map_err(|error| format!("Hysteria2 UDP send: {error}"))?;
-    let response = timeout(Duration::from_secs(5), async {
-        loop {
-            let response = connection
-                .read_datagram()
-                .await
-                .map_err(|error| format!("Hysteria2 UDP receive: {error}"))?;
-            match decode_udp_datagram(&response) {
-                Ok((sid, pid, destination, payload)) if sid == session_id && pid == packet_id => {
-                    return Ok::<_, String>((destination, payload));
+    let mut last = String::new();
+    // Once more on a fresh connection if the pooled one turns out dead.
+    for attempt in 0..2 {
+        let (key, pooled) = pooled(addrs, tls, password).await?;
+        match exchange_on(&pooled, destination, payload).await {
+            Ok(response) => return Ok(response),
+            Err((error, retry)) => {
+                if retry && attempt == 0 {
+                    crate::quic_pool::evict(&key, &pooled);
+                    last = error;
+                    continue;
                 }
-                Ok(_) | Err(_) => continue,
+                return Err(error);
             }
         }
+    }
+    Err(last)
+}
+
+/// The session a Hysteria2 UDP datagram belongs to.
+fn udp_session(datagram: &[u8]) -> Option<u32> {
+    datagram.get(..4).map(|id| u32::from_be_bytes(id.try_into().unwrap()))
+}
+
+/// One datagram exchange on a pooled connection. The error says whether a
+/// fresh connection is worth trying (the connection itself failed).
+async fn exchange_on(
+    pooled: &std::sync::Arc<crate::quic_pool::Pooled>,
+    destination: &Destination,
+    payload: &[u8],
+) -> Result<(Destination, Vec<u8>), (String, bool)> {
+    let connection = &pooled.connection;
+    let max_size = connection
+        .max_datagram_size()
+        .ok_or_else(|| ("Hysteria2 peer does not support QUIC datagrams".to_string(), false))?;
+    let session_id = rand::random::<u32>();
+    let packet_id = rand::random::<u16>();
+    let datagram = encode_udp_datagram(session_id, packet_id, destination, payload).map_err(|e| (e, false))?;
+    if datagram.len() > max_size {
+        return Err(("Hysteria2 UDP payload exceeds the negotiated datagram size".into(), false));
+    }
+    let mut registration = pooled.register(session_id, udp_session);
+    connection
+        .send_datagram(Bytes::from(datagram))
+        .map_err(|error| (format!("Hysteria2 UDP send: {error}"), true))?;
+    timeout(Duration::from_secs(5), async {
+        while let Some(response) = registration.receiver.recv().await {
+            if let Ok((sid, _, destination, payload)) = decode_udp_datagram(&response) {
+                if sid == session_id {
+                    return Ok((destination, payload));
+                }
+            }
+        }
+        Err(("Hysteria2 connection closed before the UDP response".to_string(), true))
     })
     .await
-    .map_err(|_| "Hysteria2 UDP response timed out".to_string())??;
-    connection.close(0u32.into(), b"datagram done");
-    drop(endpoint);
-    Ok(response)
+    .map_err(|_| ("Hysteria2 UDP response timed out".to_string(), false))?
 }
 
 /// Open one authenticated Hysteria2 TCP stream.
@@ -304,12 +408,24 @@ pub async fn connect(
     // One implementation of the authenticated handshake, shared with the UDP
     // path. It was duplicated here, which is how a fix to one of them left the
     // other broken.
-    let (endpoint, connection) = connect_authenticated(addrs, tls, password).await?;
-
-    let (mut send, mut recv) = connection
-        .open_bi()
-        .await
-        .map_err(|error| format!("Hysteria2 TCP stream: {error}"))?;
+    // A stream on the server's pooled connection; a fresh connection when
+    // the pooled one has died since it was last used.
+    let mut opened = None;
+    for attempt in 0..2 {
+        let (key, pooled) = pooled(addrs, tls, password).await?;
+        match pooled.connection.open_bi().await {
+            Ok(pair) => {
+                opened = Some((pooled.stream_guard(), pair));
+                break;
+            }
+            Err(error) if attempt == 0 => {
+                tracing::debug!(%error, "Hysteria2 pooled connection is gone; dialling anew");
+                crate::quic_pool::evict(&key, &pooled);
+            }
+            Err(error) => return Err(format!("Hysteria2 TCP stream: {error}")),
+        }
+    }
+    let (guard, (mut send, mut recv)) = opened.ok_or("Hysteria2 TCP stream: no connection")?;
     let target = target_text(destination);
     let target = target.as_bytes();
     if target.len() > 2048 {
@@ -348,9 +464,8 @@ pub async fn connect(
     let (app, worker) = duplex(128 * 1024);
     tokio::spawn(async move {
         crate::relay::bridge_quic_stream(worker, send, recv, "Hysteria2").await;
-        // This connection was opened for this one stream.
-        connection.close(0u32.into(), b"closed");
-        drop(endpoint);
+        // The connection stays in the pool for the next stream.
+        drop(guard);
     });
     Ok(boxed(app))
 }

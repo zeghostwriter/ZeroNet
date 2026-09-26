@@ -35,7 +35,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: crowd
-      - run: cargo build --release -p zero-discovery --bin zeronet-harvest
+      - run: cargo build --release -p zero-discovery --bin zeronet-harvest --bin zeronet-sign
       - name: channels found by earlier runs
         run: |
           curl -fsS --max-time 30 -o telegram-state.json \
@@ -49,7 +49,22 @@ jobs:
             --telegram deploy/crowd/telegram-channels.json \
             --telegram-state telegram-state.json \
             --out verified.txt --want 300 --min 20 --minutes 20
+      # Sign the list so apps can tell a genuine one from a CDN's or a
+      # network's substitute. Skipped, with a warning, when no signing key is
+      # set: the app then falls back to trusting the list as before.
+      - name: sign the list
+        env:
+          CROWD_SIGNING_KEY: ${{ secrets.CROWD_SIGNING_KEY }}
+        run: |
+          if [ -n "$CROWD_SIGNING_KEY" ]; then
+            target/release/zeronet-sign sign verified.txt
+          else
+            echo "::warning::No CROWD_SIGNING_KEY; publishing verified.txt unsigned. Run the 'create crowd signing key' workflow."
+          fi
       - name: publish
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        run: .github/scripts/publish-crowd-data.sh verified.txt telegram-state.json
+        run: |
+          files="verified.txt telegram-state.json"
+          [ -f verified.txt.sig ] && files="$files verified.txt.sig"
+          .github/scripts/publish-crowd-data.sh $files

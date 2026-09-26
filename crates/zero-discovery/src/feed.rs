@@ -33,6 +33,14 @@ pub struct FeedSource {
     pub url: String,
     #[serde(default = "default_tier")]
     pub tier: u32,
+    /// A detached-signature URL (`<url>.sig`, an `ed25519:<hex>` line). When
+    /// set and a signing key is compiled in ([`crate::sign`]), a freshly
+    /// downloaded body is verified against it and dropped if it does not
+    /// verify: the tested list the app trusts first cannot be swapped by a
+    /// CDN or a network in the middle. Feeds without a signature are
+    /// unaffected, and so is a build with no key.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sig_url: Option<String>,
 }
 
 fn default_tier() -> u32 {
@@ -113,6 +121,27 @@ fn write_atomic(path: &Path, contents: &[u8]) -> std::io::Result<()> {
     std::fs::rename(&temporary, path)
 }
 
+/// Fetch a detached signature (`<url>.sig`, an `ed25519:<hex>` line) and
+/// check it over `body` against the compiled-in key. A short body, fetched
+/// with no cache and no gzip.
+async fn verify_body(sig_url: &str, body: &[u8], timeout: Duration) -> Result<bool, String> {
+    let limits = FetchLimits {
+        max_bytes: 4096,
+        timeout,
+        max_redirects: 5,
+    };
+    match zero_net::fetch_with(sig_url, &limits, &Validators::default(), &FetchOptions::default())
+        .await
+    {
+        Ok(Fetched::Body { body: sig, .. }) => {
+            let line = String::from_utf8_lossy(&sig);
+            Ok(crate::sign::verify(body, &line))
+        }
+        Ok(Fetched::NotModified) => Err("unexpected 304 without validators".into()),
+        Err(error) => Err(error.to_string()),
+    }
+}
+
 /// Fetch one feed, consulting and updating the cache in `cache_dir` (if any).
 pub async fn fetch_feed(
     source: &FeedSource,
@@ -171,6 +200,54 @@ pub async fn fetch_feed(
         },
         Ok(Fetched::Body { body, validators }) => {
             let text = String::from_utf8_lossy(&body).into_owned();
+            // A signed source: a freshly downloaded body must match the
+            // detached signature, or it is refused and the cached copy (if
+            // any) kept. Skipped when no key is compiled in, so a keyless
+            // build still works. NotModified/Cached bodies were verified when
+            // first stored, so they are not re-checked.
+            if let Some(sig_url) = source.sig_url.as_deref() {
+                if crate::sign::key_configured() {
+                    match verify_body(sig_url, text.as_bytes(), timeout).await {
+                        Ok(true) => {}
+                        Ok(false) => {
+                            tracing::warn!(id = %source.id, "feed signature did not verify; refusing it");
+                            return match cached_body {
+                                Some(body) => FeedResult {
+                                    status: FeedStatus::Cached,
+                                    bytes: body.len(),
+                                    body: Some(body),
+                                    error: Some("signature did not verify".into()),
+                                },
+                                None => FeedResult {
+                                    status: FeedStatus::Error,
+                                    body: None,
+                                    bytes: 0,
+                                    error: Some("signature did not verify".into()),
+                                },
+                            };
+                        }
+                        Err(error) => {
+                            // Could not fetch the signature: treat the body as
+                            // unverified and fall back rather than trust it.
+                            tracing::warn!(id = %source.id, %error, "could not fetch feed signature; refusing the body");
+                            return match cached_body {
+                                Some(body) => FeedResult {
+                                    status: FeedStatus::Cached,
+                                    bytes: body.len(),
+                                    body: Some(body),
+                                    error: Some(format!("signature unavailable: {error}")),
+                                },
+                                None => FeedResult {
+                                    status: FeedStatus::Error,
+                                    body: None,
+                                    bytes: 0,
+                                    error: Some(format!("signature unavailable: {error}")),
+                                },
+                            };
+                        }
+                    }
+                }
+            }
             if let (Some(dir), Some((body_path, meta_path))) = (cache_dir, &files) {
                 let stored = std::fs::create_dir_all(dir)
                     .and_then(|()| write_atomic(body_path, text.as_bytes()))
@@ -282,6 +359,7 @@ mod tests {
             id: "limilco".into(),
             url,
             tier: 1,
+            sig_url: None,
         };
 
         let first = fetch_feed(&source, Some(&dir), Duration::from_secs(5)).await;
@@ -322,6 +400,7 @@ mod tests {
             id: "src".into(),
             url: format!("http://127.0.0.1:{port}/feed"),
             tier: 1,
+            sig_url: None,
         };
         let result = fetch_feed(&source, Some(&dir), Duration::from_secs(3)).await;
         assert_eq!(result.status, FeedStatus::Cached);

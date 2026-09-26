@@ -260,7 +260,11 @@ private fun StatusLine(state: HomeState, onRetry: () -> Unit, modifier: Modifier
                 stringResource(R.string.stage_connecting_to, countryLabel(context, it.country, locale))
             } ?: stringResource(R.string.stage_connecting)
             is ConnState.Reconnecting -> stringResource(
-                if (conn.reason == com.zeronet.mobile.service.Engine.REASON_CHOSEN_DOWN) R.string.stage_chosen_down else R.string.stage_reconnecting,
+                when (conn.reason) {
+                    com.zeronet.mobile.service.Engine.REASON_CHOSEN_DOWN -> R.string.stage_chosen_down
+                    com.zeronet.mobile.service.Engine.REASON_BLOCKED -> R.string.stage_blocked
+                    else -> R.string.stage_reconnecting
+                },
             )
             ConnState.Disconnecting -> stringResource(R.string.stage_disconnecting)
             is ConnState.Connected -> if (conn.pool > 1) {

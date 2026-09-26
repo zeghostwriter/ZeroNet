@@ -239,6 +239,56 @@ fn host_header(target: &Target) -> String {
     }
 }
 
+/// POST `body` to `url` and return the response body. Redirects are not
+/// followed (a redirected POST would have to be re-sent, which is the
+/// caller's decision); a 3xx is reported as [`FetchError::Status`].
+pub async fn post(
+    url: &str,
+    content_type: &str,
+    body: &[u8],
+    limits: &FetchLimits,
+) -> Result<Vec<u8>, FetchError> {
+    post_with_headers(url, content_type, &[], body, limits).await
+}
+
+/// [`post`] with extra request headers (a `User-Agent` among them replaces
+/// the default one). Header names and values must not contain line breaks.
+pub async fn post_with_headers(
+    url: &str,
+    content_type: &str,
+    headers: &[(&str, &str)],
+    body: &[u8],
+    limits: &FetchLimits,
+) -> Result<Vec<u8>, FetchError> {
+    let target = parse_target(url)?;
+    if headers.iter().any(|(k, v)| k.contains(['\r', '\n']) || v.contains(['\r', '\n'])) {
+        return Err(FetchError::Protocol("header contains a line break".into()));
+    }
+    let agent = headers
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("user-agent"))
+        .map_or_else(|| format!("zray-core/{}", env!("CARGO_PKG_VERSION")), |(_, v)| (*v).to_string());
+    let mut head = format!(
+        "POST {} HTTP/1.1\r\nHost: {}\r\nUser-Agent: {agent}\r\nAccept: */*\r\nAccept-Encoding: identity\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n",
+        target.request_target,
+        host_header(&target),
+        body.len(),
+    );
+    for (name, value) in headers.iter().filter(|(k, _)| !k.eq_ignore_ascii_case("user-agent")) {
+        head.push_str(&format!("{name}: {value}\r\n"));
+    }
+    head.push_str("\r\n");
+    let mut request = head.into_bytes();
+    request.extend_from_slice(body);
+    match timeout(limits.timeout, send_once(&target, &request, limits)).await {
+        Err(_) => Err(FetchError::Timeout(limits.timeout)),
+        Ok(Err(error)) => Err(error),
+        Ok(Ok(Outcome::Done(Fetched::Body { body, .. }))) => Ok(body),
+        Ok(Ok(Outcome::Done(Fetched::NotModified))) => Err(FetchError::Status(304)),
+        Ok(Ok(Outcome::Redirect(_))) => Err(FetchError::Status(302)),
+    }
+}
+
 async fn fetch_once(
     url: &str,
     limits: &FetchLimits,
@@ -246,6 +296,12 @@ async fn fetch_once(
     options: &FetchOptions,
 ) -> Result<Outcome, FetchError> {
     let target = parse_target(url)?;
+    let request = request_bytes(&target, validators, options);
+    send_once(&target, &request, limits).await
+}
+
+/// Connect to `target` (TLS when it is https) and exchange one request.
+async fn send_once(target: &Target, request: &[u8], limits: &FetchLimits) -> Result<Outcome, FetchError> {
     // Resolved first so the socket exists before it connects: the host has to
     // be given the chance to exempt it from the tunnel, and
     // `TcpStream::connect` offers no such moment (`zero_core::platform`).
@@ -271,7 +327,6 @@ async fn fetch_once(
         source: std::io::Error::other(failure.to_string()),
     })?
     .stream;
-    let request = request_bytes(&target, validators, options);
     if target.tls {
         let connector = tokio_rustls::TlsConnector::from(tls_config());
         let server_name = rustls_pki_types::ServerName::try_from(target.host.clone())
@@ -283,9 +338,9 @@ async fn fetch_once(
                 host: target.host.clone(),
                 source,
             })?;
-        exchange(stream, &request, limits).await
+        exchange(stream, request, limits).await
     } else {
-        exchange(stream, &request, limits).await
+        exchange(stream, request, limits).await
     }
 }
 

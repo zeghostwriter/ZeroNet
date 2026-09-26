@@ -2,6 +2,7 @@
   {
     "id": "verified",
     "url": "https://raw.githubusercontent.com/zeghostwriter/ZeroNet/crowd-data/verified.txt",
-    "tier": 1
+    "tier": 1,
+    "sig_url": "https://raw.githubusercontent.com/zeghostwriter/ZeroNet/crowd-data/verified.txt.sig"
   }
 ]

@@ -1,6 +1,6 @@
 # Provenance
 
-- License: MPL-2.0, inherited from the workspace.
+- License: MIT, inherited from the workspace.
 - Implementation: original fragmentation and noise planning/stream code.
 - Behavioral references: Xray `freedom.fragment`/`noises` semantics and the
   BPB finalmask defaults documented in `PLAN-02.md`; no donor source is copied.

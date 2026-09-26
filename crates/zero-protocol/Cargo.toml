@@ -24,6 +24,9 @@ chacha20poly1305 = { workspace = true }
 hex = { workspace = true }
 rand = { workspace = true }
 boringtun = { workspace = true }
+# User-space TCP/IP for streams through WireGuard (wg_stack); the same
+# version and features the TUN stack already builds.
+smoltcp = { version = "0.12", default-features = false, features = ["std", "log", "medium-ip", "proto-ipv4", "proto-ipv6", "socket-udp", "socket-tcp"] }
 ctr = { workspace = true }
 x25519-dalek = { workspace = true }
 ml-kem = { workspace = true }

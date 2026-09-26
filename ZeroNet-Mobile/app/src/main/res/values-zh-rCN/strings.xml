@@ -1,0 +1,507 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <!-- Service notification and quick-settings tile (used by the :vpn process). -->
+    <string name="notification_channel">连接状态</string>
+    <string name="notification_connected">已连接</string>
+    <string name="notification_searching">正在查找服务器…</string>
+    <string name="notification_searching_detail">已测试 %1$d · %2$d 个可用</string>
+    <string name="notification_connecting">正在连接…</string>
+    <string name="notification_reconnecting">正在重新连接…</string>
+    <string name="notification_disconnect">断开连接</string>
+    <string name="notification_switch">切换服务器</string>
+    <string name="notification_server_ping">%1$s · %2$d ms</string>
+    <string name="tile_connected">已连接</string>
+    <string name="tile_disconnected">已关闭</string>
+    <string name="tile_searching">正在搜索…</string>
+
+    <!-- Tabs -->
+    <string name="tab_home">主页</string>
+    <string name="tab_servers">服务器</string>
+    <string name="tab_scanner">扫描器</string>
+    <string name="tab_settings">设置</string>
+
+    <!-- Common actions -->
+    <string name="action_add">添加</string>
+    <string name="action_back">返回</string>
+    <string name="action_cancel">取消</string>
+    <string name="action_clear">清除</string>
+    <string name="action_close">关闭</string>
+    <string name="action_collapse">隐藏服务器</string>
+    <string name="action_connect">连接</string>
+    <string name="action_copy_link">复制链接</string>
+    <string name="action_copy_value">复制 %1$s</string>
+    <string name="action_delete">删除</string>
+    <string name="action_details">详情</string>
+    <string name="action_expand">显示服务器</string>
+    <string name="action_favorite">加入收藏</string>
+    <string name="action_find_servers">查找服务器</string>
+    <string name="action_grant_permission">允许 VPN</string>
+    <string name="action_hide_qr">隐藏二维码</string>
+    <string name="action_paste">粘贴</string>
+    <string name="action_refresh_servers">刷新服务器</string>
+    <string name="action_remove_subscription">移除 %1$s</string>
+    <string name="action_save">保存</string>
+    <string name="action_share">显示二维码</string>
+    <string name="action_test">测试</string>
+    <string name="action_test_servers">测试服务器</string>
+    <string name="action_try_again">重试</string>
+    <string name="action_unfavorite">取消收藏</string>
+
+    <!-- Home: the orb -->
+    <string name="orb_connect">连接</string>
+    <string name="orb_connecting">连接中</string>
+    <string name="orb_connected">已连接</string>
+    <string name="orb_disconnecting">正在停止</string>
+    <string name="orb_failed">重试</string>
+    <string name="orb_action_connect">连接</string>
+    <string name="orb_action_disconnect">断开连接</string>
+    <string name="state_disconnected">未连接</string>
+    <string name="state_connecting">正在连接</string>
+    <string name="state_connected_to">已连接到 %1$s</string>
+    <string name="state_active">当前已连接</string>
+
+    <!-- Home: the stage line under the orb -->
+    <string name="stage_history">正在尝试之前可用的服务器…</string>
+    <string name="stage_fetch">正在获取最新服务器列表…</string>
+    <string name="stage_parse">正在读取 %1$s 个服务器…</string>
+    <string name="stage_tcp">正在检查 %1$s 个服务器 · %2$s 个可达</string>
+    <string name="stage_real">正在测试 %1$s 个服务器 · %2$s 个可用</string>
+    <string name="stage_connecting">正在启动隧道…</string>
+    <string name="stage_connecting_to">正在连接到 %1$s…</string>
+    <string name="stage_reconnecting">连接已断开，正在切换服务器…</string>
+    <string name="stage_chosen_down">你的配置没有响应，正在重新尝试…</string>
+    <string name="stage_disconnecting">正在断开连接…</string>
+    <string name="stage_connected_pool">备用服务器已就绪：%1$s</string>
+
+    <!-- Home: why a connection failed -->
+    <string name="fail_no_server">在当前网络下未找到可用服务器。请稍后重试，或将“反审查”设为强。</string>
+    <string name="fail_no_network">你已离线。请检查 Wi-Fi 或移动数据。</string>
+    <string name="fail_vpn_permission">ZeroNet 需要权限才能建立 VPN。</string>
+    <string name="fail_vpn_revoked">另一个 VPN 应用接管了连接。</string>
+    <string name="fail_core">无法启动连接，请重试。</string>
+    <string name="fail_server_unavailable">该服务器没有响应，请改用最快的服务器。</string>
+
+    <!-- Home: server card and stats -->
+    <string name="server_fastest">最快服务器</string>
+    <string name="server_fastest_hint">由 ZeroNet 为你挑选</string>
+    <string name="server_fastest_picked">最快</string>
+    <string name="server_country_best">该国家最佳服务器</string>
+    <string name="server_card_action">选择服务器</string>
+    <string name="stats_download">下载</string>
+    <string name="stats_upload">上传</string>
+    <string name="stats_session">本次会话</string>
+
+    <!-- Units and time -->
+    <string name="unit_bps">bps</string>
+    <string name="unit_kbps">Kbps</string>
+    <string name="unit_mbps">Mbps</string>
+    <string name="unit_gbps">Gbps</string>
+    <string name="unit_b_value">%1$s B</string>
+    <string name="unit_kb_value">%1$s KB</string>
+    <string name="unit_mb_value">%1$s MB</string>
+    <string name="unit_gb_value">%1$s GB</string>
+    <string name="delay_ms">%1$s ms</string>
+    <string name="delay_unknown">—</string>
+    <string name="delay_failed">失败</string>
+    <string name="ago_never">从未</string>
+    <string name="ago_now">刚刚</string>
+    <string name="ago_minutes">%1$s 分钟前</string>
+    <string name="ago_hours">%1$s 小时前</string>
+    <string name="ago_days">%1$s 天前</string>
+
+    <!-- Server words -->
+    <string name="country_unknown">位置未知</string>
+    <string name="kind_direct">直连</string>
+    <string name="kind_cdn">CDN</string>
+    <string name="kind_other">标准</string>
+    <string name="source_user">由你添加</string>
+    <string name="source_subscription">你的订阅</string>
+    <string name="source_feed">公共列表 · %1$s</string>
+    <string name="source_public">公共列表</string>
+
+    <!-- Server picker sheet -->
+    <string name="picker_title">选择服务器</string>
+    <string name="picker_favorites">收藏</string>
+    <string name="picker_mine">你的配置</string>
+    <string name="picker_subscriptions">你的订阅</string>
+    <string name="server_subscription_hint">仅在该订阅的配置之间切换</string>
+    <string name="picker_countries">国家/地区</string>
+    <string name="picker_empty">还没有服务器。连接一次后，ZeroNet 就会找到一些。</string>
+
+    <!-- Servers tab -->
+    <plurals name="servers_count">
+        <item quantity="other">%1$s 个服务器</item>
+    </plurals>
+    <plurals name="servers_subtitle">
+        <item quantity="other">%1$s 个服务器 · %2$s 个可用</item>
+    </plurals>
+    <string name="servers_subtitle_empty">尚未找到任何内容</string>
+    <string name="servers_search">搜索国家或名称</string>
+    <string name="servers_recommended">推荐</string>
+    <string name="servers_countries">国家/地区</string>
+    <string name="servers_mine">我的</string>
+    <string name="servers_rec_empty_title">还没有已测试的服务器</string>
+    <string name="servers_rec_empty_body">测试列表，看看哪些服务器在你的连接上可用。</string>
+    <string name="servers_testing">正在测试 %1$s / %2$s…</string>
+    <string name="servers_working_count">%1$s 个可用</string>
+    <string name="servers_subscriptions">订阅</string>
+    <string name="servers_your_servers">你的配置</string>
+    <string name="servers_mine_empty_title">还没有添加任何内容</string>
+    <string name="servers_mine_empty_body">粘贴配置链接或订阅链接。</string>
+    <string name="servers_add_title">添加配置</string>
+    <string name="servers_add_body">配置链接或订阅链接</string>
+    <string name="servers_no_matches">没有匹配“%1$s”的结果</string>
+    <string name="servers_empty_title">还没有服务器</string>
+    <string name="servers_empty_body">点击“查找服务器”。ZeroNet 会下载公共列表，并在你的连接上测试它们。</string>
+    <string name="servers_finding">正在搜索…</string>
+
+    <!-- Server detail sheet -->
+    <string name="detail_delay">延迟</string>
+    <string name="detail_error">失败原因</string>
+    <string name="detail_last_tested">上次测试</string>
+    <string name="detail_protocol">协议</string>
+    <string name="detail_transport">传输</string>
+    <string name="detail_security">安全</string>
+    <string name="detail_address">地址</string>
+    <string name="detail_source">来源</string>
+    <string name="detail_history">成功率</string>
+    <string name="detail_history_value">%2$s 次测试中成功 %1$s 次</string>
+    <string name="detail_testing">正在测试…</string>
+    <string name="detail_qr_description">包含该服务器链接的二维码</string>
+    <string name="detail_share_warning">任何拥有此二维码的人都能使用该服务器。请只分享给你信任的人。</string>
+    <string name="detail_delete_confirm">删除该服务器？此操作无法撤销。</string>
+
+    <!-- Import sheet -->
+    <string name="import_title">添加配置</string>
+    <string name="scan_qr">扫描二维码</string>
+    <string name="scan_from_photo">从照片导入</string>
+    <string name="scan_hint">将摄像头对准配置或订阅二维码。</string>
+    <string name="scan_no_camera">无法访问摄像头。你仍可选择二维码的照片或截图。</string>
+    <string name="scan_not_found">图片中未找到二维码。</string>
+    <string name="import_body">粘贴一个或多个配置链接，或一个订阅链接。</string>
+    <string name="import_links">链接</string>
+    <string name="import_subscription">订阅</string>
+    <string name="import_links_placeholder">vless://、vmess://、trojan://、ss://…</string>
+    <string name="import_result">已添加 %1$s · %2$s 已存在 · %3$s 无法识别</string>
+    <string name="import_error">导入失败：%1$s</string>
+    <string name="import_sub_url">https://…</string>
+    <string name="import_sub_name">名称（可选）</string>
+    <string name="import_sub_invalid">请输入以 https:// 开头的地址</string>
+    <string name="import_sub_hint">ZeroNet 会随公共列表一起刷新它。</string>
+
+    <!-- Transient messages -->
+    <string name="msg_copied">已复制</string>
+    <string name="msg_deleted">服务器已删除</string>
+    <string name="msg_subscription_added">订阅已添加。正在获取其服务器…</string>
+    <string name="msg_vpn_permission_denied">没有 VPN 权限，ZeroNet 无法连接</string>
+    <string name="msg_history_cleared">已清除发现的服务器</string>
+
+    <!-- Scanner tab -->
+    <string name="scanner_explainer">查找在你的网络上仍能响应的 Cloudflare 地址</string>
+    <string name="scanner_ready">就绪</string>
+    <string name="scanner_scanning">正在扫描…</string>
+    <string name="scanner_done">已完成</string>
+    <string name="scanner_idle_hint">约需一分钟</string>
+    <string name="scanner_progress_description">扫描进度</string>
+    <string name="scanner_progress_state">百分之 %1$s</string>
+    <string name="scanner_scanned">已扫描</string>
+    <string name="scanner_responsive">已响应</string>
+    <string name="scanner_best">最佳</string>
+    <string name="scanner_start">开始扫描</string>
+    <string name="scanner_stop">停止</string>
+    <string name="scanner_again">重新扫描</string>
+    <string name="scanner_error_title">扫描已停止</string>
+    <string name="scanner_results">最快的地址</string>
+    <string name="scanner_copy_best">复制前 %1$s 个</string>
+    <string name="scanner_how_title">为何扫描？</string>
+    <string name="scanner_how_body">许多服务器位于 Cloudflare 之后。当它的常用 IP 被封锁时，一个在你的 ISP 上仍可用的干净 IP 能让它们重新连通。ZeroNet 会自动使用最佳结果。</string>
+    <string name="scanner_none_found">这次没有地址响应。请稍后重试，或换一个网络。</string>
+    <string name="scanner_port">端口 %1$s</string>
+    <string name="scanner_copy_ip">复制 %1$s</string>
+
+    <!-- Settings: shared -->
+    <string name="settings_search">搜索设置</string>
+    <string name="settings_no_results">没有匹配“%1$s”的设置</string>
+    <string name="settings_applies_next">下次连接时生效</string>
+    <string name="settings_reconnect_now">立即重新连接</string>
+    <string name="option_off">关闭</string>
+    <string name="option_auto">自动</string>
+    <string name="option_system">跟随系统</string>
+
+    <!-- Settings: connection -->
+    <string name="settings_connection">连接</string>
+    <string name="settings_mode">模式</string>
+    <string name="settings_mode_vpn">VPN</string>
+    <string name="settings_mode_proxy">仅代理</string>
+    <string name="settings_mode_vpn_hint">所有应用都经过 ZeroNet。</string>
+    <string name="settings_mode_proxy_hint">只有你指向本地代理的应用才会使用它。无 VPN 图标。</string>
+    <string name="settings_autoconnect">自动连接</string>
+    <string name="settings_autoconnect_app">打开应用时</string>
+    <string name="settings_autoconnect_boot">手机启动时</string>
+    <string name="settings_autoswitch">切换到更快的服务器</string>
+    <string name="settings_autoswitch_hint">当前服务器变慢或断开时</string>
+    <string name="settings_speed_floor">最低速度</string>
+    <string name="settings_speed_floor_off_hint">仅在当前服务器断开时切换</string>
+    <string name="settings_speed_floor_low_hint">低于 1 Mbps 时切换服务器</string>
+    <string name="settings_speed_floor_medium_hint">低于 3 Mbps 时切换服务器</string>
+    <string name="settings_speed_floor_custom_hint">速度（单位 kbps）</string>
+    <string name="settings_speed_floor_low">1 Mbps</string>
+    <string name="settings_speed_floor_medium">3 Mbps</string>
+    <string name="settings_speed_floor_custom">自定义</string>
+    <string name="settings_more_connection">Kill switch、IPv6、MTU</string>
+    <string name="settings_more_connection_hint">高级连接选项</string>
+    <string name="settings_kill_switch">Kill switch</string>
+    <string name="settings_kill_switch_body">在 ZeroNet 未连接时，Android 可以阻止所有网络访问。请在系统 VPN 设置中打开 ZeroNet，开启“始终开启 VPN”和“阻止未使用 VPN 的连接”。</string>
+    <string name="settings_kill_switch_open">打开 VPN 设置</string>
+    <string name="settings_ipv6">通过隧道使用 IPv6</string>
+    <string name="settings_ipv6_hint">除非你的网络需要，否则请保持关闭</string>
+    <string name="settings_mtu">数据包大小（MTU）</string>
+    <string name="settings_mtu_hint">%1$s 几乎适用于所有网络。如果某些网站卡住，可调低。</string>
+
+    <!-- Settings: servers & sources -->
+    <string name="settings_sources_card">服务器和来源</string>
+    <string name="settings_sources">服务器来源</string>
+    <string name="settings_sources_value">%2$s 个公共列表中已开启 %1$s 个</string>
+    <plurals name="subscriptions_count">
+        <item quantity="other">%1$s 个订阅</item>
+    </plurals>
+    <string name="settings_preferred_countries">优先国家/地区</string>
+    <string name="settings_preferred_countries_hint">“最快”会优先尝试这些</string>
+    <string name="settings_refresh">刷新列表</string>
+    <string name="settings_refresh_auto">自动</string>
+    <string name="settings_refresh_manual">手动</string>
+    <string name="settings_refresh_auto_hint">连接时刷新列表</string>
+    <string name="settings_refresh_manual_hint">仅在“服务器”标签页下拉时刷新</string>
+    <string name="settings_subscriptions">你的订阅</string>
+    <string name="sources_body">ZeroNet 搜索的公共列表，以及你自己的订阅。</string>
+    <string name="sources_public">公共列表</string>
+    <string name="sources_tier_0">每两小时测试一次；优先尝试</string>
+    <string name="sources_tier_1">每次连接时检查</string>
+    <string name="sources_tier_2">按需检查</string>
+    <string name="sources_tier_3">深度搜索时检查</string>
+    <string name="sources_no_subscriptions">你还没有添加任何订阅。</string>
+    <string name="sources_add_title">添加订阅</string>
+    <string name="countries_search">搜索国家/地区</string>
+
+    <!-- Settings: split tunnelling -->
+    <string name="settings_split">分应用代理</string>
+    <string name="settings_iran_direct">伊朗网站不走 VPN</string>
+    <string name="settings_iran_direct_hint">伊朗网站和银行应用不经过 VPN 直接打开</string>
+    <string name="settings_apps">应用</string>
+    <string name="settings_apps_all">全部</string>
+    <string name="settings_apps_only">仅所选</string>
+    <string name="settings_apps_except">除所选外全部</string>
+    <string name="settings_apps_proxy_note">仅在 VPN 模式下生效</string>
+    <string name="settings_choose_apps">选择应用</string>
+    <string name="settings_apps_none">未选择</string>
+    <plurals name="apps_selected">
+        <item quantity="other">%1$s 个应用</item>
+    </plurals>
+    <string name="settings_bypass_lan">本地网络不走 VPN</string>
+    <string name="settings_bypass_lan_hint">打印机、电视和路由器保持可访问</string>
+    <string name="apps_body_only">只有你勾选的应用会使用 VPN。</string>
+    <string name="apps_body_except">你勾选的应用不走 VPN。</string>
+    <string name="apps_search">搜索应用</string>
+
+    <!-- Settings: share over Wi-Fi -->
+    <string name="settings_share">通过 Wi-Fi 共享</string>
+    <string name="settings_share_toggle">共享此连接</string>
+    <string name="settings_share_hint">同一 Wi-Fi 或热点上的设备可通过代理使用 ZeroNet</string>
+    <string name="settings_share_permission_denied">Android 未允许访问本地网络，因此共享保持关闭。</string>
+    <string name="settings_share_live">正在共享</string>
+    <string name="settings_share_when_connected">连接后开始共享</string>
+    <string name="settings_share_no_network">请加入 Wi-Fi 网络或开启热点以进行共享。</string>
+    <string name="settings_share_auth">密码保护</string>
+    <string name="settings_share_auth_hint">可选。其他设备需要它才能使用代理。</string>
+    <string name="settings_share_user">用户名</string>
+    <string name="settings_share_pass">密码</string>
+    <string name="settings_share_http_off">设置密码后，HTTP 共享将关闭</string>
+    <string name="settings_share_address">此网络上的地址</string>
+    <string name="settings_share_socks">SOCKS5</string>
+    <string name="settings_share_http">HTTP</string>
+    <string name="settings_share_port">端口 %1$s</string>
+    <string name="settings_share_qr_description">%1$s 处代理的二维码</string>
+    <string name="settings_share_qr_hint">在另一台设备上用任意代理应用扫描它。</string>
+
+    <!-- Settings: anti-censorship -->
+    <string name="settings_evasion">反审查</string>
+    <string name="settings_evasion_level">强度</string>
+    <string name="settings_evasion_strong">强</string>
+    <string name="settings_evasion_off_hint">普通连接。最快，但更容易被封锁。</string>
+    <string name="settings_evasion_auto_hint">仅在服务器被封锁时伪装流量</string>
+    <string name="settings_evasion_strong_hint">始终伪装流量。略慢，但更难被封锁。</string>
+    <string name="settings_block_quic">阻止 QUIC</string>
+    <string name="settings_block_quic_hint">应用会回退到 TCP，而不是卡住</string>
+    <string name="settings_remote_dns">被封锁站点的 DNS</string>
+    <string name="settings_remote_dns_hint">通过隧道查询，因此你的 ISP 无法查看或篡改结果</string>
+    <string name="settings_custom_dns_hint">自定义解析器（例如 8.8.8.8）</string>
+    <string name="settings_custom_dns_note">留空则使用上方的提供商。支持 IP、tls://… 或 https://…/dns-query。</string>
+    <string name="settings_block_ads">拦截广告和跟踪器</string>
+    <string name="settings_block_ads_hint">为所有应用过滤已知的广告域名</string>
+
+    <!-- Settings: appearance -->
+    <string name="settings_appearance">外观</string>
+    <string name="settings_palette">主题</string>
+    <string name="settings_palette_dynamic_note">壁纸取色已开启，因此主题仅设置连接色</string>
+    <string name="settings_theme_mode">浅色或深色</string>
+    <string name="settings_theme_light">浅色</string>
+    <string name="settings_theme_dark">深色</string>
+    <string name="settings_amoled">纯黑</string>
+    <string name="settings_amoled_hint">在 OLED 屏幕上省电</string>
+    <string name="settings_dynamic">壁纸取色</string>
+    <string name="settings_dynamic_hint">来自壁纸的 Material You 配色</string>
+    <string name="settings_language">语言</string>
+    <string name="settings_motion">动效</string>
+    <string name="settings_motion_full">完整</string>
+    <string name="settings_motion_reduced">精简</string>
+    <string name="settings_motion_full_hint">所有动画</string>
+    <string name="settings_motion_reduced_hint">仅简单淡入淡出</string>
+    <string name="palette_golden">金色</string>
+    <string name="palette_nightshade">夜影</string>
+    <string name="palette_arctic">极地</string>
+    <string name="palette_sakura">樱花</string>
+    <string name="palette_paper">纸墨</string>
+    <string name="palette_contrast">高对比</string>
+
+    <!-- Settings: data & privacy -->
+    <string name="settings_privacy">数据与隐私</string>
+    <string name="settings_logs">保存日志</string>
+    <string name="settings_logs_hint">默认关闭。日志仅保存在本机。</string>
+    <string name="settings_clear_history">清除发现的服务器</string>
+    <string name="settings_clear_history_hint">忘记公共服务器和测试结果。你添加的服务器会保留。</string>
+    <plurals name="clear_history_body">
+        <item quantity="other">忘记 %1$s 个发现的服务器及其测试结果？你添加的服务器会保留。</item>
+    </plurals>
+    <string name="clear_history_nothing">没有可清除的发现服务器。</string>
+
+    <!-- Settings: about -->
+    <string name="settings_about">关于</string>
+    <string name="settings_version">版本</string>
+    <string name="settings_engine">引擎</string>
+    <string name="settings_engine_hint">运行连接的开源核心</string>
+    <string name="settings_licences">开源许可</string>
+    <string name="settings_licences_hint">ZeroNet 是遵循 MIT 许可证的自由软件</string>
+    <string name="licences_body">ZeroNet 基于以下项目构建。</string>
+
+    <!-- Settings search keywords: extra words that find each card (both languages are searched). -->
+    <string name="kw_connection">vpn 代理 自动 连接 重连 始终开启 kill switch 锁定 mtu ipv6 网络</string>
+    <string name="kw_sources">来源 订阅 源 列表 github 国家 刷新 更新</string>
+    <string name="kw_split">分流 绕过 分应用 应用 排除 路由 伊朗 本地 lan</string>
+    <string name="kw_share">共享 lan wifi 热点 网络共享 socks http 代理 端口 二维码 密码</string>
+    <string name="kw_evasion">审查 过滤 分片 dpi sni dns doh quic 广告 拦截 跟踪</string>
+    <string name="kw_appearance">主题 颜色 配色 深色 浅色 amoled 纯黑 语言 波斯语 英语 动画 动效</string>
+    <string name="kw_privacy">日志 历史 删除 清除 数据 隐私 共享 匿名 群体 他人 帮助</string>
+    <string name="kw_about">版本 许可 授权 源代码 开源 引擎 zray 更新 升级 新版本</string>
+
+    <!-- Onboarding -->
+    <string name="onboarding_perm_title">ZeroNet 需要两项权限</string>
+    <string name="onboarding_perm_text">VPN 权限，让应用流量能通过隧道；通知权限，让你能看到是否已连接。Android 会各请求一次，你之后可在系统设置中更改。</string>
+    <string name="onboarding_allow">允许</string>
+    <string name="onboarding_later">暂不</string>
+
+    <!-- Connection profiles -->
+    <string name="profile_normal">普通</string>
+    <string name="profile_fast">快速</string>
+    <string name="profile_gaming">游戏</string>
+    <string name="profile_normal_hint">仅加密服务器，并备好备用</string>
+    <string name="profile_fast_hint">连接到第一个可用的服务器</string>
+    <string name="profile_gaming_hint">最低延迟，开启 UDP，游戏中不切换服务器</string>
+    <string name="gaming_title">游戏模式</string>
+    <string name="gaming_ping">延迟 %1$s ms</string>
+
+    <!-- In-app updates -->
+    <string name="update_sheet_title">更新</string>
+    <string name="update_title_available">ZeroNet %1$s 已发布</string>
+    <string name="update_title_downloading">正在下载 %1$s</string>
+    <string name="update_title_ready">%1$s 已可安装</string>
+    <string name="update_title_reinstall">此更新无法覆盖安装到你的版本上</string>
+    <string name="update_title_failed">更新未完成</string>
+    <string name="update_whats_new">更新内容</string>
+    <string name="update_size">下载大小 %1$s。你的服务器和设置将保持不变。</string>
+    <string name="update_progress">%1$s / %2$s</string>
+    <string name="update_ready_hint">Android 将请你确认安装。</string>
+    <string name="update_allow_hint">Android 会请求一次：允许 ZeroNet 安装应用，然后返回并点击“安装”。</string>
+    <string name="update_reinstall_body">它使用了与本机 ZeroNet 不同的签名密钥，因此 Android 不会覆盖安装。要获取它，请卸载 ZeroNet 并从发布页面安装新版本。你的服务器和设置将被删除。</string>
+    <string name="update_now">立即更新</string>
+    <string name="update_later">稍后</string>
+    <string name="update_cancel">取消</string>
+    <string name="update_install">安装</string>
+    <string name="update_allow">允许安装</string>
+    <string name="update_open_page">打开发布页面</string>
+    <string name="update_retry">重试</string>
+    <string name="settings_updates">更新</string>
+    <string name="settings_update_check">检查更新</string>
+    <string name="settings_update_checking">正在检查…</string>
+    <string name="settings_update_latest">你已是最新版本</string>
+    <string name="settings_update_available">有可用版本 %1$s</string>
+    <string name="settings_update_downloading">正在下载… %1$s</string>
+    <string name="settings_update_ready">版本 %1$s 已可安装</string>
+    <string name="settings_update_failed">检查失败：%1$s</string>
+    <string name="settings_share_results">帮助他人连接</string>
+    <string name="settings_share_results_hint">匿名分享哪些公共服务器和干净 IP 在你的网络上可用，让同网络的其他人连接更快。你自己的配置绝不会被发送。</string>
+    <string name="settings_kill_switch_app">无服务器时阻断流量</string>
+    <string name="settings_kill_switch_app_hint">当 ZeroNet 正在搜索、重启或未找到服务器时，应用将无法联网，而不是在无保护状态下直接出网。ZeroNet 会持续重试，直到某个服务器可用。</string>
+    <string name="stage_blocked">暂无可用服务器。ZeroNet 持续尝试期间，流量已被阻断（终止开关）……</string>
+    <string name="widget_blocked">已阻断——搜索中</string>
+    <string name="notification_blocked_detail">终止开关：在服务器可用之前，应用处于离线状态</string>
+    <string name="widget_failed">无法连接</string>
+    <string name="widget_tap_connect">点按以连接</string>
+    <string name="widget_tap_disconnect">点按以断开</string>
+    <string name="widget_toggle">连接或断开</string>
+    <string name="widget_description">一键连接并查看当前使用的服务器</string>
+    <string name="trusted_title">受信任的网络</string>
+    <string name="trusted_body">在这些网络上 ZeroNet 保持关闭：不会自动连接，加入其中一个时会自动断开。</string>
+    <string name="trusted_add">信任此网络（%1$s）</string>
+    <string name="trusted_none">暂无受信任的网络。</string>
+    <string name="trusted_current">你正处于此网络</string>
+    <string name="trusted_remove">取消信任 %1$s</string>
+    <string name="trusted_unknown_network">此网络</string>
+    <string name="kind_split">分离路径</string>
+    <string name="kind_quic">QUIC</string>
+    <string name="kind_crowd">对他人有效</string>
+    <string name="kind_hint_split">上传与下载路径分离的 XHTTP：最难被过滤系统识别的类型。</string>
+    <string name="kind_hint_direct">REALITY：看起来像是在访问一个真实、未被过滤的网站。</string>
+    <string name="kind_hint_cdn">位于 CDN（如 Cloudflare）之后：封锁它将会封锁大部分网络。</string>
+    <string name="kind_hint_quic">基于 UDP 的 Hysteria2 或 TUIC：UDP 畅通时很快，被封时则无法使用。</string>
+    <string name="kind_hint_other">无伪装的普通配置：仅在尚未被过滤的网络中可用。</string>
+    <string name="kind_hint_crowd">其他 ZeroNet 用户报告此服务器在他们的网络上可用。</string>
+    <string name="settings_diagnostics">诊断</string>
+    <string name="settings_diag_test">测试我的连接</string>
+    <string name="settings_diag_test_hint">了解你的网络封锁了什么，以及哪些类型的服务器可以通过</string>
+    <string name="settings_diag_logs">查看日志</string>
+    <string name="settings_diag_logs_hint">ZeroNet 尝试了什么、得到了什么响应以及失败的原因</string>
+    <string name="kw_diagnostics">诊断 测试 排查 故障 日志 调试 问题 无法使用 连不上 dpi dns</string>
+    <string name="diag_title">连接测试</string>
+    <string name="diag_body">先在隧道之外检查你的网络，然后尝试每种类型中已保存的几个服务器。</string>
+    <string name="diag_not_run">尚未运行。</string>
+    <string name="diag_run">运行测试</string>
+    <string name="diag_run_again">重新运行</string>
+    <string name="diag_network">网络</string>
+    <string name="diag_internet">普通互联网</string>
+    <string name="diag_dns">DNS（被过滤的网站）</string>
+    <string name="diag_tls">TLS 服务器名称（DPI）</string>
+    <string name="diag_tunnel">通过隧道</string>
+    <string name="diag_family">服务器：%1$s</string>
+    <string name="diag_status_pending">等待中</string>
+    <string name="diag_status_running">测试中……</string>
+    <string name="diag_status_ok">可用</string>
+    <string name="diag_status_warn">部分可用</string>
+    <string name="diag_status_bad">已阻断</string>
+    <string name="diag_status_skipped">已跳过</string>
+    <string name="diag_verdict_offline">没有网络。请先连接到 Wi-Fi 或移动数据。</string>
+    <string name="diag_verdict_no_internet">此网络完全无法接入互联网，且没有服务器响应。</string>
+    <string name="diag_verdict_families">目前这些类型可以通过：%1$s。ZeroNet 会自动优先选用它们。</string>
+    <string name="diag_verdict_no_servers">暂无可测试的已保存服务器。请先连接一次（或刷新服务器列表），然后再次运行测试。</string>
+    <string name="diag_verdict_none_work">没有任何已保存的服务器响应。请刷新服务器列表、尝试干净 IP 扫描器，或添加你自己的配置。</string>
+    <string name="logs_title">日志</string>
+    <string name="logs_body">连接日志记录了 ZeroNet 尝试过的操作。在“隐私”中开启详细日志，以获取更多来自核心的信息。</string>
+    <string name="logs_body_detailed">详细日志已开启。请求帮助时可分享这些日志；它们包含服务器名称和错误信息，而不包含你访问的网站。</string>
+    <string name="logs_connection">连接</string>
+    <string name="logs_core">核心</string>
+    <string name="logs_empty">暂无日志。</string>
+    <string name="logs_refresh">刷新</string>
+    <string name="logs_copy">复制</string>
+    <string name="logs_share">分享</string>
+    <string name="logs_clear">清除</string>
+</resources>

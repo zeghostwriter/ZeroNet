@@ -100,6 +100,9 @@ pub enum Command {
     // ---- data
     Refresh,
     TestLatency,
+    /// Search the public feeds and the crowd rankings for a working server,
+    /// and connect to it when offline.
+    FindServers,
     ExportAll,
     AddSubscription,
 
@@ -154,6 +157,7 @@ impl Command {
             Command::ClearSystemProxy => "Clear system proxy",
             Command::Refresh => "Refresh / update subs",
             Command::TestLatency => "Test latency",
+            Command::FindServers => "Find a working server",
             Command::ExportAll => "Export all",
             Command::AddSubscription => "Add subscription",
             Command::Find => "Find",
@@ -289,6 +293,8 @@ pub fn resolve(key: KeyEvent, context: InputContext) -> Option<Command> {
         KeyCode::Char('r') | KeyCode::Char('R') if ctrl => Some(Command::Refresh),
         KeyCode::F(5) => Some(Command::Refresh),
         KeyCode::Char('l') | KeyCode::Char('L') if ctrl => Some(Command::TestLatency),
+        KeyCode::Char('f') | KeyCode::Char('F') if !ctrl => Some(Command::FindServers),
+        KeyCode::F(3) => Some(Command::FindServers),
 
         // ---- search
         KeyCode::Char('f') | KeyCode::Char('F') if ctrl => Some(Command::Find),

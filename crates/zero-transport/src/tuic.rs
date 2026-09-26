@@ -511,6 +511,27 @@ pub fn encode_packet_fragments(
     Ok(output)
 }
 
+/// The pooled, authenticated connection to a TUIC server (see
+/// [`crate::quic_pool`]). Authentication is a one-way command, sent once per
+/// connection; every stream and packet after it rides the same connection.
+async fn pooled(
+    addrs: &[SocketAddr],
+    tls: &zero_security::TlsParams,
+    uuid: &[u8; 16],
+    password: &str,
+) -> Result<(String, std::sync::Arc<crate::quic_pool::Pooled>), String> {
+    let mut secret = uuid.to_vec();
+    secret.extend_from_slice(password.as_bytes());
+    let key = crate::quic_pool::key("tuic", addrs, tls, &secret);
+    let pooled = crate::quic_pool::get(&key, || async {
+        let (endpoint, connection) = connect_quic(addrs, tls).await?;
+        authenticate(&connection, uuid, password).await?;
+        Ok((endpoint, connection))
+    })
+    .await?;
+    Ok((key, pooled))
+}
+
 /// Open an authenticated TUIC TCP stream.
 pub async fn connect(
     addrs: &[SocketAddr],
@@ -522,12 +543,22 @@ pub async fn connect(
     if destination.network != zero_core::Network::Tcp {
         return Err("TUIC stream connect requires a TCP destination".into());
     }
-    let (endpoint, connection) = connect_quic(addrs, tls).await?;
-    authenticate(&connection, uuid, password).await?;
-    let (mut send, recv) = connection
-        .open_bi()
-        .await
-        .map_err(|error| format!("TUIC CONNECT stream: {error}"))?;
+    let mut opened = None;
+    for attempt in 0..2 {
+        let (key, pooled) = pooled(addrs, tls, uuid, password).await?;
+        match pooled.connection.open_bi().await {
+            Ok(pair) => {
+                opened = Some((pooled.stream_guard(), pair));
+                break;
+            }
+            Err(error) if attempt == 0 => {
+                tracing::debug!(%error, "TUIC pooled connection is gone; dialling anew");
+                crate::quic_pool::evict(&key, &pooled);
+            }
+            Err(error) => return Err(format!("TUIC CONNECT stream: {error}")),
+        }
+    }
+    let (guard, (mut send, recv)) = opened.ok_or("TUIC CONNECT stream: no connection")?;
     let mut header = vec![VERSION, CONNECT];
     header.extend_from_slice(&encode_address(destination)?);
     send.write_all(&header)
@@ -536,9 +567,8 @@ pub async fn connect(
     let (app, worker) = duplex(128 * 1024);
     tokio::spawn(async move {
         crate::relay::bridge_quic_stream(worker, send, recv, "TUIC").await;
-        // This connection was opened for this one stream.
-        connection.close(0u32.into(), b"closed");
-        drop(endpoint);
+        // The connection stays in the pool for the next stream.
+        drop(guard);
     });
     Ok(boxed(app))
 }
@@ -559,73 +589,77 @@ pub async fn exchange_udp(
     if payload.len() > u16::MAX as usize {
         return Err("TUIC packet payload is too large".into());
     }
-    let (endpoint, connection) = connect_quic(addrs, tls).await?;
-    authenticate(&connection, uuid, password).await?;
+    let mut last = String::new();
+    for attempt in 0..2 {
+        let (key, pooled) = pooled(addrs, tls, uuid, password).await?;
+        match packet_on(&pooled, destination, payload).await {
+            Ok(response) => return Ok(response),
+            Err((error, retry)) => {
+                if retry && attempt == 0 {
+                    crate::quic_pool::evict(&key, &pooled);
+                    last = error;
+                    continue;
+                }
+                return Err(error);
+            }
+        }
+    }
+    Err(last)
+}
+
+/// The association a TUIC PACKET datagram belongs to.
+fn packet_association(datagram: &[u8]) -> Option<u32> {
+    if datagram.len() < 10 || datagram[0] != VERSION || datagram[1] != PACKET {
+        return None;
+    }
+    Some(u32::from(u16::from_be_bytes([datagram[2], datagram[3]])))
+}
+
+/// One PACKET exchange on a pooled connection. The error says whether a
+/// fresh connection is worth trying (the connection itself failed).
+async fn packet_on(
+    pooled: &std::sync::Arc<crate::quic_pool::Pooled>,
+    destination: &Destination,
+    payload: &[u8],
+) -> Result<(Destination, Vec<u8>), (String, bool)> {
+    let connection = &pooled.connection;
     let max_datagram = connection
         .max_datagram_size()
-        .ok_or_else(|| "TUIC peer does not support QUIC datagrams".to_string())?;
-    let association_id = rand::random();
+        .ok_or_else(|| ("TUIC peer does not support QUIC datagrams".to_string(), false))?;
+    let association_id: u16 = rand::random();
     let packet_id = rand::random();
-    let packets = encode_packet_fragments(
-        max_datagram,
-        association_id,
-        packet_id,
-        destination,
-        payload,
-    )?;
+    let packets = encode_packet_fragments(max_datagram, association_id, packet_id, destination, payload)
+        .map_err(|error| (error, false))?;
+    let mut registration = pooled.register(u32::from(association_id), packet_association);
     for packet in packets {
         connection
             .send_datagram(bytes::Bytes::from(packet))
-            .map_err(|error| format!("TUIC PACKET send: {error}"))?;
+            .map_err(|error| (format!("TUIC PACKET send: {error}"), true))?;
     }
-    let response = timeout(Duration::from_secs(5), async {
-        loop {
-            let data = connection
-                .read_datagram()
-                .await
-                .map_err(|error| format!("TUIC PACKET receive: {error}"))?;
-            if data.len() < 10 || data[0] != VERSION {
+    timeout(Duration::from_secs(5), async {
+        let mut reassembler: Option<PacketReassembler> = None;
+        while let Some(data) = registration.receiver.recv().await {
+            let Ok(fragment) = decode_packet_fragment(&data) else { continue };
+            if fragment.association != association_id {
                 continue;
             }
-            if data[1] == HEARTBEAT {
-                continue;
-            }
-            if data[1] != PACKET {
-                continue;
-            }
-            let response_assoc = u16::from_be_bytes([data[2], data[3]]);
-            let response_packet = u16::from_be_bytes([data[4], data[5]]);
-            if response_assoc != association_id || response_packet != packet_id {
-                continue;
-            }
-            let fragment = decode_packet_fragment(&data)?;
-            if fragment.association != association_id || fragment.packet != packet_id {
-                continue;
-            }
-            let mut reassembler = PacketReassembler::new(&fragment);
-            if let Some((_, _, address, payload)) = reassembler.push(fragment)? {
-                return Ok::<_, String>((address, payload));
-            }
-            loop {
-                let next = connection
-                    .read_datagram()
-                    .await
-                    .map_err(|error| format!("TUIC PACKET fragment receive: {error}"))?;
-                let next = decode_packet_fragment(&next)?;
-                if next.association != association_id || next.packet != packet_id {
-                    continue;
-                }
-                if let Some((_, _, address, payload)) = reassembler.push(next)? {
-                    return Ok::<_, String>((address, payload));
-                }
+            let assembler = match &mut reassembler {
+                // Fragments of one response share its packet id; a fragment
+                // of another response to this association waits its turn.
+                Some(existing) if existing.packet != fragment.packet => continue,
+                Some(existing) => existing,
+                None => reassembler.insert(PacketReassembler::new(&fragment)),
+            };
+            match assembler.push(fragment) {
+                Ok(Some((_, _, address, payload))) => return Ok((address, payload)),
+                Ok(None) => {}
+                Err(error) => return Err((error, false)),
             }
         }
+        Err(("TUIC connection closed before the PACKET response".to_string(), true))
     })
     .await
-    .map_err(|_| "TUIC PACKET response timed out".to_string())??;
-    connection.close(0u32.into(), b"packet done");
-    drop(endpoint);
-    Ok(response)
+    .map_err(|_| ("TUIC PACKET response timed out".to_string(), false))?
 }
 
 /// Client keep-alive, as in the TUIC reference client's default heartbeat.

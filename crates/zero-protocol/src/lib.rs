@@ -16,3 +16,4 @@ pub mod vision;
 pub mod vless;
 pub mod vless_encryption;
 pub mod vmess;
+pub mod wg_stack;

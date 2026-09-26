@@ -1207,7 +1207,7 @@ fn parse_tuic(settings: Option<&Value>, path: &str) -> R<OutboundProtocol> {
     }))
 }
 
-fn parse_amnezia_wireguard(settings: Option<&Value>, path: &str) -> R<OutboundProtocol> {
+pub(crate) fn parse_amnezia_wireguard(settings: Option<&Value>, path: &str) -> R<OutboundProtocol> {
     let settings = settings
         .and_then(Value::as_object)
         .ok_or_else(|| format!("{path}.settings is required for wireguard"))?;
@@ -1315,7 +1315,15 @@ fn parse_amnezia_wireguard(settings: Option<&Value>, path: &str) -> R<OutboundPr
         .and_then(Value::as_u64)
         .map(|value| value.min(u16::MAX as u64) as u16);
 
+    let reserved = parse_wireguard_reserved(
+        settings
+            .get("reserved")
+            .or_else(|| peer.and_then(|peer| peer.get("reserved"))),
+        path,
+    )?;
+
     Ok(OutboundProtocol::AmneziaWireguard(AmneziaWireguardConfig {
+        reserved,
         address,
         port,
         private_key,
@@ -1335,6 +1343,29 @@ fn parse_amnezia_wireguard(settings: Option<&Value>, path: &str) -> R<OutboundPr
         h3,
         h4,
     }))
+}
+
+/// Xray's `reserved`: three numbers, or WARP's `client_id` in base64.
+fn parse_wireguard_reserved(value: Option<&Value>, path: &str) -> R<[u8; 3]> {
+    match value {
+        None | Some(Value::Null) => Ok([0; 3]),
+        Some(Value::Array(items)) => {
+            let bytes: Vec<u8> = items
+                .iter()
+                .map(|item| item.as_u64().filter(|v| *v <= 255).map(|v| v as u8))
+                .collect::<Option<_>>()
+                .ok_or_else(|| format!("{path}.settings.reserved must be three bytes"))?;
+            <[u8; 3]>::try_from(bytes).map_err(|_| format!("{path}.settings.reserved must be three bytes"))
+        }
+        Some(Value::String(text)) => {
+            use base64::Engine;
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(text.trim())
+                .map_err(|_| format!("{path}.settings.reserved is not base64"))?;
+            <[u8; 3]>::try_from(bytes).map_err(|_| format!("{path}.settings.reserved must be three bytes"))
+        }
+        Some(_) => Err(format!("{path}.settings.reserved must be an array or base64 text")),
+    }
 }
 
 fn parse_wireguard_key(value: Option<&str>, path: &str) -> R<[u8; 32]> {

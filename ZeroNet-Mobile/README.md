@@ -94,6 +94,5 @@ work without a proxy.
 
 ## License
 
-GPL-3.0-or-later, inherited from v2rayNG, whose VpnService setup this app's
-tunnel code follows. Zray-Core is MPL-2.0, which is GPL-compatible. See
-[LICENSE](LICENSE).
+MIT, like Zray-Core. See [LICENSE](LICENSE). Third-party components keep
+their own licences (listed in the app under Settings → About → Open-source licences).

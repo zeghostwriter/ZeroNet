@@ -1,6 +1,9 @@
 package com.zeronet.mobile.service
 
+import com.zeronet.mobile.model.CheckStatus
 import com.zeronet.mobile.model.ConnState
+import com.zeronet.mobile.model.DiagCheck
+import com.zeronet.mobile.model.Diagnosis
 import com.zeronet.mobile.model.DiscoveryProgress
 import com.zeronet.mobile.model.DiscoveryStage
 import com.zeronet.mobile.model.FailReason
@@ -35,6 +38,7 @@ object Ipc {
     const val SETTINGS = 10
     const val ADD_SUBSCRIPTION = 11
     const val REMOVE_SUBSCRIPTION = 12
+    const val DIAGNOSE = 13
 
     // engine → UI
     const val STATE = 101
@@ -44,6 +48,7 @@ object Ipc {
     const val IMPORT_RESULT = 105
     const val TEST_PROGRESS = 106
     const val REFRESH_STATE = 107
+    const val DIAGNOSIS = 108
 
     // ---------------------------------------------------------------- server
 
@@ -145,6 +150,31 @@ object Ipc {
     fun importFromJson(text: String): ImportResult {
         val o = JSONObject(text)
         return ImportResult(o.optInt("a"), o.optInt("d"), o.optInt("r"), if (o.isNull("e")) null else o.optString("e"))
+    }
+
+    // ------------------------------------------------------------- self-test
+
+    fun diagnosisToJson(d: Diagnosis): String = JSONObject()
+        .put("run", d.running).put("at", d.finishedAt)
+        .put("c", JSONArray().also { a -> d.checks.forEach { a.put(JSONObject().put("id", it.id).put("s", it.status.name).put("d", it.detail)) } })
+        .toString()
+
+    fun diagnosisFromJson(text: String): Diagnosis {
+        val o = JSONObject(text)
+        val arr = o.optJSONArray("c") ?: JSONArray()
+        return Diagnosis(
+            running = o.optBoolean("run"),
+            finishedAt = o.optLong("at"),
+            checks = List(arr.length()) { i ->
+                arr.getJSONObject(i).let { c ->
+                    DiagCheck(
+                        c.optString("id"),
+                        CheckStatus.entries.firstOrNull { it.name == c.optString("s") } ?: CheckStatus.Pending,
+                        c.optString("d"),
+                    )
+                }
+            },
+        )
     }
 
     private fun JSONArray?.longs(): List<Long> = if (this == null) emptyList() else List(length()) { optLong(it) }

@@ -1,0 +1,513 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Azerbaijani (az) — machine-assisted; needs native review before release. -->
+<resources>
+
+    <!-- Service notification and quick-settings tile (used by the :vpn process). -->
+    <string name="notification_channel">Bağlantı vəziyyəti</string>
+    <string name="notification_connected">Bağlandı</string>
+    <string name="notification_searching">Server axtarılır…</string>
+    <string name="notification_searching_detail">%1$d yoxlanıldı · %2$d işləyir</string>
+    <string name="notification_connecting">Bağlanılır…</string>
+    <string name="notification_reconnecting">Yenidən bağlanılır…</string>
+    <string name="notification_disconnect">Ayır</string>
+    <string name="notification_switch">Serveri dəyiş</string>
+    <string name="notification_server_ping">%1$s · %2$d ms</string>
+    <string name="tile_connected">Bağlandı</string>
+    <string name="tile_disconnected">Sönülü</string>
+    <string name="tile_searching">Axtarılır…</string>
+
+    <!-- Tabs -->
+    <string name="tab_home">Ana səhifə</string>
+    <string name="tab_servers">Serverlər</string>
+    <string name="tab_scanner">Skaner</string>
+    <string name="tab_settings">Ayarlar</string>
+
+    <!-- Common actions -->
+    <string name="action_add">Əlavə et</string>
+    <string name="action_back">Geri</string>
+    <string name="action_cancel">Ləğv et</string>
+    <string name="action_clear">Təmizlə</string>
+    <string name="action_close">Bağla</string>
+    <string name="action_collapse">Serverləri gizlət</string>
+    <string name="action_connect">Bağlan</string>
+    <string name="action_copy_link">Linki köçür</string>
+    <string name="action_copy_value">%1$s köçür</string>
+    <string name="action_delete">Sil</string>
+    <string name="action_details">Ətraflı</string>
+    <string name="action_expand">Serverləri göstər</string>
+    <string name="action_favorite">Sevimlilərə əlavə et</string>
+    <string name="action_find_servers">Server tap</string>
+    <string name="action_grant_permission">VPN-ə icazə ver</string>
+    <string name="action_hide_qr">QR kodu gizlət</string>
+    <string name="action_paste">Yapışdır</string>
+    <string name="action_refresh_servers">Serverləri yenilə</string>
+    <string name="action_remove_subscription">%1$s sil</string>
+    <string name="action_save">Yadda saxla</string>
+    <string name="action_share">QR kodu göstər</string>
+    <string name="action_test">Yoxla</string>
+    <string name="action_test_servers">Serverləri yoxla</string>
+    <string name="action_try_again">Yenidən cəhd et</string>
+    <string name="action_unfavorite">Sevimlilərdən çıxar</string>
+
+    <!-- Home: the orb -->
+    <string name="orb_connect">BAĞLAN</string>
+    <string name="orb_connecting">BAĞLANILIR</string>
+    <string name="orb_connected">BAĞLANDI</string>
+    <string name="orb_disconnecting">DAYANDIRILIR</string>
+    <string name="orb_failed">TƏKRAR</string>
+    <string name="orb_action_connect">Bağlan</string>
+    <string name="orb_action_disconnect">Ayır</string>
+    <string name="state_disconnected">Bağlı deyil</string>
+    <string name="state_connecting">Bağlanılır</string>
+    <string name="state_connected_to">%1$s serverinə bağlandı</string>
+    <string name="state_active">İndi bağlıdır</string>
+
+    <!-- Home: the stage line under the orb -->
+    <string name="stage_history">Əvvəl işləyən serverlər yoxlanılır…</string>
+    <string name="stage_fetch">Yeni server siyahıları alınır…</string>
+    <string name="stage_parse">%1$s server oxunur…</string>
+    <string name="stage_tcp">%1$s server yoxlanılır · %2$s əlçatan</string>
+    <string name="stage_real">%1$s server sınanılır · %2$s işləyir</string>
+    <string name="stage_connecting">Tunel başladılır…</string>
+    <string name="stage_connecting_to">%1$s serverinə bağlanılır…</string>
+    <string name="stage_reconnecting">Bağlantı kəsildi. Server dəyişdirilir…</string>
+    <string name="stage_chosen_down">Konfiqurasiyanız cavab vermir. Yenidən sınanılır…</string>
+    <string name="stage_disconnecting">Ayrılır…</string>
+    <string name="stage_connected_pool">Ehtiyat serverlər hazırdır: %1$s</string>
+
+    <!-- Home: why a connection failed -->
+    <string name="fail_no_server">Bu şəbəkədə işləyən server tapılmadı. Bir dəqiqədən sonra yenidən cəhd edin və ya Senzuraya qarşı rejimi Güclü seçin.</string>
+    <string name="fail_no_network">Oflaynsınız. Wi-Fi və ya mobil interneti yoxlayın.</string>
+    <string name="fail_vpn_permission">ZeroNet-ə VPN qurmaq üçün icazə lazımdır.</string>
+    <string name="fail_vpn_revoked">Başqa bir VPN tətbiqi idarəni ələ aldı.</string>
+    <string name="fail_core">Bağlantı başladıla bilmədi. Yenidən cəhd edin.</string>
+    <string name="fail_server_unavailable">Bu server cavab vermir. Bunun əvəzinə ən sürətlisini sınayın.</string>
+
+    <!-- Home: server card and stats -->
+    <string name="server_fastest">Ən sürətli server</string>
+    <string name="server_fastest_hint">ZeroNet onu sizin üçün seçir</string>
+    <string name="server_fastest_picked">Ən sürətli</string>
+    <string name="server_country_best">Bu ölkədə ən yaxşı server</string>
+    <string name="server_card_action">Server seç</string>
+    <string name="stats_download">Endirmə</string>
+    <string name="stats_upload">Yükləmə</string>
+    <string name="stats_session">Sessiya</string>
+
+    <!-- Units and time -->
+    <string name="unit_bps">bps</string>
+    <string name="unit_kbps">Kbps</string>
+    <string name="unit_mbps">Mbps</string>
+    <string name="unit_gbps">Gbps</string>
+    <string name="unit_b_value">%1$s B</string>
+    <string name="unit_kb_value">%1$s KB</string>
+    <string name="unit_mb_value">%1$s MB</string>
+    <string name="unit_gb_value">%1$s GB</string>
+    <string name="delay_ms">%1$s ms</string>
+    <string name="delay_unknown">—</string>
+    <string name="delay_failed">Alınmadı</string>
+    <string name="ago_never">Heç vaxt</string>
+    <string name="ago_now">İndicə</string>
+    <string name="ago_minutes">%1$s dəq öncə</string>
+    <string name="ago_hours">%1$s saat öncə</string>
+    <string name="ago_days">%1$s gün öncə</string>
+
+    <!-- Server words -->
+    <string name="country_unknown">Naməlum yer</string>
+    <string name="kind_direct">Birbaşa</string>
+    <string name="kind_cdn">CDN</string>
+    <string name="kind_other">Standart</string>
+    <string name="source_user">Sizin əlavə etdiyiniz</string>
+    <string name="source_subscription">Abunəliyiniz</string>
+    <string name="source_feed">İctimai siyahı · %1$s</string>
+    <string name="source_public">İctimai siyahı</string>
+
+    <!-- Server picker sheet -->
+    <string name="picker_title">Server seç</string>
+    <string name="picker_favorites">Sevimlilər</string>
+    <string name="picker_mine">Konfiqurasiyalarınız</string>
+    <string name="picker_subscriptions">Abunəlikləriniz</string>
+    <string name="server_subscription_hint">Yalnız bu abunəliyin konfiqurasiyaları arasında keçir</string>
+    <string name="picker_countries">Ölkələr</string>
+    <string name="picker_empty">Hələ server yoxdur. Bir dəfə bağlanın, ZeroNet bir neçəsini tapacaq.</string>
+
+    <!-- Servers tab -->
+    <plurals name="servers_count">
+        <item quantity="one">%1$s server</item>
+        <item quantity="other">%1$s server</item>
+    </plurals>
+    <plurals name="servers_subtitle">
+        <item quantity="one">%1$s server · %2$s işləyir</item>
+        <item quantity="other">%1$s server · %2$s işləyir</item>
+    </plurals>
+    <string name="servers_subtitle_empty">Hələ heç nə tapılmadı</string>
+    <string name="servers_search">Ölkə və ya ad axtar</string>
+    <string name="servers_recommended">Tövsiyə olunan</string>
+    <string name="servers_countries">Ölkələr</string>
+    <string name="servers_mine">Mənimkilər</string>
+    <string name="servers_rec_empty_title">Hələ yoxlanılmış server yoxdur</string>
+    <string name="servers_rec_empty_body">Bağlantınızda hansı serverlərin işlədiyini görmək üçün siyahını yoxlayın.</string>
+    <string name="servers_testing">%2$s serverdən %1$s yoxlanılır…</string>
+    <string name="servers_working_count">%1$s işləyir</string>
+    <string name="servers_subscriptions">Abunəliklər</string>
+    <string name="servers_your_servers">Konfiqurasiyalarınız</string>
+    <string name="servers_mine_empty_title">Hələ heç nə əlavə edilməyib</string>
+    <string name="servers_mine_empty_body">Konfiqurasiya linki və ya abunəlik linki yapışdırın.</string>
+    <string name="servers_add_title">Konfiqurasiya əlavə et</string>
+    <string name="servers_add_body">Konfiqurasiya linkləri və ya abunəlik linki</string>
+    <string name="servers_no_matches">“%1$s” ilə uyğun gələn yoxdur</string>
+    <string name="servers_empty_title">Hələ server yoxdur</string>
+    <string name="servers_empty_body">Server tap düyməsinə toxunun. ZeroNet ictimai siyahıları endirib bağlantınızda yoxlayır.</string>
+    <string name="servers_finding">Axtarılır…</string>
+
+    <!-- Server detail sheet -->
+    <string name="detail_delay">Gecikmə</string>
+    <string name="detail_error">Niyə alınmadı</string>
+    <string name="detail_last_tested">Son yoxlanma</string>
+    <string name="detail_protocol">Protokol</string>
+    <string name="detail_transport">Nəqliyyat</string>
+    <string name="detail_security">Təhlükəsizlik</string>
+    <string name="detail_address">Ünvan</string>
+    <string name="detail_source">Mənbə</string>
+    <string name="detail_history">Uğur nisbəti</string>
+    <string name="detail_history_value">%2$s yoxlamadan %1$s</string>
+    <string name="detail_testing">Yoxlanılır…</string>
+    <string name="detail_qr_description">Bu serverin linki ilə QR kod</string>
+    <string name="detail_share_warning">Bu koda sahib hər kəs serverdən istifadə edə bilər. Onu yalnız etibar etdiyiniz adamlarla paylaşın.</string>
+    <string name="detail_delete_confirm">Bu server silinsin? Bunu geri qaytarmaq olmaz.</string>
+
+    <!-- Import sheet -->
+    <string name="import_title">Konfiqurasiya əlavə et</string>
+    <string name="scan_qr">QR kodu skan et</string>
+    <string name="scan_from_photo">Şəkildən</string>
+    <string name="scan_hint">Kameranı konfiqurasiya və ya abunəlik QR koduna tuşlayın.</string>
+    <string name="scan_no_camera">Kameraya giriş yoxdur. Yenə də kodun şəklini və ya ekran görüntüsünü seçə bilərsiniz.</string>
+    <string name="scan_not_found">Bu şəkildə QR kod tapılmadı.</string>
+    <string name="import_body">Bir və ya bir neçə konfiqurasiya linki, yaxud abunəlik linki yapışdırın.</string>
+    <string name="import_links">Linklər</string>
+    <string name="import_subscription">Abunəlik</string>
+    <string name="import_links_placeholder">vless://, vmess://, trojan://, ss://…</string>
+    <string name="import_result">%1$s əlavə edildi · %2$s onsuz da mövcuddur · %3$s tanınmadı</string>
+    <string name="import_error">İdxal alınmadı: %1$s</string>
+    <string name="import_sub_url">https://…</string>
+    <string name="import_sub_name">Ad (istəyə bağlı)</string>
+    <string name="import_sub_invalid">https:// ilə başlayan bir ünvan daxil edin</string>
+    <string name="import_sub_hint">ZeroNet onu ictimai siyahılarla birlikdə yeniləyir.</string>
+
+    <!-- Transient messages -->
+    <string name="msg_copied">Köçürüldü</string>
+    <string name="msg_deleted">Server silindi</string>
+    <string name="msg_subscription_added">Abunəlik əlavə edildi. Serverləri alınır…</string>
+    <string name="msg_vpn_permission_denied">ZeroNet VPN icazəsi olmadan bağlana bilmir</string>
+    <string name="msg_history_cleared">Tapılmış serverlər təmizləndi</string>
+
+    <!-- Scanner tab -->
+    <string name="scanner_explainer">Şəbəkənizdə hələ də cavab verən Cloudflare ünvanlarını tapın</string>
+    <string name="scanner_ready">Hazır</string>
+    <string name="scanner_scanning">Skan edilir…</string>
+    <string name="scanner_done">Bitdi</string>
+    <string name="scanner_idle_hint">Təxminən bir dəqiqə</string>
+    <string name="scanner_progress_description">Skan gedişatı</string>
+    <string name="scanner_progress_state">%1$s faiz</string>
+    <string name="scanner_scanned">Skan edildi</string>
+    <string name="scanner_responsive">Cavab verdi</string>
+    <string name="scanner_best">Ən yaxşı</string>
+    <string name="scanner_start">Skanı başlat</string>
+    <string name="scanner_stop">Dayandır</string>
+    <string name="scanner_again">Yenidən skan et</string>
+    <string name="scanner_error_title">Skan dayandı</string>
+    <string name="scanner_results">Ən sürətli ünvanlar</string>
+    <string name="scanner_copy_best">İlk %1$s köçür</string>
+    <string name="scanner_how_title">Niyə skan?</string>
+    <string name="scanner_how_body">Bir çox server Cloudflare arxasında yerləşir. Onun adi IP-ləri bloklandıqda, ISP-nizdə hələ də işləyən təmiz bir IP onları yenidən işlədir. ZeroNet ən yaxşı nəticələri avtomatik istifadə edir.</string>
+    <string name="scanner_none_found">Bu dəfə heç bir ünvan cavab vermədi. Sonra və ya başqa şəbəkədə yenidən cəhd edin.</string>
+    <string name="scanner_port">Port %1$s</string>
+    <string name="scanner_copy_ip">%1$s köçür</string>
+
+    <!-- Settings: shared -->
+    <string name="settings_search">Ayarlarda axtar</string>
+    <string name="settings_no_results">“%1$s” ilə uyğun ayar yoxdur</string>
+    <string name="settings_applies_next">Növbəti bağlantıda tətbiq olunur</string>
+    <string name="settings_reconnect_now">İndi yenidən bağlan</string>
+    <string name="option_off">Sönülü</string>
+    <string name="option_auto">Avto</string>
+    <string name="option_system">Sistem</string>
+
+    <!-- Settings: connection -->
+    <string name="settings_connection">Bağlantı</string>
+    <string name="settings_mode">Rejim</string>
+    <string name="settings_mode_vpn">VPN</string>
+    <string name="settings_mode_proxy">Yalnız proksi</string>
+    <string name="settings_mode_vpn_hint">Bütün tətbiqlər ZeroNet-dən keçir.</string>
+    <string name="settings_mode_proxy_hint">Yalnız yerli proksiyə yönləndirdiyiniz tətbiqlər ondan istifadə edir. VPN nişanı yoxdur.</string>
+    <string name="settings_autoconnect">Avtomatik bağlan</string>
+    <string name="settings_autoconnect_app">Tətbiq açılanda</string>
+    <string name="settings_autoconnect_boot">Telefon işə düşəndə</string>
+    <string name="settings_autoswitch">Daha sürətli serverə keç</string>
+    <string name="settings_autoswitch_hint">Cari server yavaşladıqda və ya kəsildikdə</string>
+    <string name="settings_speed_floor">Minimum sürət</string>
+    <string name="settings_speed_floor_off_hint">Yalnız cari server kəsildikdə keç</string>
+    <string name="settings_speed_floor_low_hint">1 Mbps-dən aşağı serverdən çıx</string>
+    <string name="settings_speed_floor_medium_hint">3 Mbps-dən aşağı serverdən çıx</string>
+    <string name="settings_speed_floor_custom_hint">Sürət kbps ilə</string>
+    <string name="settings_speed_floor_low">1 Mbps</string>
+    <string name="settings_speed_floor_medium">3 Mbps</string>
+    <string name="settings_speed_floor_custom">Fərdi</string>
+    <string name="settings_more_connection">Kill switch, IPv6, MTU</string>
+    <string name="settings_more_connection_hint">Qabaqcıl bağlantı seçimləri</string>
+    <string name="settings_kill_switch">Kill switch</string>
+    <string name="settings_kill_switch_body">Android ZeroNet bağlı olmadıqda bütün internetı bloklaya bilər. Sistemin VPN ayarlarında ZeroNet-i açın və “Daimi VPN” ilə “VPN olmadan bağlantıları blokla” seçimlərini aktiv edin.</string>
+    <string name="settings_kill_switch_open">VPN ayarlarını aç</string>
+    <string name="settings_ipv6">Tunel vasitəsilə IPv6</string>
+    <string name="settings_ipv6_hint">Şəbəkəniz tələb etmirsə, sönülü saxlayın</string>
+    <string name="settings_mtu">Paket ölçüsü (MTU)</string>
+    <string name="settings_mtu_hint">%1$s demək olar ki, hər yerdə işləyir. Bəzi saytlar donarsa, aşağı salın.</string>
+
+    <!-- Settings: servers & sources -->
+    <string name="settings_sources_card">Serverlər və mənbələr</string>
+    <string name="settings_sources">Server mənbələri</string>
+    <string name="settings_sources_value">%2$s ictimai siyahıdan %1$s aktivdir</string>
+    <plurals name="subscriptions_count">
+        <item quantity="one">%1$s abunəlik</item>
+        <item quantity="other">%1$s abunəlik</item>
+    </plurals>
+    <string name="settings_preferred_countries">Üstün tutulan ölkələr</string>
+    <string name="settings_preferred_countries_hint">“Ən sürətli” əvvəlcə bunları sınayır</string>
+    <string name="settings_refresh">Siyahıları yenilə</string>
+    <string name="settings_refresh_auto">Avto</string>
+    <string name="settings_refresh_manual">Əl ilə</string>
+    <string name="settings_refresh_auto_hint">Siyahılar bağlananda yenilənir</string>
+    <string name="settings_refresh_manual_hint">Yalnız Serverlər səhifəsində aşağı dartdıqda</string>
+    <string name="settings_subscriptions">Abunəlikləriniz</string>
+    <string name="sources_body">ZeroNet-in axtardığı ictimai siyahılar və öz abunəlikləriniz.</string>
+    <string name="sources_public">İctimai siyahılar</string>
+    <string name="sources_tier_0">Hər iki saatdan bir yoxlanılır; ilk sınanır</string>
+    <string name="sources_tier_1">Hər bağlantıda yoxlanılır</string>
+    <string name="sources_tier_2">Lazım olduqda yoxlanılır</string>
+    <string name="sources_tier_3">Dərin axtarışda yoxlanılır</string>
+    <string name="sources_no_subscriptions">Hələ heç biri əlavə etməmisiniz.</string>
+    <string name="sources_add_title">Abunəlik əlavə et</string>
+    <string name="countries_search">Ölkə axtar</string>
+
+    <!-- Settings: split tunnelling -->
+    <string name="settings_split">Split tunneling</string>
+    <string name="settings_iran_direct">İran saytları VPN-i keçir</string>
+    <string name="settings_iran_direct_hint">İran saytları və bank tətbiqləri VPN olmadan açılır</string>
+    <string name="settings_apps">Tətbiqlər</string>
+    <string name="settings_apps_all">Hamısı</string>
+    <string name="settings_apps_only">Yalnız seçilənlər</string>
+    <string name="settings_apps_except">Seçilənlər xaric hamısı</string>
+    <string name="settings_apps_proxy_note">Yalnız VPN rejimində işləyir</string>
+    <string name="settings_choose_apps">Tətbiqləri seç</string>
+    <string name="settings_apps_none">Heç biri seçilməyib</string>
+    <plurals name="apps_selected">
+        <item quantity="one">%1$s tətbiq</item>
+        <item quantity="other">%1$s tətbiq</item>
+    </plurals>
+    <string name="settings_bypass_lan">Yerli şəbəkə VPN-i keçir</string>
+    <string name="settings_bypass_lan_hint">Printerlər, televizorlar və routeriniz əlçatan qalır</string>
+    <string name="apps_body_only">Yalnız işarələdiyiniz tətbiqlər VPN-dən istifadə edir.</string>
+    <string name="apps_body_except">İşarələdiyiniz tətbiqlər VPN-i keçir.</string>
+    <string name="apps_search">Tətbiq axtar</string>
+
+    <!-- Settings: share over Wi-Fi -->
+    <string name="settings_share">Wi-Fi üzərindən paylaş</string>
+    <string name="settings_share_toggle">Bu bağlantını paylaş</string>
+    <string name="settings_share_hint">Wi-Fi və ya hotspotunuzdakı cihazlar proksi vasitəsilə ZeroNet-dən istifadə edə bilər</string>
+    <string name="settings_share_permission_denied">Android yerli şəbəkəyə girişə icazə vermədi, ona görə paylaşım sönülü qalır.</string>
+    <string name="settings_share_live">İndi paylaşılır</string>
+    <string name="settings_share_when_connected">Bağlananda başlayır</string>
+    <string name="settings_share_no_network">Paylaşmaq üçün Wi-Fi şəbəkəsinə qoşulun və ya hotspotu açın.</string>
+    <string name="settings_share_auth">Parol qorunması</string>
+    <string name="settings_share_auth_hint">İstəyə bağlı. Digər cihazlara proksidən istifadə üçün lazımdır.</string>
+    <string name="settings_share_user">İstifadəçi adı</string>
+    <string name="settings_share_pass">Parol</string>
+    <string name="settings_share_http_off">Parol qoyulduqda HTTP paylaşımı sönülüdür</string>
+    <string name="settings_share_address">Bu şəbəkədəki ünvan</string>
+    <string name="settings_share_socks">SOCKS5</string>
+    <string name="settings_share_http">HTTP</string>
+    <string name="settings_share_port">Port %1$s</string>
+    <string name="settings_share_qr_description">%1$s ünvanındakı proksi üçün QR kod</string>
+    <string name="settings_share_qr_hint">Digər cihazda istənilən proksi tətbiqi ilə onu skan edin.</string>
+
+    <!-- Settings: anti-censorship -->
+    <string name="settings_evasion">Senzuraya qarşı</string>
+    <string name="settings_evasion_level">Güc</string>
+    <string name="settings_evasion_strong">Güclü</string>
+    <string name="settings_evasion_off_hint">Adi bağlantılar. Ən sürətli, amma bloklamaq daha asan.</string>
+    <string name="settings_evasion_auto_hint">Trafiki yalnız server bloklandıqda maskalayır</string>
+    <string name="settings_evasion_strong_hint">Trafiki həmişə maskalayır. Bir az yavaş, amma bloklamaq çox çətin.</string>
+    <string name="settings_block_quic">QUIC-i blokla</string>
+    <string name="settings_block_quic_hint">Tətbiqlər donmaq əvəzinə TCP-yə keçir</string>
+    <string name="settings_remote_dns">Bloklanmış saytlar üçün DNS</string>
+    <string name="settings_remote_dns_hint">Tunel vasitəsilə soruşulur, ona görə ISP-niz cavabı görə və ya dəyişə bilmir</string>
+    <string name="settings_custom_dns_hint">Fərdi resolver (məs. 8.8.8.8)</string>
+    <string name="settings_custom_dns_note">Yuxarıdakı bir provayderdən istifadə üçün boş buraxın. IP, tls://… və ya https://…/dns-query qəbul edir.</string>
+    <string name="settings_block_ads">Reklam və izləyiciləri blokla</string>
+    <string name="settings_block_ads_hint">Hər tətbiq üçün məlum reklam domenlərini süzgəcdən keçirir</string>
+
+    <!-- Settings: appearance -->
+    <string name="settings_appearance">Görünüş</string>
+    <string name="settings_palette">Mövzu</string>
+    <string name="settings_palette_dynamic_note">Divar kağızı rəngləri aktivdir, ona görə mövzu yalnız bağlantı rənglərini təyin edir</string>
+    <string name="settings_theme_mode">İşıqlı və ya qaranlıq</string>
+    <string name="settings_theme_light">İşıqlı</string>
+    <string name="settings_theme_dark">Qaranlıq</string>
+    <string name="settings_amoled">Tam qara</string>
+    <string name="settings_amoled_hint">OLED ekranlarda enerjiyə qənaət edir</string>
+    <string name="settings_dynamic">Divar kağızı rəngləri</string>
+    <string name="settings_dynamic_hint">Divar kağızınızdan Material You rəngləri</string>
+    <string name="settings_language">Dil</string>
+    <string name="settings_motion">Animasiya</string>
+    <string name="settings_motion_full">Tam</string>
+    <string name="settings_motion_reduced">Azaldılmış</string>
+    <string name="settings_motion_full_hint">Bütün animasiyalar</string>
+    <string name="settings_motion_reduced_hint">Yalnız sadə keçidlər</string>
+    <string name="palette_golden">Qızılı</string>
+    <string name="palette_nightshade">Gecə çalarları</string>
+    <string name="palette_arctic">Arktika</string>
+    <string name="palette_sakura">Sakura</string>
+    <string name="palette_paper">Kağız</string>
+    <string name="palette_contrast">Kontrast</string>
+
+    <!-- Settings: data & privacy -->
+    <string name="settings_privacy">Məlumat və məxfilik</string>
+    <string name="settings_logs">Logları saxla</string>
+    <string name="settings_logs_hint">Standart olaraq sönülü. Loglar bu telefonda qalır.</string>
+    <string name="settings_clear_history">Tapılmış serverləri təmizlə</string>
+    <string name="settings_clear_history_hint">İctimai serverləri və yoxlama nəticələrini unut. Əlavə etdiyiniz serverlər qalır.</string>
+    <plurals name="clear_history_body">
+        <item quantity="one">%1$s tapılmış server və onun yoxlama nəticələri unudulsun? Əlavə etdiyiniz serverlər qalır.</item>
+        <item quantity="other">%1$s tapılmış server və onların yoxlama nəticələri unudulsun? Əlavə etdiyiniz serverlər qalır.</item>
+    </plurals>
+    <string name="clear_history_nothing">Təmizlənəcək tapılmış server yoxdur.</string>
+
+    <!-- Settings: about -->
+    <string name="settings_about">Haqqında</string>
+    <string name="settings_version">Versiya</string>
+    <string name="settings_engine">Mühərrik</string>
+    <string name="settings_engine_hint">Bağlantını idarə edən açıq mənbəli nüvə</string>
+    <string name="settings_licences">Açıq mənbə lisenziyaları</string>
+    <string name="settings_licences_hint">ZeroNet MIT lisenziyası altında pulsuz proqramdır</string>
+    <string name="licences_body">ZeroNet bu layihələr üzərində qurulub.</string>
+
+    <!-- Settings search keywords: extra words that find each card (both languages are searched). -->
+    <string name="kw_connection">vpn proksi avtomatik bağlantı yenidən bağlanma daimi kill switch kilid mtu ipv6 şəbəkə</string>
+    <string name="kw_sources">mənbələr abunəlik lent siyahı github ölkə ölkələr yenilə güncəllə</string>
+    <string name="kw_split">bölünmüş keçid tətbiq tətbiqlər istisna marşrut yönləndirmə iran yerli lan</string>
+    <string name="kw_share">paylaş lan wifi hotspot teter socks http proksi port qr parol</string>
+    <string name="kw_evasion">senzura süzgəc fraqment dpi sni dns doh quic reklam adblock izləyici</string>
+    <string name="kw_appearance">mövzu rəng qaranlıq işıqlı amoled qara dil fars ingilis animasiya hərəkət</string>
+    <string name="kw_privacy">loglar tarixçə sil təmizlə məlumat məxfilik paylaş anonim izdiham kömək</string>
+    <string name="kw_about">versiya lisenziya mənbə kod açıq mənbə mühərrik zray yenilə güncəllə yeni</string>
+
+    <!-- Onboarding -->
+    <string name="onboarding_perm_title">ZeroNet-ə iki icazə lazımdır</string>
+    <string name="onboarding_perm_text">VPN, ona görə ki tətbiqlərinizin trafiki tuneldən keçə bilsin, və bildirişlər, ona görə ki bağlı olub-olmadığınızı görə biləsiniz. Android hər birini bir dəfə soruşur və sonra sistem ayarlarından dəyişə bilərsiniz.</string>
+    <string name="onboarding_allow">İcazə ver</string>
+    <string name="onboarding_later">İndi yox</string>
+
+    <!-- Connection profiles -->
+    <string name="profile_normal">Normal</string>
+    <string name="profile_fast">Sürətli</string>
+    <string name="profile_gaming">Oyun</string>
+    <string name="profile_normal_hint">Yalnız şifrələnmiş serverlər, ehtiyatlar hazır</string>
+    <string name="profile_fast_hint">İşləyən ilk serverə bağlanır</string>
+    <string name="profile_gaming_hint">Ən aşağı ping, UDP aktiv, oyun ortasında server dəyişmə yoxdur</string>
+    <string name="gaming_title">OYUN REJİMİ</string>
+    <string name="gaming_ping">PING %1$s ms</string>
+
+    <!-- In-app updates -->
+    <string name="update_sheet_title">Yeniləmə</string>
+    <string name="update_title_available">ZeroNet %1$s çıxdı</string>
+    <string name="update_title_downloading">%1$s endirilir</string>
+    <string name="update_title_ready">%1$s quraşdırmağa hazırdır</string>
+    <string name="update_title_reinstall">Bu yeniləmə mövcud nüsxənizin üzərinə quraşdırıla bilmir</string>
+    <string name="update_title_failed">Yeniləmə tamamlanmadı</string>
+    <string name="update_whats_new">Yeniliklər</string>
+    <string name="update_size">%1$s endirmə. Serverləriniz və ayarlarınız olduğu kimi qalır.</string>
+    <string name="update_progress">%2$s-dən %1$s</string>
+    <string name="update_ready_hint">Android quraşdırmanı təsdiqləməyinizi istəyəcək.</string>
+    <string name="update_allow_hint">Android bir dəfə soruşur: ZeroNet-ə tətbiq quraşdırmağa icazə verin, sonra qayıdıb Quraşdır düyməsinə toxunun.</string>
+    <string name="update_reinstall_body">O, bu telefondakı ZeroNet-dən fərqli bir açarla imzalanıb, ona görə Android onun üzərinə quraşdırmayacaq. Onu almaq üçün ZeroNet-i silin və yeni versiyanı buraxılış səhifəsindən quraşdırın. Serverləriniz və ayarlarınız silinəcək.</string>
+    <string name="update_now">İndi yenilə</string>
+    <string name="update_later">Sonra</string>
+    <string name="update_cancel">Ləğv et</string>
+    <string name="update_install">Quraşdır</string>
+    <string name="update_allow">Quraşdırmalara icazə ver</string>
+    <string name="update_open_page">Buraxılış səhifəsini aç</string>
+    <string name="update_retry">Yenidən cəhd et</string>
+    <string name="settings_updates">Yeniləmələr</string>
+    <string name="settings_update_check">Yeniləmələri yoxla</string>
+    <string name="settings_update_checking">Yoxlanılır…</string>
+    <string name="settings_update_latest">Ən son versiyanız var</string>
+    <string name="settings_update_available">%1$s versiyası mövcuddur</string>
+    <string name="settings_update_downloading">Endirilir… %1$s</string>
+    <string name="settings_update_ready">%1$s versiyası quraşdırmağa hazırdır</string>
+    <string name="settings_update_failed">Yoxlanıla bilmədi: %1$s</string>
+    <string name="settings_share_results">Başqalarına bağlanmağa kömək et</string>
+    <string name="settings_share_results_hint">Hansı ictimai serverlərin və təmiz IP-lərin şəbəkənizdə işlədiyini anonim şəkildə paylaşın ki, şəbəkədəki digərləri daha tez bağlansın. Öz konfiqurasiyalarınız heç vaxt göndərilmir.</string>
+    <string name="settings_kill_switch_app">Serversiz trafiki blokla</string>
+    <string name="settings_kill_switch_app_hint">ZeroNet axtarış edərkən, yenidən başladarkən və ya heç nə tapmayanda, tətbiqlər qorunmasız çıxmaqdansa internetsiz qalır. ZeroNet server işləyənə qədər cəhdləri təkrarlayır.</string>
+    <string name="stage_blocked">Hələ işləyən server yoxdur. ZeroNet cəhd etməyə davam edərkən trafik bloklanıb (kill switch)…</string>
+    <string name="widget_blocked">Bloklanıb — axtarılır</string>
+    <string name="notification_blocked_detail">Kill switch: server işləyənə qədər tətbiqlər oflayndır</string>
+    <string name="widget_failed">Qoşula bilmədi</string>
+    <string name="widget_tap_connect">Qoşulmaq üçün toxunun</string>
+    <string name="widget_tap_disconnect">Ayırmaq üçün toxunun</string>
+    <string name="widget_toggle">Qoşul və ya ayır</string>
+    <string name="widget_description">Bir toxunuşla qoşulun və istifadə olunan serveri görün</string>
+    <string name="trusted_title">Etibarlı şəbəkələr</string>
+    <string name="trusted_body">ZeroNet bunlarda söndürülü qalır: orada avtomatik qoşulmur və birinə qoşulduqda ayrılır.</string>
+    <string name="trusted_add">Bu şəbəkəyə etibar et (%1$s)</string>
+    <string name="trusted_none">Etibarlı şəbəkə yoxdur.</string>
+    <string name="trusted_current">Siz bu şəbəkədəsiniz</string>
+    <string name="trusted_remove">%1$s şəbəkəsinə etibar etməyi dayandır</string>
+    <string name="trusted_unknown_network">Bu şəbəkə</string>
+    <string name="kind_split">Bölünmüş yol</string>
+    <string name="kind_quic">QUIC</string>
+    <string name="kind_crowd">Başqaları üçün işləyir</string>
+    <string name="kind_hint_split">Ayrı yükləmə və endirmə yolları olan XHTTP: filtrlərin tanıması ən çətin olan növ.</string>
+    <string name="kind_hint_direct">REALITY: real, filtrlənməmiş sayta baş çəkmə kimi görünür.</string>
+    <string name="kind_hint_cdn">Cloudflare kimi CDN arxasında: onu bloklamaq internetin böyük hissəsini bloklayardı.</string>
+    <string name="kind_hint_quic">UDP üzərindən Hysteria2 və ya TUIC: UDP keçəndə sürətli, keçməyəndə faydasız.</string>
+    <string name="kind_hint_other">Gizlətmə olmadan sadə konfiqurasiya: yalnız hələ filtrlənməyən yerlərdə işləyir.</string>
+    <string name="kind_hint_crowd">Digər ZeroNet istifadəçiləri bu serverin öz şəbəkələrində işlədiyini bildirdilər.</string>
+    <string name="settings_diagnostics">Diaqnostika</string>
+    <string name="settings_diag_test">Bağlantımı yoxla</string>
+    <string name="settings_diag_test_hint">Şəbəkənizin nəyi blokladığını və hansı növ serverlərin keçdiyini öyrənin</string>
+    <string name="settings_diag_logs">Jurnallara bax</string>
+    <string name="settings_diag_logs_hint">ZeroNet nə cəhd etdi, nə cavab verdi və niyə uğursuz oldu</string>
+    <string name="kw_diagnostics">diaqnostika yoxlama nasazlıq jurnal debug problem işləmir dpi dns</string>
+    <string name="diag_title">Bağlantı yoxlaması</string>
+    <string name="diag_body">Tunelin xaricində şəbəkənizi yoxlayır, sonra hər növdən bir neçə yadda saxlanmış serveri sınayır.</string>
+    <string name="diag_not_run">Hələ işə salınmayıb.</string>
+    <string name="diag_run">Yoxlamanı işə sal</string>
+    <string name="diag_run_again">Yenidən işə sal</string>
+    <string name="diag_network">Şəbəkə</string>
+    <string name="diag_internet">Sadə internet</string>
+    <string name="diag_dns">DNS (filtrlənmiş saytlar)</string>
+    <string name="diag_tls">TLS server adları (DPI)</string>
+    <string name="diag_tunnel">Tunel vasitəsilə</string>
+    <string name="diag_family">Serverlər: %1$s</string>
+    <string name="diag_status_pending">Gözlənilir</string>
+    <string name="diag_status_running">Yoxlanılır…</string>
+    <string name="diag_status_ok">İşləyir</string>
+    <string name="diag_status_warn">Qismən</string>
+    <string name="diag_status_bad">Bloklanıb</string>
+    <string name="diag_status_skipped">Ötürüldü</string>
+    <string name="diag_verdict_offline">Şəbəkə yoxdur. Əvvəlcə Wi-Fi və ya mobil internetə qoşulun.</string>
+    <string name="diag_verdict_no_internet">Bu şəbəkə ümumiyyətlə internetə çıxmır və heç bir server cavab vermədi.</string>
+    <string name="diag_verdict_families">Hazırda bu növlər keçir: %1$s. ZeroNet onlara avtomatik üstünlük verir.</string>
+    <string name="diag_verdict_no_servers">Yoxlamaq üçün hələ yadda saxlanmış server yoxdur. Bir dəfə qoşulun (və ya server siyahısını yeniləyin) və yoxlamanı yenidən işə salın.</string>
+    <string name="diag_verdict_none_work">Yadda saxlanmış serverlərin heç biri cavab vermədi. Server siyahısını yeniləyin, təmiz-IP skanerini sınayın və ya öz konfiqurasiyanızı əlavə edin.</string>
+    <string name="logs_title">Jurnallar</string>
+    <string name="logs_body">Bağlantı jurnalı ZeroNet-in nə cəhd etdiyini qeyd edir. Nüvədən daha çoxu üçün Məxfilikdə ətraflı jurnalları aktiv edin.</string>
+    <string name="logs_body_detailed">Ətraflı jurnallar aktivdir. Kömək istəyəndə bunları paylaşın; onlarda server adları və xətalar var, ziyarət etdiyiniz saytlar deyil.</string>
+    <string name="logs_connection">Bağlantı</string>
+    <string name="logs_core">Nüvə</string>
+    <string name="logs_empty">Hələ heç nə qeyd olunmayıb.</string>
+    <string name="logs_refresh">Yenilə</string>
+    <string name="logs_copy">Kopyala</string>
+    <string name="logs_share">Paylaş</string>
+    <string name="logs_clear">Təmizlə</string>
+</resources>

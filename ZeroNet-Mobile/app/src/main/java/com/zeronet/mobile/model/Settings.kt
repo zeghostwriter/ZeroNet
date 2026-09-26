@@ -17,10 +17,25 @@ enum class ConnectionProfile { Normal, Fast, Gaming }
 enum class AutoConnect { Off, OnAppStart, OnBoot }
 enum class AppFilterMode { All, OnlySelected, AllExceptSelected }
 enum class EvasionLevel { Off, Auto, Strong }
+
+/**
+ * Slowest download ZeroNet tolerates before moving to another server.
+ *
+ * Only real traffic is measured: a config counts as slow while the phone is
+ * actually moving data, never while idle. Numbers are the floor in Mbps;
+ * [Custom] uses [Settings.speedFloorKbps].
+ */
+enum class SpeedFloor(val mbps: Int) {
+    Off(0),
+    Low(1),
+    Medium(3),
+    Custom(-1),
+}
+
 enum class ThemeMode { System, Light, Dark }
 enum class Palette { GoldenDark, Nightshade, Arctic, Sakura, Paper, Contrast }
 enum class MotionLevel { Full, Reduced }
-enum class AppLanguage { System, English, Persian }
+enum class AppLanguage { System, English, Persian, Azerbaijani, Kurdish, Arabic, Russian, Turkish, Chinese }
 enum class RemoteDns { Cloudflare, Google, Quad9, AdGuard }
 
 /**
@@ -36,8 +51,26 @@ data class Settings(
     val profile: ConnectionProfile = ConnectionProfile.Normal,
     val autoConnect: AutoConnect = AutoConnect.Off,
     val autoSwitch: Boolean = true,
+    /** Move off a server whose live download speed stays under this. */
+    val speedFloor: SpeedFloor = SpeedFloor.Medium,
+    /** Threshold in kbps, used only when [speedFloor] is [SpeedFloor.Custom]. */
+    val speedFloorKbps: Int = 3000,
     val ipv6: Boolean = false,
     val mtu: Int = 1500,
+    /**
+     * Keep the VPN interface up and drop traffic whenever no server carries
+     * it: while searching, while the core restarts, and after a failed
+     * connect (the engine keeps retrying). Nothing leaves the phone outside
+     * the tunnel. Android's own "Block connections without VPN" does the same
+     * at the system level, but not every ROM offers it.
+     */
+    val killSwitch: Boolean = false,
+    /**
+     * Networks where ZeroNet stays off: no automatic connect on them, and a
+     * running tunnel disconnects on joining one. Entries are
+     * `<NetworkIdentity hash>|<label shown in the UI>`.
+     */
+    val trustedNetworks: List<String> = emptyList(),
     // Servers & sources
     val lastTarget: String = "fastest",
     val disabledSources: Set<String> = emptySet(),
@@ -75,13 +108,36 @@ data class Settings(
     /** Share which public servers and clean addresses worked here, anonymously (see `Crowd`). */
     val shareResults: Boolean = true,
 ) {
+    /**
+     * The slow threshold in bytes per second; 0 disables speed switching.
+     * Mbps is a network unit (10^6 bits), so the byte rate is an eighth.
+     */
+    /** Whether [networkId] (a [com.zeronet.mobile.data.NetworkIdentity] hash) is one the user trusts. */
+    fun trusts(networkId: String?): Boolean =
+        networkId != null && trustedNetworks.any { it.substringBefore('|') == networkId }
+
+    /** The label the user saw when trusting [networkId], or "" when it is not trusted. */
+    fun trustedLabel(networkId: String?): String =
+        trustedNetworks.firstOrNull { it.substringBefore('|') == networkId }?.substringAfter('|').orEmpty()
+
+    val speedFloorBytes: Long
+        get() = when (speedFloor) {
+            SpeedFloor.Off -> 0L
+            SpeedFloor.Low, SpeedFloor.Medium -> speedFloor.mbps * 1_000_000L / 8
+            SpeedFloor.Custom -> speedFloorKbps.coerceIn(0, 1_000_000).toLong() * 1_000L / 8
+        }
+
     fun toJson(): JSONObject = JSONObject()
         .put("mode", mode.name)
         .put("profile", profile.name)
         .put("autoConnect", autoConnect.name)
         .put("autoSwitch", autoSwitch)
+        .put("speedFloor", speedFloor.name)
+        .put("speedFloorKbps", speedFloorKbps)
         .put("ipv6", ipv6)
         .put("mtu", mtu)
+        .put("killSwitch", killSwitch)
+        .put("trustedNetworks", JSONArray(trustedNetworks))
         .put("lastTarget", lastTarget)
         .put("disabledSources", JSONArray(disabledSources.toList()))
         .put("preferredCountries", JSONArray(preferredCountries))
@@ -118,8 +174,12 @@ data class Settings(
                 profile = o.enumOr("profile", d.profile),
                 autoConnect = o.enumOr("autoConnect", d.autoConnect),
                 autoSwitch = o.optBoolean("autoSwitch", d.autoSwitch),
+                speedFloor = o.enumOr("speedFloor", d.speedFloor),
+                speedFloorKbps = o.optInt("speedFloorKbps", d.speedFloorKbps).coerceIn(0, 1_000_000),
                 ipv6 = o.optBoolean("ipv6", d.ipv6),
                 mtu = o.optInt("mtu", d.mtu).coerceIn(1280, 9000),
+                killSwitch = o.optBoolean("killSwitch", d.killSwitch),
+                trustedNetworks = o.strings("trustedNetworks").filter { '|' in it }.distinctBy { it.substringBefore('|') },
                 lastTarget = o.optString("lastTarget", d.lastTarget),
                 disabledSources = o.strings("disabledSources").toSet(),
                 preferredCountries = o.strings("preferredCountries"),

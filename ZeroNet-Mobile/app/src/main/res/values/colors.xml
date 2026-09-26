@@ -4,4 +4,11 @@
     <color name="zn_window_bg">#FFF7F5F1</color>
     <color name="ic_launcher_background">#FF000000</color>
     <color name="zn_accent">#FFF59E0B</color>
+    <!-- Home-screen widget -->
+    <color name="zn_widget_bg">#F2FFFFFF</color>
+    <color name="zn_widget_text">#FF16181C</color>
+    <color name="zn_widget_muted">#FF5F646B</color>
+    <color name="zn_widget_button_off">#FF8A9099</color>
+    <color name="zn_widget_button_on">#FF16A34A</color>
+    <color name="zn_widget_button_busy">#FFF59E0B</color>
 </resources>

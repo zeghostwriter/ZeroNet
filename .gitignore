@@ -18,6 +18,8 @@
 
 # ---- Nested / sibling projects with their own repos ----
 /Zero-IP-Scanner
+# Local study of the BPB Worker Panel (reference only, not shipped)
+/bpb-study
 # Local dev / test / bootstrap scripts (not shipped in the public repo)
 /scripts
 # Local git backups made while consolidating into one repo

@@ -18,6 +18,9 @@ class BootReceiver : BroadcastReceiver() {
         if (intent.action != Intent.ACTION_BOOT_COMPLETED && intent.action != Intent.ACTION_MY_PACKAGE_REPLACED) return
         val settings = Engine.snapshotSettings()
         if (settings.autoConnect != AutoConnect.OnBoot) return
+        // Trusted network (home Wi-Fi…): stay off. Right after boot the
+        // network may not be up yet; then this is null and we connect.
+        if (settings.trusts(com.zeronet.mobile.data.NetworkIdentity.current(context))) return
         if (settings.mode == ConnectionMode.Vpn && VpnService.prepare(context) != null) return
         Engine.prepare(ConnectTarget.decode(settings.lastTarget), settings)
         runCatching { ZeroVpnService.connect(context) }

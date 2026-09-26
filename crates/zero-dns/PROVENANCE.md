@@ -1,6 +1,6 @@
 # Provenance
 
-- License: MPL-2.0, inherited from the workspace.
+- License: MIT, inherited from the workspace.
 - Implementation: original Zray-Core resolver, cache, FakeDNS, and DNS wire
   code; behavior is checked against the DNS requirements in the plans.
 - External behavioral references: Hickory DNS message conventions and Xray

@@ -241,6 +241,8 @@ struct Tunnel {
     socks: SocketAddr,
     echo: SocketAddr,
     udp_echo: SocketAddr,
+    /// The relay's listener, which the client's QUIC pool keys on.
+    relay: SocketAddr,
 }
 
 /// Build a client/server pair for a TLS- or QUIC-terminated protocol.
@@ -328,6 +330,7 @@ async fn tunnel(protocol: &str, quic: bool, transport: Value) -> Tunnel {
         socks: SocketAddr::new("127.0.0.1".parse().unwrap(), socks_port),
         echo,
         udp_echo,
+        relay: SocketAddr::new("127.0.0.1".parse().unwrap(), relay_port),
     }
 }
 
@@ -471,4 +474,186 @@ async fn hysteria2_carries_udp_datagrams() {
 async fn tuic_carries_udp_datagrams() {
     let tunnel = tunnel("tuic", true, raw()).await;
     udp_round_trip(&tunnel, b"datagram over tuic").await;
+}
+
+// ---------------------------------------------------------- QUIC pooling
+
+/// Hysteria2 and TUIC multiplex every proxied stream over one authenticated
+/// QUIC connection per server, as their reference clients do, instead of a
+/// handshake and authentication per stream.
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+async fn quic_carriers_reuse_one_connection_for_many_streams() {
+    for protocol in ["hysteria2", "tuic"] {
+        let tunnel = tunnel(protocol, true, raw()).await;
+        for seed in 0..5u8 {
+            let mut stream = socks_connect(tunnel.socks, tunnel.echo).await.unwrap();
+            round_trip(&mut stream, &payload(seed, 4096)).await;
+        }
+        let concurrent = (0..6u8).map(|seed| {
+            let socks = tunnel.socks;
+            let echo = tunnel.echo;
+            tokio::spawn(async move {
+                let mut stream = socks_connect(socks, echo).await.unwrap();
+                round_trip(&mut stream, &payload(100 + seed, 64 * 1024)).await;
+            })
+        });
+        for task in futures::future::join_all(concurrent).await {
+            task.unwrap();
+        }
+        assert_eq!(
+            zero_transport::quic_pool::live_connections_to(tunnel.relay),
+            1,
+            "{protocol}: eleven streams should share one QUIC connection"
+        );
+    }
+}
+
+/// Concurrent UDP sessions share the pooled connection, and each gets its
+/// own answer back: one reader hands every response to its session.
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+async fn quic_udp_sessions_share_a_connection_without_crossing() {
+    for protocol in ["hysteria2", "tuic"] {
+        let tunnel = std::sync::Arc::new(tunnel(protocol, true, raw()).await);
+        let sessions = (0..8u8).map(|n| {
+            let tunnel = std::sync::Arc::clone(&tunnel);
+            tokio::spawn(async move {
+                let body = format!("{protocol} datagram {n} {}", "x".repeat(n as usize * 50));
+                udp_round_trip(&tunnel, body.as_bytes()).await;
+            })
+        });
+        for task in futures::future::join_all(sessions).await {
+            task.unwrap();
+        }
+        assert_eq!(zero_transport::quic_pool::live_connections_to(tunnel.relay), 1, "{protocol}");
+    }
+}
+
+/// After a network change the pooled connections move to a new socket
+/// (QUIC connection migration): a stream opened before keeps working, and
+/// new streams still share the migrated connection.
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+async fn a_quic_connection_survives_moving_to_a_new_socket() {
+    for protocol in ["hysteria2", "tuic"] {
+        let tunnel = tunnel(protocol, true, raw()).await;
+        let mut before = socks_connect(tunnel.socks, tunnel.echo).await.unwrap();
+        round_trip(&mut before, &payload(1, 2048)).await;
+
+        assert!(zero_transport::quic_pool::rebind_all() >= 1, "{protocol}: nothing was migrated");
+
+        round_trip(&mut before, &payload(2, 256 * 1024)).await;
+        let mut after = socks_connect(tunnel.socks, tunnel.echo).await.unwrap();
+        round_trip(&mut after, &payload(3, 2048)).await;
+        assert_eq!(zero_transport::quic_pool::live_connections_to(tunnel.relay), 1, "{protocol}");
+    }
+}
+
+/// Migration in the middle of transfers: streams in flight when the socket
+/// changes must finish intact.
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+async fn transfers_in_flight_survive_a_migration() {
+    for protocol in ["hysteria2", "tuic"] {
+        let tunnel = tunnel(protocol, true, raw()).await;
+        let transfers: Vec<_> = (0..6u8)
+            .map(|seed| {
+                let (socks, echo) = (tunnel.socks, tunnel.echo);
+                tokio::spawn(async move {
+                    let mut stream = socks_connect(socks, echo).await.unwrap();
+                    for round in 0..4u8 {
+                        round_trip(&mut stream, &payload(seed.wrapping_mul(7).wrapping_add(round), 256 * 1024)).await;
+                    }
+                })
+            })
+            .collect();
+        for _ in 0..3 {
+            tokio::time::sleep(Duration::from_millis(15)).await;
+            zero_transport::quic_pool::rebind_all();
+        }
+        for task in futures::future::join_all(transfers).await {
+            task.unwrap_or_else(|error| panic!("{protocol}: {error}"));
+        }
+    }
+}
+
+// ------------------------------------------------------------------- 0-RTT
+
+/// A Hysteria2 server that takes early data (quinn with a TLS server that
+/// issues tickets allowing 0-RTT), echoing every proxied stream.
+async fn zero_rtt_hysteria2_server(echo: SocketAddr) -> SocketAddr {
+    use rustls_pki_types::pem::PemObject;
+    let certs = rustls_pki_types::CertificateDer::pem_slice_iter(CERTIFICATE.as_bytes())
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    let key = rustls_pki_types::PrivateKeyDer::from_pem_slice(PRIVATE_KEY.as_bytes()).unwrap();
+    let mut tls = rustls::ServerConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
+        .with_safe_default_protocol_versions()
+        .unwrap()
+        .with_no_client_auth()
+        .with_single_cert(certs, key)
+        .unwrap();
+    tls.alpn_protocols = vec![b"h3".to_vec()];
+    tls.max_early_data_size = u32::MAX;
+    let crypto = quinn::crypto::rustls::QuicServerConfig::try_from(tls).unwrap();
+    let mut server = quinn::ServerConfig::with_crypto(Arc::new(crypto));
+    let mut transport = quinn::TransportConfig::default();
+    transport.max_idle_timeout(Some(Duration::from_secs(30).try_into().unwrap()));
+    server.transport_config(Arc::new(transport));
+    let endpoint = quinn::Endpoint::server(server, "127.0.0.1:0".parse().unwrap()).unwrap();
+    let address = endpoint.local_addr().unwrap();
+    let mut acceptor = zero_transport::hysteria2::Acceptor::new(endpoint);
+    tokio::spawn(async move {
+        let passwords: Vec<Box<str>> = vec![PASSWORD.into()];
+        while let Ok(Some(accepted)) = acceptor.accept(&passwords).await {
+            if let zero_transport::hysteria2::Accepted::Tcp { mut stream, .. } = accepted {
+                tokio::spawn(async move {
+                    let mut upstream = TcpStream::connect(echo).await.unwrap();
+                    let _ = tokio::io::copy_bidirectional(&mut stream, &mut upstream).await;
+                });
+            }
+        }
+    });
+    address
+}
+
+/// The second connection to a Hysteria2 server that allows early data
+/// resumes in 0-RTT: the handshake and the authentication share the first
+/// flight. (A server that does not allow it gets an ordinary handshake.)
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn hysteria2_reconnects_in_zero_rtt_when_the_server_allows_it() {
+    let echo = echo_service().await;
+    let server = zero_rtt_hysteria2_server(echo).await;
+    let mut tls = zero_security::TlsParams::new(SERVER_NAME);
+    tls.extra_roots = vec![CA_CERTIFICATE.as_bytes().to_vec()];
+    let destination = zero_core::Destination::tcp(
+        zero_core::Address::Ip(echo.ip()),
+        echo.port(),
+    );
+
+    async fn echo_once(mut stream: zero_core::BoxStream, body: &[u8]) {
+        stream.write_all(body).await.unwrap();
+        let mut back = vec![0u8; body.len()];
+        tokio::time::timeout(Duration::from_secs(10), stream.read_exact(&mut back))
+            .await
+            .expect("echo timed out")
+            .unwrap();
+        assert_eq!(back, body);
+    }
+
+    let before = zero_transport::hysteria2::zero_rtt_accepted();
+    let first = zero_transport::hysteria2::connect(&[server], &tls, PASSWORD, &destination)
+        .await
+        .expect("first connection");
+    echo_once(first, b"first, in 1-RTT").await;
+    // Give the server's session ticket time to arrive, then drop the pooled
+    // connection so the next stream has to dial.
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    zero_transport::quic_pool::close_all_to(server);
+
+    let second = zero_transport::hysteria2::connect(&[server], &tls, PASSWORD, &destination)
+        .await
+        .expect("resumed connection");
+    echo_once(second, b"second, resumed").await;
+    assert!(
+        zero_transport::hysteria2::zero_rtt_accepted() > before,
+        "the reconnection did not use 0-RTT"
+    );
 }

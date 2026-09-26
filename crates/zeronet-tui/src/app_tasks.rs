@@ -98,6 +98,12 @@ pub(crate) enum BgEvent {
     },
     /// The download finished: where the new version now is, or why not.
     UpdateInstalled(Result<std::path::PathBuf, String>),
+    /// A crowd report of `count` results was sent (the network the relay
+    /// filed it under), or could not be.
+    CrowdReported {
+        count: usize,
+        result: Result<Option<String>, String>,
+    },
 }
 
 /// Bookkeeping for the jobs above, kept in one field of the app.
@@ -317,15 +323,27 @@ impl App<'_> {
                 {
                     return false;
                 }
-                match result {
+                let found = self
+                    .connection
+                    .dialled()
+                    .filter(|id| self.config_by_id(*id).is_some_and(|c| c.is_found()));
+                match &result {
                     Ok(delay) => self.toasts.success(format!(
                         "{node} is carrying traffic · {} ms",
                         delay.as_millis()
                     )),
+                    Err(reason) if found.is_some() => self.toasts.warning(format!(
+                        "{node} connected but carries no traffic ({reason})."
+                    )),
                     Err(reason) => self.toasts.warning(format!(
                         "Connected to {node}, but no traffic gets through it ({reason}). \
-                         Apps using the proxy will not load. Try another profile."
+                         Apps using the proxy will not load. Try another profile, or press F to find one."
                     )),
+                }
+                // A found server: its result is shared, and a dead one is
+                // replaced by the next that worked.
+                if let Some(id) = found {
+                    self.on_found_health(id, &result).await;
                 }
                 true
             }
@@ -388,6 +406,10 @@ impl App<'_> {
             BgEvent::UpdateInstalled(result) => {
                 self.on_update_installed(result);
                 true
+            }
+            BgEvent::CrowdReported { count, result } => {
+                self.on_crowd_reported(count, result);
+                false
             }
             BgEvent::Terminate(name) => {
                 tracing::info!(signal = name, "terminating");

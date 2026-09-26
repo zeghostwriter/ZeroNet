@@ -55,6 +55,48 @@ class IpcTest {
     }
 
     @Test
+    fun `a self-test crosses the process boundary intact`() {
+        val d = com.zeronet.mobile.model.Diagnosis(
+            running = true,
+            finishedAt = 42,
+            checks = listOf(
+                com.zeronet.mobile.model.DiagCheck("dns", com.zeronet.mobile.model.CheckStatus.Bad, "a → 10.10.34.35"),
+                com.zeronet.mobile.model.DiagCheck("family_quic", com.zeronet.mobile.model.CheckStatus.Skipped),
+            ),
+        )
+        assertEquals(d, Ipc.diagnosisFromJson(Ipc.diagnosisToJson(d)))
+        assertEquals(ConnState.Reconnecting(Engine.REASON_BLOCKED), Ipc.stateFromJson(Ipc.stateToJson(ConnState.Reconnecting(Engine.REASON_BLOCKED))))
+    }
+
+    @Test
+    fun `poisoned DNS answers are recognised`() {
+        fun a(text: String) = java.net.InetAddress.getByName(text)
+        assertTrue(Diagnostics.isBogus(a("10.10.34.35")))
+        assertTrue(Diagnostics.isBogus(a("127.0.0.1")))
+        assertTrue(Diagnostics.isBogus(a("0.0.0.0")))
+        assertTrue(Diagnostics.isBogus(a("192.168.1.1")))
+        assertTrue(Diagnostics.isBogus(a("198.18.0.5")))
+        assertTrue(!Diagnostics.isBogus(a("142.250.180.14")))
+        assertTrue(!Diagnostics.isBogus(a("104.16.123.96")))
+    }
+
+    @Test
+    fun `the engine log keeps the newest lines and starts on a line boundary`() {
+        val dir = java.nio.file.Files.createTempDirectory("elog").toFile()
+        java.io.File(dir, "engine.log.1").writeText((1..50).joinToString("") { "old line $it\n" })
+        java.io.File(dir, "engine.log").writeText((1..50).joinToString("") { "new line $it\n" })
+        val all = EngineLog.tail(dir, "engine.log")
+        assertTrue(all.startsWith("old line 1\n"))
+        assertTrue(all.endsWith("new line 50\n"))
+        val some = EngineLog.tail(dir, "engine.log", maxBytes = 100)
+        assertTrue(some.endsWith("new line 50\n"))
+        assertTrue(some.lines().first().startsWith("new line"))
+        EngineLog.clear(dir)
+        assertEquals("", EngineLog.tail(dir, "engine.log"))
+        dir.deleteRecursively()
+    }
+
+    @Test
     fun `an unknown state decodes to idle instead of crashing the UI`() {
         assertEquals(ConnState.Idle, Ipc.stateFromJson("""{"t":"from-the-future"}"""))
     }

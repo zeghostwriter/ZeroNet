@@ -188,6 +188,6 @@ the release (`.github/workflows/release.yml`).
 
 ### License
 
-MPL-2.0 for the core (see `LICENSE`). The Android app is GPL-3.0-or-later
-(`ZeroNet-Mobile/LICENSE`); its third-party notices are under
+MIT, for the core, the desktop client and the Android app (see `LICENSE`).
+Third-party components keep their own licences; the app's notices are under
 `ZeroNet-Mobile/app/src/main/assets/licenses/`.

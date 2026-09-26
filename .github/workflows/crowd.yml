@@ -59,7 +59,7 @@ jobs:
         if: steps.relays.outputs.list != ''
         with:
           key: crowd
-      - run: cargo build --release -p zero-discovery --bin zeronet-crowd
+      - run: cargo build --release -p zero-discovery --bin zeronet-crowd --bin zeronet-sign
         if: steps.relays.outputs.list != ''
 
       - name: export reports
@@ -111,4 +111,13 @@ jobs:
         if: steps.relays.outputs.list != ''
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        run: .github/scripts/publish-crowd-data.sh rankings.json
+          CROWD_SIGNING_KEY: ${{ secrets.CROWD_SIGNING_KEY }}
+        run: |
+          if [ -n "$CROWD_SIGNING_KEY" ]; then
+            target/release/zeronet-sign sign rankings.json
+          else
+            echo "::warning::No CROWD_SIGNING_KEY; publishing rankings.json unsigned."
+          fi
+          files="rankings.json"
+          [ -f rankings.json.sig ] && files="$files rankings.json.sig"
+          .github/scripts/publish-crowd-data.sh $files

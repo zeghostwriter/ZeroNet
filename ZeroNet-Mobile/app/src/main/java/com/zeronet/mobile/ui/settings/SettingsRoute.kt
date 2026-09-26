@@ -54,6 +54,7 @@ fun SettingsRoute() {
     }
     val lanAddresses = rememberLanAddresses(settings.lanShare)
     val update by controller.updater.state.collectAsStateWithLifecycle()
+    val diagnosis by controller.engine.diagnosis.collectAsStateWithLifecycle()
 
     SettingsScreen(
         state = SettingsUiState(
@@ -68,6 +69,7 @@ fun SettingsRoute() {
             versionName = BuildConfig.VERSION_NAME,
             versionCode = BuildConfig.VERSION_CODE,
             update = update,
+            diagnosis = diagnosis,
         ),
         actions = remember(controller, derived) {
             SettingsActions(
@@ -95,6 +97,7 @@ fun SettingsRoute() {
                 },
                 onCopy = { text -> controller.copy(text, sensitive = text.contains('@')) },
                 onUpdates = controller::openUpdates,
+                onDiagnose = { controller.engine.diagnose() },
             )
         },
     )

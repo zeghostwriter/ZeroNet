@@ -53,6 +53,22 @@ pub const ALL_NETS: &str = "all";
 /// [`ALL_NETS`] only.
 pub const ANY_NET: &str = "any";
 
+/// The country bucket a cellular network belongs to: `mcc:<3-digit MCC>`.
+/// Reports from every carrier in a country reinforce each other, so an
+/// Iranian user on a carrier with little data of its own still gets a list
+/// ranked by other Iranian users rather than falling straight back to the
+/// worldwide [`ALL_NETS`] bucket, where reports from uncensored countries
+/// would drown theirs out. Only cellular networks carry a country (their
+/// MCC); Wi-Fi (`asn:`) does not, so it keeps falling back to [`ALL_NETS`].
+pub fn country_of(net: &str) -> Option<String> {
+    let code = net.strip_prefix("cell:")?;
+    if (5..=6).contains(&code.len()) && code.bytes().all(|b| b.is_ascii_digit()) {
+        Some(format!("mcc:{}", &code[..3]))
+    } else {
+        None
+    }
+}
+
 /// One report, as the relay exports it.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct Report {
@@ -299,6 +315,12 @@ pub fn aggregate(
     for report in &usable {
         if report.net != ANY_NET {
             groups.entry(report.net.clone()).or_default().push(report);
+            // A cellular report also feeds its country bucket, so a user on a
+            // carrier with few reports of its own still gets a list ranked by
+            // other users in the same country before the worldwide fallback.
+            if let Some(country) = country_of(&report.net) {
+                groups.entry(country).or_default().push(report);
+            }
         }
         groups.entry(ALL_NETS.to_string()).or_default().push(report);
     }
@@ -525,6 +547,34 @@ mod tests {
         ];
         let rankings = aggregate(&reports, &known(), vec![], NOW);
         assert_eq!(rankings.nets.keys().collect::<Vec<_>>(), vec![ALL_NETS]);
+    }
+
+    #[test]
+    fn cellular_reports_have_a_country_bucket() {
+        assert_eq!(country_of("cell:43211").as_deref(), Some("mcc:432"));
+        assert_eq!(country_of("cell:432350").as_deref(), Some("mcc:432"));
+        assert_eq!(country_of("asn:58224"), None);
+        assert_eq!(country_of("all"), None);
+    }
+
+    #[test]
+    fn carriers_in_a_country_reinforce_each_other() {
+        // Two Iranian carriers (MCC 432), one reporter each: neither carrier
+        // reaches MIN_REPORTERS alone, but together they rank in the country
+        // bucket mcc:432, which the app reads before the worldwide list.
+        let reports = vec![
+            report("cell:43211", "r1", "server", "aaaaaaaaaaaaaaaa", true, 60),
+            report("cell:43235", "r2", "server", "aaaaaaaaaaaaaaaa", true, 60),
+        ];
+        let rankings = aggregate(&reports, &known(), vec![], NOW);
+        // Neither single-carrier bucket qualifies.
+        assert!(!rankings.nets.contains_key("cell:43211"));
+        assert!(!rankings.nets.contains_key("cell:43235"));
+        // The country bucket does, and so does the worldwide fallback.
+        let country = &rankings.nets["mcc:432"];
+        assert_eq!(country.servers.len(), 1);
+        assert_eq!(country.servers[0].id, "aaaaaaaaaaaaaaaa");
+        assert!(rankings.nets.contains_key(ALL_NETS));
     }
 
     #[test]

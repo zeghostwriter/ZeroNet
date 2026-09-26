@@ -3,13 +3,18 @@ package com.zeronet.mobile.service
 import android.content.Context
 import android.os.ParcelFileDescriptor
 import android.os.PowerManager
+import android.telephony.TelephonyManager
 import android.util.Log
 import com.zeronet.mobile.core.ZrayNative
 import com.zeronet.mobile.data.NetworkIdentity
 import com.zeronet.mobile.data.ServerStore
 import com.zeronet.mobile.data.Sources
 import com.zeronet.mobile.data.Subscription
+import com.zeronet.mobile.model.CheckStatus
 import com.zeronet.mobile.model.ConnState
+import com.zeronet.mobile.model.DiagCheck
+import com.zeronet.mobile.model.Diagnosis
+import com.zeronet.mobile.model.ServerKind
 import com.zeronet.mobile.model.ConnectTarget
 import com.zeronet.mobile.model.ConnectionMode
 import com.zeronet.mobile.model.ConnectionProfile
@@ -22,6 +27,7 @@ import com.zeronet.mobile.model.ScanResult
 import com.zeronet.mobile.model.ScanState
 import com.zeronet.mobile.model.Server
 import com.zeronet.mobile.model.Settings
+import com.zeronet.mobile.model.SpeedFloor
 import com.zeronet.mobile.model.TrafficStats
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -47,6 +53,8 @@ import org.json.JSONObject
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
+import java.util.Locale
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
@@ -87,6 +95,10 @@ object Engine {
     private const val PROFILE_SETTLE_MS = 600L
     /** [ConnState.Reconnecting] reason: the config the user chose stopped answering; retrying it. */
     const val REASON_CHOSEN_DOWN = "chosen_down"
+    /** [ConnState.Reconnecting] reason: nothing works yet; the kill switch blocks traffic while the engine retries. */
+    const val REASON_BLOCKED = "blocked"
+    /** With the kill switch on, a failed connect is retried this often (or on a network change). */
+    private const val KILL_SWITCH_RETRY_MS = 30_000L
 
     // ------------------------------------------------------------ profiles
     //
@@ -128,12 +140,37 @@ object Engine {
     }
 
     /** Whether a discovered or stored server suits the profile. A server the user picked always does. */
-    private fun suits(server: Server, p: ConnectionProfile): Boolean = when (p) {
-        ConnectionProfile.Normal -> server.security == "tls" || server.security == "reality" ||
-            server.protocol == "hysteria2" || server.protocol == "tuic"
-        ConnectionProfile.Fast -> true
-        ConnectionProfile.Gaming -> server.kind != com.zeronet.mobile.model.ServerKind.Cdn &&
-            server.transport !in setOf("ws", "httpupgrade", "xhttp", "splithttp")
+    private fun suits(server: Server, p: ConnectionProfile): Boolean {
+        if (excludedByCountry(server)) return false
+        return when (p) {
+            ConnectionProfile.Normal -> server.security == "tls" || server.security == "reality" ||
+                server.protocol == "hysteria2" || server.protocol == "tuic"
+            ConnectionProfile.Fast -> true
+            ConnectionProfile.Gaming -> server.kind != com.zeronet.mobile.model.ServerKind.Cdn &&
+                server.transport !in setOf("ws", "httpupgrade", "xhttp", "splithttp")
+        }
+    }
+
+    /**
+     * A server in the user's own country is excluded from automatic selection:
+     * tunnelling from a censored country to itself bypasses nothing and leaks
+     * the real location. Excluded only for the automatic [ConnectTarget.Fastest]
+     * path; picking that country (or a specific server / subscription) always
+     * connects. Servers with an unknown country ("") are never excluded.
+     */
+    private fun excludedByCountry(server: Server): Boolean {
+        if (target !is ConnectTarget.Fastest) return false
+        val home = homeCountry
+        return home.isNotEmpty() && server.country == home
+    }
+
+    /** The cellular network's country (ISO alpha-2, upper case), or "" on Wi-Fi / unknown. */
+    private fun detectHomeCountry(): String {
+        val tm = app.getSystemService(TelephonyManager::class.java) ?: return ""
+        val raw = runCatching { tm.networkCountryIso }.getOrNull()?.takeIf { it.isNotBlank() }
+            ?: runCatching { tm.simCountryIso }.getOrNull()
+        val code = raw?.trim()?.uppercase(Locale.ROOT).orEmpty()
+        return if (code.length == 2) code else ""
     }
     private const val HEALTH_INTERVAL_MS = 45_000L
     /** When every server fails a health check, test again this much later before believing it. */
@@ -148,6 +185,22 @@ object Engine {
     private const val CROWD_FETCH_MS = 3_000
     /** Not Cloudflare: Worker-served configs (BPB and the like) cannot reach Cloudflare addresses. */
     private const val PROBE_URL = "http://www.gstatic.com/generate_204"
+
+    // ---- speed-based switching -------------------------------------------------
+    /** Seconds of real traffic the slow decision looks at. */
+    private const val SPEED_WINDOW = 20
+    /** A one-second sample below this is not the user transferring anything. */
+    private const val MIN_ACTIVE_BPS = 4_000L
+    /** At least this many of the window's samples must be active to judge speed. */
+    private const val ACTIVE_SAMPLES = 6
+    /** Silence this long, with connections still open, counts as a stall. */
+    private const val STALL_AFTER_MS = 15_000L
+    /** Past this, the silence is ordinary idleness, not a stalled download. */
+    private const val STALL_GIVEUP_MS = 45_000L
+    /** A server switched away from for being slow is not used again until this passes. */
+    private const val SLOW_COOLDOWN_MS = 10 * 60_000L
+    /** Saved servers per family the self-test tries. */
+    private const val FAMILY_SAMPLE = 4
 
     private lateinit var app: Context
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -177,6 +230,18 @@ object Engine {
     /** Health checks in a row in which the chosen config failed; see [CHOSEN_DOWN_AFTER]. */
     private var chosenFailures = 0
     private val healthNow = Channel<Unit>(Channel.CONFLATED)
+    /** Wakes the kill-switch retry loop early (a network change). */
+    private val retryNow = Channel<Unit>(Channel.CONFLATED)
+
+    /**
+     * The kill switch's placeholder interface: an established VPN interface
+     * nobody reads. While it is the live interface every app's packets go
+     * into it and nowhere else, so nothing leaks while no server carries
+     * traffic. Replaced (and then closed) as soon as the real tunnel comes up.
+     */
+    private var blocker: ParcelFileDescriptor? = null
+    /** The network the current connection started or last moved on; see [onNetworkChanged]. */
+    @Volatile private var lastNetworkId: String? = null
 
     @Volatile private var settings = Settings()
     @Volatile private var target: ConnectTarget = ConnectTarget.Fastest
@@ -184,6 +249,27 @@ object Engine {
 
     /** Working configs currently behind the balancer, fastest first. */
     private val pool = ArrayList<Alive>()
+    /**
+     * Server keys excluded for being slow, until the given epoch-millisecond
+     * time. Kept out of the config's link list so the balancer cannot pick
+     * them again (least-ping would: it knows their latency, not their
+     * throughput). A cooldown expired entry is simply ignored, so no sweep.
+     */
+    private val slowUntil = ConcurrentHashMap<String, Long>()
+    /** Last time real traffic moved, for stall detection. */
+    private var lastActiveAt = 0L
+    /** Consecutive seconds a stall has lasted. */
+    private var stallSeconds = 0
+    /** Last time a server was dropped for being slow, so decisions don't flap. */
+    private var lastSlowSwitchAt = 0L
+    /**
+     * The user's own country (ISO-3166 alpha-2, upper case) from the cellular
+     * network, or "" when unknown / on Wi-Fi. Cached per connection run and per
+     * network change. Automatic discovery skips servers in this country: a
+     * tunnel from a censored country to itself bypasses nothing and exposes the
+     * user's real location. An explicit country choice is honoured regardless.
+     */
+    @Volatile private var homeCountry: String = ""
     /** Test results for public servers during this connect, for [reportCrowd]. */
     private val crowdResults = LinkedHashMap<String, Crowd.Result>()
     /** Clean Cloudflare addresses others found on this network, used after the user's own scan results. */
@@ -203,10 +289,15 @@ object Engine {
 
     fun init(context: Context) {
         app = context.applicationContext
-        nativeError = runCatching { ZrayNative.init(app.filesDir.absolutePath, "warn") }
+        EngineLog.init(app)
+        settings = readOptions() ?: settings
+        nativeError = runCatching { ZrayNative.init(app.filesDir.absolutePath, coreLogLevel(settings)) }
             .fold({ it }, { "native library failed to load: ${it.message}" })
-        if (nativeError != null) Log.e(TAG, "native init: $nativeError")
+        if (nativeError != null) EngineLog.e("native init: $nativeError")
     }
+
+    /** Warnings are always kept for the Diagnostics screen; "detailed logs" adds the core's info lines. */
+    private fun coreLogLevel(s: Settings) = if (s.logs) "info" else "warn"
 
     // ------------------------------------------------------------- connecting
 
@@ -228,13 +319,47 @@ object Engine {
         monitorJob?.cancel()
         connectJob = scope.launch {
             mutex.withLock { runConnection() }
-            // A failed attempt must not leave a foreground service and its
-            // notification behind; the UI shows the failure.
-            if (!running && state.value is ConnState.Failed) {
-                this@Engine.host?.finish()
-                this@Engine.host = null
-            }
+            afterConnectAttempt()
         }
+    }
+
+    /**
+     * After a connect attempt: with the kill switch holding traffic, a
+     * failure that may pass (nothing answered, no network) is retried rather
+     * than ending the connection, so the phone stays blocked instead of
+     * leaking. Otherwise a failed attempt must not leave a foreground service
+     * and its notification behind; the UI shows the failure.
+     */
+    private suspend fun afterConnectAttempt() {
+        while (!running && blocker != null && currentCoroutineContext().isActive) {
+            val failed = state.value as? ConnState.Failed ?: break
+            if (failed.reason !in RETRYABLE) break
+            publish(ConnState.Reconnecting(REASON_BLOCKED))
+            EngineLog.i("kill switch: ${failed.reason} — traffic stays blocked; trying again in ${KILL_SWITCH_RETRY_MS / 1000} s")
+            retryNow.tryReceive()
+            withTimeoutOrNull(KILL_SWITCH_RETRY_MS) { retryNow.receive() }
+            mutex.withLock { runConnection() }
+        }
+        if (!running && state.value is ConnState.Failed) {
+            releaseBlocker()
+            this@Engine.host?.finish()
+            this@Engine.host = null
+        }
+    }
+
+    private val RETRYABLE = setOf(FailReason.NoWorkingServer, FailReason.NoNetwork, FailReason.ServerUnavailable)
+
+    /** Put the kill switch's placeholder interface in place, if the user wants one and none is up. */
+    private fun holdBlocker() {
+        if (!settings.killSwitch || settings.mode != ConnectionMode.Vpn || blocker != null) return
+        blocker = host?.establish(settings)
+        if (blocker != null) EngineLog.i("kill switch: blocking traffic until a server answers")
+    }
+
+    /** Close the placeholder: after the real interface replaced it, or when the user disconnects. */
+    private fun releaseBlocker() {
+        blocker?.let { runCatching { it.close() } }
+        blocker = null
     }
 
     fun disconnect() {
@@ -244,11 +369,24 @@ object Engine {
             mutex.withLock {
                 publish(ConnState.Disconnecting)
                 teardown()
+                releaseBlocker()
+                EngineLog.i("disconnected")
                 publish(ConnState.Idle)
             }
             host?.finish()
             host = null
         }
+    }
+
+    /**
+     * User asked to move off the current server (the notification button).
+     * Same path as an automatic slow/stall switch, but ignores the speed
+     * floor and cooldown so a manual tap always acts when there is somewhere
+     * to go. Does nothing with a single server or a config the user chose.
+     */
+    fun switchServer() {
+        if (!running) return
+        scope.launch { dropPrimary("manual", force = true) }
     }
 
     /** Another VPN took over, or the user revoked the permission in system settings. */
@@ -258,6 +396,8 @@ object Engine {
         scope.launch {
             mutex.withLock {
                 teardown()
+                releaseBlocker()
+                EngineLog.w("VPN permission revoked or another VPN took over")
                 publish(ConnState.Failed(FailReason.VpnRevoked, ""))
             }
             host?.finish()
@@ -267,7 +407,21 @@ object Engine {
 
     /** The default network changed (Wi-Fi ↔ cellular, reconnect). */
     fun onNetworkChanged() {
+        val id = NetworkIdentity.current(app)
+        val moved = id != null && id != lastNetworkId
+        if (id != null) lastNetworkId = id
+        // Joined a network the user trusts: ZeroNet is not needed here. Only
+        // on a move, so connecting by hand on a trusted network still works.
+        if (moved && settings.trusts(id) && state.value.isActive) {
+            EngineLog.i("joined trusted network ${settings.trustedLabel(id)}: disconnecting")
+            disconnect()
+            return
+        }
+        if (moved) EngineLog.i("network changed (${NetworkIdentity.label(app).ifBlank { "unknown" }})")
+        // Blocked and waiting for a retry: a new network is worth trying at once.
+        if (!running && blocker != null) retryNow.trySend(Unit)
         if (!running) return
+        homeCountry = detectHomeCountry()
         runCatching { ZrayNative.networkChanged() }
         // Checked inside the monitor loop so a disconnect cancels it with the loop.
         healthNow.trySend(Unit)
@@ -277,6 +431,15 @@ object Engine {
     fun applySettings(next: Settings) {
         val previous = settings
         settings = next
+        if (previous.logs != next.logs && nativeError == null) {
+            runCatching { ZrayNative.setLogLevel(coreLogLevel(next)) }
+            EngineLog.i("detailed core logs ${if (next.logs) "on" else "off"}")
+        }
+        // Turned off while blocked and waiting: stop blocking.
+        if (previous.killSwitch && !next.killSwitch && !running && blocker != null) {
+            releaseBlocker()
+            retryNow.trySend(Unit)
+        }
         // Still searching: start over, so the search itself follows the new mode.
         if (!running && previous.profile != next.profile && connectJob?.isActive == true) {
             profileJob?.cancel()
@@ -317,13 +480,14 @@ object Engine {
         monitorJob?.cancel()
         connectJob = scope.launch {
             mutex.withLock {
-                withContext(NonCancellable) { teardown() }
+                withContext(NonCancellable) {
+                    // Blocked before the old tunnel goes, so nothing slips out in between.
+                    holdBlocker()
+                    teardown()
+                }
                 runConnection()
             }
-            if (!running && state.value is ConnState.Failed) {
-                this@Engine.host?.finish()
-                this@Engine.host = null
-            }
+            afterConnectAttempt()
         }
     }
 
@@ -354,11 +518,22 @@ object Engine {
      */
     private suspend fun restartCore() {
         if (!running || pool.isEmpty()) return
-        withContext(NonCancellable) {
-            ZrayNative.stop()?.let { Log.w(TAG, "restart stop: $it") }
+        val up = withContext(NonCancellable) {
+            holdBlocker()
+            EngineLog.i("restarting the core")
+            ZrayNative.stop()?.let { EngineLog.w("restart stop: $it") }
             running = false
             val keepSince = since
-            if (bringUpAtomically()) since = keepSince
+            bringUpAtomically().also { if (it) since = keepSince }
+        }
+        if (!up) {
+            // The failure is already published; a core that will not start
+            // is not something retrying fixes, so stop blocking and end.
+            monitorJob?.cancel()
+            releaseBlocker()
+            host?.finish()
+            host = null
+            return
         }
         publishConnected()
     }
@@ -367,7 +542,13 @@ object Engine {
         pool.clear()
         crowdResults.clear()
         chosenFailures = 0
+        slowUntil.clear()
+        stallSeconds = 0
+        lastActiveAt = System.currentTimeMillis()
+        lastSlowSwitchAt = 0L
+        homeCountry = detectHomeCountry()
         publish(ConnState.Searching(DiscoveryProgress()))
+        holdBlocker()
         if (nativeError != null) {
             fail(FailReason.CoreError, nativeError.orEmpty()); return
         }
@@ -375,6 +556,13 @@ object Engine {
         if (network == null) {
             fail(FailReason.NoNetwork, ""); return
         }
+        lastNetworkId = network
+        EngineLog.i(
+            "connect: ${target.encode()}, ${settings.profile} mode, ${settings.mode}" +
+                ", on ${NetworkIdentity.label(app).ifBlank { "an unknown network" }}" +
+                (if (homeCountry.isNotEmpty()) " ($homeCountry)" else "") +
+                (if (blocker != null) ", kill switch holding" else ""),
+        )
         try {
             when (val t = target) {
                 is ConnectTarget.Specific -> {
@@ -409,7 +597,7 @@ object Engine {
         } catch (e: CancellationException) {
             throw e
         } catch (e: Throwable) {
-            Log.e(TAG, "connection failed", e)
+            EngineLog.e("connection failed", e)
             teardown()
             fail(FailReason.CoreError, e.message.orEmpty())
         }
@@ -438,7 +626,7 @@ object Engine {
         val candidates = parsed.map { stored[it.key] ?: it }.distinctBy { it.key }.filter { suits(it, settings.profile) }
         if (candidates.isEmpty()) return parsed.map { it.key }.toSet()
         val byKey = candidates.associateBy { it.key }
-        Log.i(TAG, "trying ${history.size} from history and ${picks.size} from the crowd on $crowdName")
+        EngineLog.i("trying ${candidates.size} known servers first: ${history.size} from this network's history, ${picks.size} from other users on $crowdName")
 
         testServers(candidates, timeoutMs = 4000, concurrency = candidates.size) { key, delay, error ->
             val server = byKey[key] ?: return@testServers
@@ -515,6 +703,7 @@ object Engine {
             when (e.optString("t")) {
                 "stage" -> {
                     progress = progress.copy(stage = stageOf(e.optString("stage")))
+                    EngineLog.i("search: ${e.optString("stage")} stage")
                     if (!running) publish(ConnState.Searching(progress))
                 }
                 "progress" -> {
@@ -528,6 +717,7 @@ object Engine {
                     val info = e.optJSONObject("info") ?: return@collect
                     val delay = e.optInt("delay_ms", -1)
                     val server = Server.fromLinkInfo(info, Server.SOURCE_FEED_PREFIX + "discovered").copy(delayMs = delay)
+                    EngineLog.i("search found ${describe(server)} answering in $delay ms")
                     withContext(Dispatchers.IO) {
                         store.upsert(listOf(server))
                         store.recordResult(server.key, delay, network)
@@ -563,8 +753,11 @@ object Engine {
                         }
                     }
                 }
-                "error" -> Log.w(TAG, "discovery: ${e.optString("message")}")
-                "done" -> if (pendingReload && running) { reloadPool(); pendingReload = false }
+                "error" -> EngineLog.w("search: ${e.optString("message")}")
+                "done" -> {
+                    EngineLog.i("search finished: ${progress.candidates} candidates, ${progress.tcpOpen} reachable, ${progress.alive} working")
+                    if (pendingReload && running) { reloadPool(); pendingReload = false }
+                }
             }
         }
         if (pendingReload && running) reloadPool()
@@ -596,12 +789,37 @@ object Engine {
                 .put("timeout_ms", if (lenient) maxOf(timeoutMs, OWN_TIMEOUT_MS) else timeoutMs)
                 .put("probe_url", PROBE_URL)
             if (lenient) request.put("confirm_tls", false)
+            var ok = 0
+            val failures = HashMap<String, Int>()
             nativeJob { ZrayNative.testLinks(request.toString(), it) }.collect { e ->
                 if (e.optString("t") != "result") return@collect
-                onResult(e.optString("key"), e.optInt("delay_ms", -1), e.optString("error").ifBlank { null })
+                val delay = e.optInt("delay_ms", -1)
+                val error = e.optString("error").ifBlank { null }
+                if (delay >= 0) ok++ else failures.merge(shortError(error), 1, Int::plus)
+                onResult(e.optString("key"), delay, error)
             }
+            val why = failures.entries.sortedByDescending { it.value }.take(5).joinToString { "${it.key} ×${it.value}" }
+            EngineLog.i("tested ${group.size} ${if (lenient) "of your own" else "public"} servers: $ok working" + if (why.isNotEmpty()) "; failed: $why" else "")
         }
     }
+
+    /** The gist of a core test error, so failures of one kind group together in the log. */
+    private fun shortError(error: String?): String {
+        val text = error?.lowercase(Locale.ROOT)?.trim().orEmpty()
+        return when {
+            text.isEmpty() -> "no answer"
+            "timed out" in text || "timeout" in text || "deadline" in text -> "timeout"
+            "reset" in text -> "connection reset"
+            "refused" in text -> "connection refused"
+            "certificate" in text || "handshake" in text || "tls" in text -> "TLS handshake"
+            "dns" in text || "resolve" in text || "lookup" in text -> "DNS"
+            "eof" in text || "closed" in text -> "closed early"
+            else -> text.take(40)
+        }
+    }
+
+    private fun describe(server: Server): String =
+        "\"${server.name.take(40)}\" (${server.protocol}/${server.transport}/${server.security}${if (server.country.isNotEmpty()) ", " + server.country else ""})"
 
     /** Test stored candidates (country / refresh) and bring up on the first alive one. */
     private suspend fun testAndCollect(all: List<Server>, network: String) {
@@ -655,6 +873,9 @@ object Engine {
         }
         running = true
         since = System.currentTimeMillis()
+        // The real interface replaced the placeholder; close its descriptor.
+        releaseBlocker()
+        usablePool().firstOrNull()?.let { EngineLog.i("tunnel up via ${describe(it.server)}, ${it.delayMs} ms, ${pool.size} in the pool") }
         publishConnected()
         return true
     }
@@ -664,7 +885,7 @@ object Engine {
         val config = buildConfig(failOnError = false) ?: return
         val error = withContext(Dispatchers.IO) { ZrayNative.reload(config) }
         if (error != null) {
-            Log.w(TAG, "reload refused, restarting: $error")
+            EngineLog.w("reload refused, restarting: $error")
             restartCore()
             return
         }
@@ -673,8 +894,9 @@ object Engine {
 
     private fun buildConfig(failOnError: Boolean = true): String? {
         val s = settings
+        val links = usablePool().take(linksInConfig(s.profile))
         val request = JSONObject()
-            .put("links", JSONArray(pool.take(linksInConfig(s.profile)).map { it.server.link }))
+            .put("links", JSONArray(links.map { it.server.link }))
             .put("mode", if (s.mode == ConnectionMode.Vpn) "vpn" else "proxy")
             .put("tun", JSONObject().put("mtu", s.mtu).put("ipv6", s.ipv6))
             .put("socks_port", s.socksPort).put("http_port", s.httpPort)
@@ -690,7 +912,7 @@ object Engine {
             .put("log_level", if (s.logs) "info" else "warning")
         val result = JSONObject(ZrayNative.buildConfig(request.toString()))
         if (result.has("error")) {
-            Log.e(TAG, "buildConfig: ${result.optString("error")}")
+            EngineLog.e("buildConfig: ${result.optString("error")}")
             if (failOnError) fail(FailReason.CoreError, result.optString("error"))
             return null
         }
@@ -698,8 +920,18 @@ object Engine {
     }
 
     private fun publishConnected() {
-        val best = pool.firstOrNull() ?: return
+        val best = usablePool().firstOrNull() ?: return
         publish(ConnState.Connected(best.server, since, best.delayMs, pool.size))
+    }
+
+    /**
+     * The pool members that are not on a slow cooldown, in order. Falls back
+     * to the whole pool when every member is cooling down, so a slow tunnel is
+     * never traded for no tunnel.
+     */
+    private fun usablePool(now: Long = System.currentTimeMillis()): List<Alive> {
+        val usable = pool.filter { (slowUntil[it.server.key] ?: 0L) <= now }
+        return usable.ifEmpty { pool }
     }
 
     // ---------------------------------------------------------- health & stats
@@ -710,33 +942,126 @@ object Engine {
         val downHistory = ArrayDeque<Long>(60)
         val upHistory = ArrayDeque<Long>(60)
         var tick = 0L
+        lastActiveAt = System.currentTimeMillis()
         val power = app.getSystemService(PowerManager::class.java)
         while (currentCoroutineContext().isActive && running) {
             // Sleep one second, or less when a network change asks for a health check now.
             val forced = withTimeoutOrNull(1000) { healthNow.receive() } != null
             tick++
             val interactive = power?.isInteractive ?: true
-            if (clients.get() > 0 || interactive) {
-                val raw = ZrayNative.stats()
-                if (raw != null) {
-                    val o = JSONObject(raw)
-                    val up = o.optLong("up")
-                    val down = o.optLong("down")
-                    val upRate = (up - lastUp).coerceAtLeast(0)
-                    val downRate = (down - lastDown).coerceAtLeast(0)
-                    lastUp = up; lastDown = down
-                    if (downHistory.size == 60) downHistory.removeFirst()
-                    if (upHistory.size == 60) upHistory.removeFirst()
-                    downHistory.addLast(downRate); upHistory.addLast(upRate)
-                    val next = TrafficStats(upRate, downRate, up, down, downHistory.toList(), upHistory.toList())
-                    stats.value = next
-                    if (interactive && tick % 2 == 0L) host?.onStats(next)
-                }
+            // The counters are cheap atomic reads; they are read even with the
+            // screen off so a background download still feeds the slow/stall
+            // decision. Only the notification is gated on the screen.
+            val raw = ZrayNative.stats()
+            if (raw != null) {
+                val o = JSONObject(raw)
+                val up = o.optLong("up")
+                val down = o.optLong("down")
+                val sessions = o.optInt("sessions", 0)
+                val upRate = (up - lastUp).coerceAtLeast(0)
+                val downRate = (down - lastDown).coerceAtLeast(0)
+                lastUp = up; lastDown = down
+                if (downHistory.size == 60) downHistory.removeFirst()
+                if (upHistory.size == 60) upHistory.removeFirst()
+                downHistory.addLast(downRate); upHistory.addLast(upRate)
+                val next = TrafficStats(upRate, downRate, up, down, downHistory.toList(), upHistory.toList())
+                stats.value = next
+                if (interactive && tick % 2 == 0L) host?.onStats(next)
+                maybeSwitchOnSpeed(downRate, upRate, sessions, downHistory)
             }
             if (forced || (settings.autoSwitch && tick * 1000 % HEALTH_INTERVAL_MS == 0L)) {
                 healthCheck(NetworkIdentity.current(app) ?: network)
             }
         }
+    }
+
+    /**
+     * Move to another server when the one in use is too slow or has stalled.
+     *
+     * Only real traffic is judged: a config is slow while the phone is moving
+     * data, never while idle, so an untouched phone never triggers a switch.
+     * A stall — bytes simply stopping while connections are open — is caught
+     * separately because a fully stalled link moves no bytes at all and so
+     * never trips the "slow" average. The current primary is then put on a
+     * cooldown, which keeps the balancer from picking it straight back and
+     * stops the choice flapping between two servers.
+     *
+     * Disabled in Gaming (a switch drops the game session) and when the user
+     * picked a specific config. Runs under the engine mutex.
+     */
+    private suspend fun maybeSwitchOnSpeed(
+        downRate: Long,
+        upRate: Long,
+        sessions: Int,
+        downHistory: ArrayDeque<Long>,
+    ) {
+        if (!settings.autoSwitch || settings.profile == ConnectionProfile.Gaming) return
+        if (target is ConnectTarget.Specific || !running || pool.size < 2) return
+        val floor = settings.speedFloorBytes
+        if (floor <= 0) return
+        val now = System.currentTimeMillis()
+        val moving = downRate + upRate > MIN_ACTIVE_BPS
+        if (moving) lastActiveAt = now
+
+        // Stall: connections are open, but nothing has moved for a while, and
+        // the silence began while a real transfer was in progress.
+        if (sessions > 0 && !moving) {
+            val silent = now - lastActiveAt
+            if (silent in STALL_AFTER_MS..STALL_GIVEUP_MS) {
+                stallSeconds++
+                // Silence this long means the stall started while a transfer
+                // was running, not during ordinary idleness.
+                if (stallSeconds >= (STALL_AFTER_MS / 1000).toInt() && now - lastSlowSwitchAt > SLOW_COOLDOWN_MS) {
+                    stallSeconds = 0
+                    dropPrimary("stalled")
+                }
+            } else {
+                stallSeconds = 0
+            }
+            return
+        }
+        stallSeconds = 0
+
+        // Slow: the whole window of real transfer stayed under the floor.
+        if (downHistory.size < SPEED_WINDOW) return
+        val window = downHistory.toList().takeLast(SPEED_WINDOW)
+        val active = window.count { it > MIN_ACTIVE_BPS } >= ACTIVE_SAMPLES
+        val peak = window.maxOrNull() ?: 0L
+        val avg = window.sum() / window.size
+        if (active && peak < floor && avg < floor && now - lastSlowSwitchAt > SLOW_COOLDOWN_MS) {
+            dropPrimary("slow")
+        }
+    }
+
+    /**
+     * Put the primary server on a short cooldown and let the next one take
+     * over. A reload excludes the cooled-down server from the config, which
+     * is the only way to move off it: the balancer ranks by latency, not by
+     * throughput, so a slow-but-low-ping server would otherwise be re-chosen.
+     */
+    private suspend fun dropPrimary(reason: String, force: Boolean = false) = mutex.withLock {
+        if (!running || pool.size < 2) return@withLock
+        if (settings.profile == ConnectionProfile.Gaming && !force) return@withLock
+        if (target is ConnectTarget.Specific) return@withLock
+        val now = System.currentTimeMillis()
+        val primary = pool.first()
+        slowUntil[primary.server.key] = now + SLOW_COOLDOWN_MS
+        lastSlowSwitchAt = now
+        // Put it at the back so the config's first link is a fresh server.
+        pool.removeAt(0)
+        pool.add(primary)
+        val replacement = pool.firstOrNull { (slowUntil[it.server.key] ?: 0L) <= now }
+        if (replacement == null) {
+            // Everything is on cooldown; a slow tunnel beats no tunnel.
+            slowUntil.clear()
+            return@withLock
+        }
+        EngineLog.i("switching server ($reason): ${describe(primary.server)} -> ${describe(replacement.server)}")
+        serversChanged.tryEmit(Unit)
+        reloadPool()
+        // Refill the pool in the background so the next switch has somewhere to go.
+        val network = NetworkIdentity.current(app) ?: return@withLock
+        scope.launch { runCatching { findReplacements(network, excludeKeys = pool.map { it.server.key }.toSet()) } }
     }
 
     private suspend fun healthCheck(network: String? = NetworkIdentity.current(app)) = mutex.withLock {
@@ -759,6 +1084,7 @@ object Engine {
                 probe()
             }
             withContext(Dispatchers.IO) { results.forEach { (k, d) -> store.recordResult(k, d, network, errors[k]) } }
+            EngineLog.i("health check: ${results.values.count { it >= 0 }} of ${pool.size} servers answering")
             val survivors = pool.mapNotNull { a -> results[a.server.key]?.takeIf { it >= 0 }?.let { a.copy(delayMs = it) } }
                 .sortedBy { it.delayMs }
                 .toMutableList()
@@ -771,6 +1097,11 @@ object Engine {
                 survivors.remove(primary)
                 survivors.add(0, primary)
             }
+            // Servers on a slow cooldown go last (a stable sort keeps the
+            // latency order inside each group), so the config's leading links
+            // are the ones that can actually move data.
+            val nowMs = System.currentTimeMillis()
+            survivors.sortBy { if ((slowUntil[it.server.key] ?: 0L) > nowMs) 1 else 0 }
             serversChanged.tryEmit(Unit)
             // A config the user chose is never swapped for another: while it
             // is down, keep it in place and try it again on the next check.
@@ -806,6 +1137,114 @@ object Engine {
                 before.take(linksInConfig(settings.profile)) -> reloadPool()
             else -> publishConnected()
         }
+    }
+
+    // -------------------------------------------------------------- self-test
+
+    val diagnosis = MutableStateFlow(Diagnosis())
+    private var diagJob: Job? = null
+
+    /**
+     * "Test my connection": what the phone's network does to plain traffic
+     * (DNS poisoning, SNI filtering, block-page redirects), whether the
+     * tunnel carries traffic, and which families of server get through right
+     * now, tested with the servers already saved. Results stream into
+     * [diagnosis] and the engine log.
+     */
+    fun diagnose() {
+        if (diagJob?.isActive == true) return
+        diagJob = scope.launch {
+            val families = ServerKind.entries
+            val ids = buildList {
+                add(Diagnostics.NETWORK); add(Diagnostics.INTERNET); add(Diagnostics.DNS); add(Diagnostics.TLS)
+                if (running) add(Diagnostics.TUNNEL)
+                families.forEach { add(Diagnostics.FAMILY_PREFIX + it.name.lowercase(Locale.ROOT)) }
+            }
+            var checks = ids.map { DiagCheck(it, CheckStatus.Pending) }
+            fun set(check: DiagCheck) {
+                checks = checks.map { if (it.id == check.id) check else it }
+                diagnosis.value = Diagnosis(running = true, checks = checks)
+                if (check.status != CheckStatus.Running && check.status != CheckStatus.Pending) {
+                    EngineLog.i("self-test ${check.id}: ${check.status}${if (check.detail.isNotEmpty()) " — ${check.detail}" else ""}")
+                }
+            }
+            diagnosis.value = Diagnosis(running = true, checks = checks)
+            EngineLog.i("self-test started")
+            try {
+                val network = NetworkIdentity.current(app)
+                if (network == null) {
+                    set(DiagCheck(Diagnostics.NETWORK, CheckStatus.Bad, "no network"))
+                    ids.drop(1).forEach { set(DiagCheck(it, CheckStatus.Skipped)) }
+                    return@launch
+                }
+                val label = NetworkIdentity.label(app).ifBlank { "unknown" }
+                set(DiagCheck(Diagnostics.NETWORK, CheckStatus.Ok, if (homeCountry.isNotEmpty()) "$label ($homeCountry)" else label))
+                val probes = listOf<Pair<String, () -> DiagCheck>>(
+                    Diagnostics.INTERNET to Diagnostics::internet,
+                    Diagnostics.DNS to Diagnostics::dns,
+                    Diagnostics.TLS to Diagnostics::tls,
+                )
+                for ((id, probe) in probes) {
+                    set(DiagCheck(id, CheckStatus.Running))
+                    set(withContext(Dispatchers.IO) { probe() })
+                }
+                if (Diagnostics.TUNNEL in ids) {
+                    set(DiagCheck(Diagnostics.TUNNEL, CheckStatus.Running))
+                    set(if (running) withContext(Dispatchers.IO) { Diagnostics.tunnel(settings.httpPort) } else DiagCheck(Diagnostics.TUNNEL, CheckStatus.Skipped))
+                }
+                testFamilies(network, families) { set(it) }
+            } finally {
+                diagnosis.value = Diagnosis(running = false, checks = checks.map {
+                    if (it.status == CheckStatus.Running || it.status == CheckStatus.Pending) it.copy(status = CheckStatus.Skipped) else it
+                }, finishedAt = System.currentTimeMillis())
+            }
+        }
+    }
+
+    /**
+     * Test a few saved servers of every family at once: the ones that worked
+     * most recently, own configs included. A family with no saved servers is
+     * skipped rather than reported as blocked.
+     */
+    private suspend fun testFamilies(network: String, families: List<ServerKind>, set: (DiagCheck) -> Unit) {
+        fun id(kind: ServerKind) = Diagnostics.FAMILY_PREFIX + kind.name.lowercase(Locale.ROOT)
+        val saved = withContext(Dispatchers.IO) { (store.userServers() + store.all()).distinctBy { it.key } }
+        val picks = families.associateWith { kind ->
+            saved.filter { it.kind == kind }
+                .sortedWith(compareBy<Server> { if (it.delayMs >= 0) 0 else 1 }.thenByDescending { it.aliveCount - it.failCount })
+                .take(FAMILY_SAMPLE)
+        }
+        picks.forEach { (kind, list) ->
+            set(if (list.isEmpty()) DiagCheck(id(kind), CheckStatus.Skipped, "no saved servers of this kind") else DiagCheck(id(kind), CheckStatus.Running, "0 of ${list.size}"))
+        }
+        val all = picks.values.flatten()
+        if (all.isEmpty()) return
+        val kindOf = all.associate { it.key to it.kind }
+        val done = HashMap<ServerKind, Int>()
+        val ok = HashMap<ServerKind, MutableList<Int>>()
+        testServers(all, timeoutMs = 5000, concurrency = all.size) { key, delay, error ->
+            val kind = kindOf[key] ?: return@testServers
+            withContext(Dispatchers.IO) { store.recordResult(key, delay, network, error) }
+            done.merge(kind, 1, Int::plus)
+            if (delay >= 0) ok.getOrPut(kind) { ArrayList() } += delay
+            val total = picks[kind]?.size ?: 0
+            val working = ok[kind].orEmpty()
+            val finished = done[kind] == total
+            val detail = "${working.size} of $total answered" + (working.minOrNull()?.let { ", best $it ms" } ?: "")
+            set(
+                DiagCheck(
+                    id(kind),
+                    when {
+                        !finished -> CheckStatus.Running
+                        working.isEmpty() -> CheckStatus.Bad
+                        working.size * 2 < total -> CheckStatus.Warn
+                        else -> CheckStatus.Ok
+                    },
+                    detail,
+                ),
+            )
+        }
+        serversChanged.tryEmit(Unit)
     }
 
     // ------------------------------------------------------------ servers tab
@@ -1032,21 +1471,29 @@ object Engine {
 
     private fun teardown() {
         if (running || ZrayNative.isRunning()) {
-            ZrayNative.stop()?.let { Log.w(TAG, "stop: $it") }
+            ZrayNative.stop()?.let { EngineLog.w("stop: $it") }
         }
         running = false
         pool.clear()
+        slowUntil.clear()
+        stallSeconds = 0
+        lastActiveAt = 0L
         stats.value = TrafficStats()
     }
 
     private fun fail(reason: FailReason, detail: String) {
+        EngineLog.w("failed: $reason${if (detail.isNotBlank()) " — $detail" else ""}")
         publish(ConnState.Failed(reason, detail))
     }
 
     private fun publish(next: ConnState) {
         state.value = next
         host?.onStateChanged(next)
+        ZeroWidget.update(app, next)
     }
+
+    /** Whether the kill switch's placeholder is what carries (drops) traffic right now. */
+    val blocking: Boolean get() = blocker != null
 
     private fun stageOf(name: String) = when (name) {
         "fetch" -> DiscoveryStage.Fetch

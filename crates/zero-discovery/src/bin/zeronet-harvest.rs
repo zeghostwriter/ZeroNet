@@ -366,6 +366,13 @@ async fn crawl_telegram(
         }
     }
 
+    let seed_set: HashSet<String> = seeds
+        .directories
+        .iter()
+        .chain(&seeds.channels)
+        .map(|s| s.to_ascii_lowercase())
+        .collect();
+
     let mut state = TelegramState::default();
     let mut links: Vec<String> = Vec::new();
     let mut visited = 0usize;
@@ -382,15 +389,16 @@ async fn crawl_telegram(
             let Some((text, found, mentioned)) = page else {
                 continue;
             };
+            let is_seed = seed_set.contains(name);
             let persian = telegram::persian_score(&text);
-            if persian < telegram::PERSIAN_MIN || found.is_empty() {
+            if (!is_seed && persian < telegram::PERSIAN_MIN) || found.is_empty() {
                 eprintln!(
-                    "telegram {name}: skipped (persian {persian}, {} links)",
+                    "telegram {name}: skipped (persian {persian}, seed {is_seed}, {} links)",
                     found.len()
                 );
                 continue;
             }
-            eprintln!("telegram {name}: {} links", found.len());
+            eprintln!("telegram {name}: {} links (persian {persian}, seed {is_seed})", found.len());
             state.channels.insert(
                 name.clone(),
                 ChannelState {
@@ -434,6 +442,7 @@ async fn read_channel(name: &str, pages: usize) -> Option<(String, Vec<String>, 
             id: format!("tg-{name}"),
             url: telegram::page_url(name, before),
             tier: 1,
+            sig_url: None,
         };
         let page = fetch_feed(&source, None, Duration::from_secs(20))
             .await

@@ -250,6 +250,47 @@ class ScreensScreenshotTest {
         SettingsScreen(settingsState(tuned), SettingsActions())
     }
 
+    @Test fun settings_connection_more_dark() = compose.shot("settings_connection_more_dark", tab = Tab.Settings) {
+        SettingsScreen(
+            settingsState(Settings(killSwitch = true, trustedNetworks = listOf("0011223344556677|Home Wi-Fi"))),
+            SettingsActions(),
+            initialSheet = com.zeronet.mobile.ui.settings.SettingsSheet.ConnectionMore,
+        )
+    }
+
+    private val diagnosis = com.zeronet.mobile.model.Diagnosis(
+        running = false,
+        finishedAt = Fixtures.NOW,
+        checks = listOf(
+            com.zeronet.mobile.model.DiagCheck("network", com.zeronet.mobile.model.CheckStatus.Ok, "Irancell (IR)"),
+            com.zeronet.mobile.model.DiagCheck("internet", com.zeronet.mobile.model.CheckStatus.Ok, "HTTP 204"),
+            com.zeronet.mobile.model.DiagCheck("dns", com.zeronet.mobile.model.CheckStatus.Bad, "www.youtube.com → 10.10.34.35"),
+            com.zeronet.mobile.model.DiagCheck("tls", com.zeronet.mobile.model.CheckStatus.Bad, "SNI filtering: www.youtube.com connection reset during the handshake"),
+            com.zeronet.mobile.model.DiagCheck("family_split", com.zeronet.mobile.model.CheckStatus.Ok, "3 of 4 answered, best 212 ms"),
+            com.zeronet.mobile.model.DiagCheck("family_direct", com.zeronet.mobile.model.CheckStatus.Warn, "1 of 4 answered, best 340 ms"),
+            com.zeronet.mobile.model.DiagCheck("family_cdn", com.zeronet.mobile.model.CheckStatus.Bad, "0 of 4 answered"),
+            com.zeronet.mobile.model.DiagCheck("family_quic", com.zeronet.mobile.model.CheckStatus.Skipped, "no saved servers of this kind"),
+            com.zeronet.mobile.model.DiagCheck("family_other", com.zeronet.mobile.model.CheckStatus.Running, "1 of 4"),
+        ),
+    )
+
+    @Test fun settings_diagnostics_dark() = compose.shot("settings_diagnostics_dark", tab = Tab.Settings) {
+        SettingsScreen(settingsState().copy(diagnosis = diagnosis), SettingsActions(), initialSheet = com.zeronet.mobile.ui.settings.SettingsSheet.Diagnostics)
+    }
+
+    @Config(qualifiers = "$FA-$PHONE")
+    @Test fun settings_diagnostics_fa_light() = compose.shot("settings_diagnostics_fa_light", dark = false, tab = Tab.Settings) {
+        SettingsScreen(settingsState().copy(diagnosis = diagnosis), SettingsActions(), initialSheet = com.zeronet.mobile.ui.settings.SettingsSheet.Diagnostics)
+    }
+
+    @Test fun settings_logs_dark() = compose.shot("settings_logs_dark", tab = Tab.Settings) {
+        SettingsScreen(settingsState(), SettingsActions(), initialSheet = com.zeronet.mobile.ui.settings.SettingsSheet.Logs)
+    }
+
+    @Test fun settings_diagnostics_card_light() = compose.shot("settings_diagnostics_card_light", dark = false, tab = Tab.Settings) {
+        SettingsScreen(settingsState(), SettingsActions(), initialQuery = "logs")
+    }
+
     @Test fun settings_share_dark() = compose.shot("settings_share_dark", tab = Tab.Settings, waitForQr = true) {
         SettingsScreen(settingsState(Settings(lanShare = true), lan = listOf("192.168.1.34")), SettingsActions(), initialQuery = "hotspot")
     }

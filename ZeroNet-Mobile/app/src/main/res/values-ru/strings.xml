@@ -1,0 +1,522 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <!-- Service notification and quick-settings tile (used by the :vpn process). -->
+    <string name="notification_channel">Состояние подключения</string>
+    <string name="notification_connected">Подключено</string>
+    <string name="notification_searching">Ищем сервер…</string>
+    <string name="notification_searching_detail">Проверено %1$d · %2$d рабочих</string>
+    <string name="notification_connecting">Подключаемся…</string>
+    <string name="notification_reconnecting">Переподключаемся…</string>
+    <string name="notification_disconnect">Отключить</string>
+    <string name="notification_switch">Сменить сервер</string>
+    <string name="notification_server_ping">%1$s · %2$d мс</string>
+    <string name="tile_connected">Подключено</string>
+    <string name="tile_disconnected">Выкл.</string>
+    <string name="tile_searching">Поиск…</string>
+
+    <!-- Tabs -->
+    <string name="tab_home">Главная</string>
+    <string name="tab_servers">Серверы</string>
+    <string name="tab_scanner">Сканер</string>
+    <string name="tab_settings">Настройки</string>
+
+    <!-- Common actions -->
+    <string name="action_add">Добавить</string>
+    <string name="action_back">Назад</string>
+    <string name="action_cancel">Отмена</string>
+    <string name="action_clear">Очистить</string>
+    <string name="action_close">Закрыть</string>
+    <string name="action_collapse">Скрыть серверы</string>
+    <string name="action_connect">Подключить</string>
+    <string name="action_copy_link">Копировать ссылку</string>
+    <string name="action_copy_value">Копировать %1$s</string>
+    <string name="action_delete">Удалить</string>
+    <string name="action_details">Подробнее</string>
+    <string name="action_expand">Показать серверы</string>
+    <string name="action_favorite">В избранное</string>
+    <string name="action_find_servers">Найти серверы</string>
+    <string name="action_grant_permission">Разрешить VPN</string>
+    <string name="action_hide_qr">Скрыть QR-код</string>
+    <string name="action_paste">Вставить</string>
+    <string name="action_refresh_servers">Обновить серверы</string>
+    <string name="action_remove_subscription">Удалить %1$s</string>
+    <string name="action_save">Сохранить</string>
+    <string name="action_share">Показать QR-код</string>
+    <string name="action_test">Проверить</string>
+    <string name="action_test_servers">Проверить серверы</string>
+    <string name="action_try_again">Повторить</string>
+    <string name="action_unfavorite">Убрать из избранного</string>
+
+    <!-- Home: the orb -->
+    <string name="orb_connect">ПОДКЛЮЧИТЬ</string>
+    <string name="orb_connecting">ПОДКЛЮЧЕНИЕ</string>
+    <string name="orb_connected">ПОДКЛЮЧЕНО</string>
+    <string name="orb_disconnecting">ОСТАНОВКА</string>
+    <string name="orb_failed">ПОВТОР</string>
+    <string name="orb_action_connect">Подключить</string>
+    <string name="orb_action_disconnect">Отключить</string>
+    <string name="state_disconnected">Нет подключения</string>
+    <string name="state_connecting">Подключение</string>
+    <string name="state_connected_to">Подключено к %1$s</string>
+    <string name="state_active">Подключено сейчас</string>
+
+    <!-- Home: the stage line under the orb -->
+    <string name="stage_history">Пробуем серверы, которые работали раньше…</string>
+    <string name="stage_fetch">Загружаем свежие списки серверов…</string>
+    <string name="stage_parse">Читаем серверы: %1$s…</string>
+    <string name="stage_tcp">Проверяем %1$s серверов · %2$s доступны</string>
+    <string name="stage_real">Тестируем %1$s серверов · %2$s рабочих</string>
+    <string name="stage_connecting">Запускаем туннель…</string>
+    <string name="stage_connecting_to">Подключаемся к %1$s…</string>
+    <string name="stage_reconnecting">Связь прервалась. Меняем сервер…</string>
+    <string name="stage_chosen_down">Ваш конфиг не отвечает. Пробуем ещё раз…</string>
+    <string name="stage_disconnecting">Отключаемся…</string>
+    <string name="stage_connected_pool">Резервные серверы готовы: %1$s</string>
+
+    <!-- Home: why a connection failed -->
+    <string name="fail_no_server">В этой сети не нашлось рабочего сервера. Попробуйте через минуту или включите усиленную защиту от блокировок.</string>
+    <string name="fail_no_network">Нет подключения к сети. Проверьте Wi-Fi или мобильный интернет.</string>
+    <string name="fail_vpn_permission">ZeroNet нужно разрешение на настройку VPN.</string>
+    <string name="fail_vpn_revoked">Управление перехватило другое VPN-приложение.</string>
+    <string name="fail_core">Не удалось запустить подключение. Попробуйте ещё раз.</string>
+    <string name="fail_server_unavailable">Этот сервер не отвечает. Попробуйте самый быстрый.</string>
+
+    <!-- Home: server card and stats -->
+    <string name="server_fastest">Самый быстрый сервер</string>
+    <string name="server_fastest_hint">ZeroNet выберет его за вас</string>
+    <string name="server_fastest_picked">Самый быстрый</string>
+    <string name="server_country_best">Лучший сервер в этой стране</string>
+    <string name="server_card_action">Выбрать сервер</string>
+    <string name="stats_download">Загрузка</string>
+    <string name="stats_upload">Отдача</string>
+    <string name="stats_session">Сессия</string>
+
+    <!-- Units and time -->
+    <string name="unit_bps">бит/с</string>
+    <string name="unit_kbps">Кбит/с</string>
+    <string name="unit_mbps">Мбит/с</string>
+    <string name="unit_gbps">Гбит/с</string>
+    <string name="unit_b_value">%1$s Б</string>
+    <string name="unit_kb_value">%1$s КБ</string>
+    <string name="unit_mb_value">%1$s МБ</string>
+    <string name="unit_gb_value">%1$s ГБ</string>
+    <string name="delay_ms">%1$s мс</string>
+    <string name="delay_unknown">—</string>
+    <string name="delay_failed">Ошибка</string>
+    <string name="ago_never">Никогда</string>
+    <string name="ago_now">Только что</string>
+    <string name="ago_minutes">%1$s мин назад</string>
+    <string name="ago_hours">%1$s ч назад</string>
+    <string name="ago_days">%1$s дн назад</string>
+
+    <!-- Server words -->
+    <string name="country_unknown">Расположение неизвестно</string>
+    <string name="kind_direct">Прямой</string>
+    <string name="kind_cdn">CDN</string>
+    <string name="kind_other">Обычный</string>
+    <string name="source_user">Добавлено вами</string>
+    <string name="source_subscription">Ваша подписка</string>
+    <string name="source_feed">Публичный список · %1$s</string>
+    <string name="source_public">Публичный список</string>
+
+    <!-- Server picker sheet -->
+    <string name="picker_title">Выбрать сервер</string>
+    <string name="picker_favorites">Избранное</string>
+    <string name="picker_mine">Ваши конфиги</string>
+    <string name="picker_subscriptions">Ваши подписки</string>
+    <string name="server_subscription_hint">Переключается только между конфигами этой подписки</string>
+    <string name="picker_countries">Страны</string>
+    <string name="picker_empty">Серверов пока нет. Подключитесь один раз, и ZeroNet их найдёт.</string>
+
+    <!-- Servers tab -->
+    <plurals name="servers_count">
+        <item quantity="one">%1$s сервер</item>
+        <item quantity="few">%1$s сервера</item>
+        <item quantity="many">%1$s серверов</item>
+        <item quantity="other">%1$s сервера</item>
+    </plurals>
+    <plurals name="servers_subtitle">
+        <item quantity="one">%1$s сервер · %2$s рабочих</item>
+        <item quantity="few">%1$s сервера · %2$s рабочих</item>
+        <item quantity="many">%1$s серверов · %2$s рабочих</item>
+        <item quantity="other">%1$s сервера · %2$s рабочих</item>
+    </plurals>
+    <string name="servers_subtitle_empty">Пока ничего не найдено</string>
+    <string name="servers_search">Поиск по стране или названию</string>
+    <string name="servers_recommended">Рекомендуемые</string>
+    <string name="servers_countries">Страны</string>
+    <string name="servers_mine">Мои</string>
+    <string name="servers_rec_empty_title">Пока нет проверенных серверов</string>
+    <string name="servers_rec_empty_body">Проверьте список, чтобы узнать, какие серверы работают на вашем соединении.</string>
+    <string name="servers_testing">Проверка %1$s из %2$s…</string>
+    <string name="servers_working_count">%1$s рабочих</string>
+    <string name="servers_subscriptions">Подписки</string>
+    <string name="servers_your_servers">Ваши конфиги</string>
+    <string name="servers_mine_empty_title">Пока ничего не добавлено</string>
+    <string name="servers_mine_empty_body">Вставьте ссылку на конфиг или ссылку на подписку.</string>
+    <string name="servers_add_title">Добавить конфиги</string>
+    <string name="servers_add_body">Ссылки на конфиги или ссылка на подписку</string>
+    <string name="servers_no_matches">Ничего не найдено по запросу «%1$s»</string>
+    <string name="servers_empty_title">Серверов пока нет</string>
+    <string name="servers_empty_body">Нажмите «Найти серверы». ZeroNet загрузит публичные списки и проверит их на вашем соединении.</string>
+    <string name="servers_finding">Поиск…</string>
+
+    <!-- Server detail sheet -->
+    <string name="detail_delay">Задержка</string>
+    <string name="detail_error">Почему не удалось</string>
+    <string name="detail_last_tested">Последняя проверка</string>
+    <string name="detail_protocol">Протокол</string>
+    <string name="detail_transport">Транспорт</string>
+    <string name="detail_security">Безопасность</string>
+    <string name="detail_address">Адрес</string>
+    <string name="detail_source">Источник</string>
+    <string name="detail_history">Доля успешных</string>
+    <string name="detail_history_value">%1$s из %2$s проверок</string>
+    <string name="detail_testing">Проверка…</string>
+    <string name="detail_qr_description">QR-код со ссылкой на этот сервер</string>
+    <string name="detail_share_warning">Любой, у кого есть этот код, сможет пользоваться сервером. Делитесь им только с теми, кому доверяете.</string>
+    <string name="detail_delete_confirm">Удалить этот сервер? Отменить будет нельзя.</string>
+
+    <!-- Import sheet -->
+    <string name="import_title">Добавить конфиги</string>
+    <string name="scan_qr">Сканировать QR-код</string>
+    <string name="scan_from_photo">Из фото</string>
+    <string name="scan_hint">Наведите камеру на QR-код конфига или подписки.</string>
+    <string name="scan_no_camera">Нет доступа к камере. Можно выбрать фото или скриншот кода.</string>
+    <string name="scan_not_found">На этом изображении QR-код не найден.</string>
+    <string name="import_body">Вставьте одну или несколько ссылок на конфиги либо ссылку на подписку.</string>
+    <string name="import_links">Ссылки</string>
+    <string name="import_subscription">Подписка</string>
+    <string name="import_links_placeholder">vless://, vmess://, trojan://, ss://…</string>
+    <string name="import_result">Добавлено %1$s · %2$s уже есть · %3$s не распознано</string>
+    <string name="import_error">Не удалось импортировать: %1$s</string>
+    <string name="import_sub_url">https://…</string>
+    <string name="import_sub_name">Название (необязательно)</string>
+    <string name="import_sub_invalid">Введите адрес, начинающийся с https://</string>
+    <string name="import_sub_hint">ZeroNet обновляет её вместе с публичными списками.</string>
+
+    <!-- Transient messages -->
+    <string name="msg_copied">Скопировано</string>
+    <string name="msg_deleted">Сервер удалён</string>
+    <string name="msg_subscription_added">Подписка добавлена. Загружаем её серверы…</string>
+    <string name="msg_vpn_permission_denied">Без разрешения на VPN ZeroNet не сможет подключиться</string>
+    <string name="msg_history_cleared">Найденные серверы очищены</string>
+
+    <!-- Scanner tab -->
+    <string name="scanner_explainer">Найдите адреса Cloudflare, которые ещё отвечают в вашей сети</string>
+    <string name="scanner_ready">Готово</string>
+    <string name="scanner_scanning">Сканирование…</string>
+    <string name="scanner_done">Завершено</string>
+    <string name="scanner_idle_hint">Около минуты</string>
+    <string name="scanner_progress_description">Ход сканирования</string>
+    <string name="scanner_progress_state">%1$s процентов</string>
+    <string name="scanner_scanned">Проверено</string>
+    <string name="scanner_responsive">Ответили</string>
+    <string name="scanner_best">Лучший</string>
+    <string name="scanner_start">Начать сканирование</string>
+    <string name="scanner_stop">Стоп</string>
+    <string name="scanner_again">Сканировать снова</string>
+    <string name="scanner_error_title">Сканирование остановлено</string>
+    <string name="scanner_results">Самые быстрые адреса</string>
+    <string name="scanner_copy_best">Копировать топ-%1$s</string>
+    <string name="scanner_how_title">Зачем сканировать?</string>
+    <string name="scanner_how_body">Многие серверы работают через Cloudflare. Когда его обычные IP заблокированы, чистый IP, который ещё работает у вашего провайдера, снова их оживляет. ZeroNet автоматически использует лучшие результаты.</string>
+    <string name="scanner_none_found">На этот раз ни один адрес не ответил. Попробуйте позже или в другой сети.</string>
+    <string name="scanner_port">Порт %1$s</string>
+    <string name="scanner_copy_ip">Копировать %1$s</string>
+
+    <!-- Settings: shared -->
+    <string name="settings_search">Поиск по настройкам</string>
+    <string name="settings_no_results">Нет настроек по запросу «%1$s»</string>
+    <string name="settings_applies_next">Применится при следующем подключении</string>
+    <string name="settings_reconnect_now">Переподключиться сейчас</string>
+    <string name="option_off">Выкл.</string>
+    <string name="option_auto">Авто</string>
+    <string name="option_system">Как в системе</string>
+
+    <!-- Settings: connection -->
+    <string name="settings_connection">Подключение</string>
+    <string name="settings_mode">Режим</string>
+    <string name="settings_mode_vpn">VPN</string>
+    <string name="settings_mode_proxy">Только прокси</string>
+    <string name="settings_mode_vpn_hint">Все приложения идут через ZeroNet.</string>
+    <string name="settings_mode_proxy_hint">Его используют только приложения, которые вы направите на локальный прокси. Значка VPN нет.</string>
+    <string name="settings_autoconnect">Подключаться автоматически</string>
+    <string name="settings_autoconnect_app">При открытии приложения</string>
+    <string name="settings_autoconnect_boot">При запуске телефона</string>
+    <string name="settings_autoswitch">Переключаться на более быстрый сервер</string>
+    <string name="settings_autoswitch_hint">Когда текущий замедляется или отваливается</string>
+    <string name="settings_speed_floor">Минимальная скорость</string>
+    <string name="settings_speed_floor_off_hint">Переключаться, только когда текущий сервер отваливается</string>
+    <string name="settings_speed_floor_low_hint">Уходить с сервера медленнее 1 Мбит/с</string>
+    <string name="settings_speed_floor_medium_hint">Уходить с сервера медленнее 3 Мбит/с</string>
+    <string name="settings_speed_floor_custom_hint">Скорость в кбит/с</string>
+    <string name="settings_speed_floor_low">1 Мбит/с</string>
+    <string name="settings_speed_floor_medium">3 Мбит/с</string>
+    <string name="settings_speed_floor_custom">Своё значение</string>
+    <string name="settings_more_connection">Kill switch, IPv6, MTU</string>
+    <string name="settings_more_connection_hint">Дополнительные параметры подключения</string>
+    <string name="settings_kill_switch">Kill switch</string>
+    <string name="settings_kill_switch_body">Android может блокировать весь интернет, когда ZeroNet не подключён. В системных настройках VPN откройте ZeroNet и включите «Постоянный VPN» и «Блокировать соединения без VPN».</string>
+    <string name="settings_kill_switch_open">Открыть настройки VPN</string>
+    <string name="settings_ipv6">IPv6 через туннель</string>
+    <string name="settings_ipv6_hint">Оставьте выключенным, если сеть этого не требует</string>
+    <string name="settings_mtu">Размер пакета (MTU)</string>
+    <string name="settings_mtu_hint">%1$s работает почти везде. Уменьшите, если некоторые сайты зависают.</string>
+
+    <!-- Settings: servers & sources -->
+    <string name="settings_sources_card">Серверы и источники</string>
+    <string name="settings_sources">Источники серверов</string>
+    <string name="settings_sources_value">%1$s из %2$s публичных списков включены</string>
+    <plurals name="subscriptions_count">
+        <item quantity="one">%1$s подписка</item>
+        <item quantity="few">%1$s подписки</item>
+        <item quantity="many">%1$s подписок</item>
+        <item quantity="other">%1$s подписки</item>
+    </plurals>
+    <string name="settings_preferred_countries">Предпочитаемые страны</string>
+    <string name="settings_preferred_countries_hint">«Самый быстрый» пробует их первыми</string>
+    <string name="settings_refresh">Обновление списков</string>
+    <string name="settings_refresh_auto">Авто</string>
+    <string name="settings_refresh_manual">Вручную</string>
+    <string name="settings_refresh_auto_hint">Списки обновляются при подключении</string>
+    <string name="settings_refresh_manual_hint">Только когда вы потянете вниз на вкладке «Серверы»</string>
+    <string name="settings_subscriptions">Ваши подписки</string>
+    <string name="sources_body">Публичные списки, по которым ищет ZeroNet, и ваши собственные подписки.</string>
+    <string name="sources_public">Публичные списки</string>
+    <string name="sources_tier_0">Проверяются каждые два часа; пробуются первыми</string>
+    <string name="sources_tier_1">Проверяются при каждом подключении</string>
+    <string name="sources_tier_2">Проверяются по необходимости</string>
+    <string name="sources_tier_3">Проверяются при глубоком поиске</string>
+    <string name="sources_no_subscriptions">Вы ещё ничего не добавили.</string>
+    <string name="sources_add_title">Добавить подписку</string>
+    <string name="countries_search">Поиск стран</string>
+
+    <!-- Settings: split tunnelling -->
+    <string name="settings_split">Раздельное туннелирование</string>
+    <string name="settings_iran_direct">Иранские сайты в обход VPN</string>
+    <string name="settings_iran_direct_hint">Иранские сайты и банковские приложения открываются без VPN</string>
+    <string name="settings_apps">Приложения</string>
+    <string name="settings_apps_all">Все</string>
+    <string name="settings_apps_only">Только выбранные</string>
+    <string name="settings_apps_except">Все, кроме выбранных</string>
+    <string name="settings_apps_proxy_note">Действует только в режиме VPN</string>
+    <string name="settings_choose_apps">Выбрать приложения</string>
+    <string name="settings_apps_none">Ничего не выбрано</string>
+    <plurals name="apps_selected">
+        <item quantity="one">%1$s приложение</item>
+        <item quantity="few">%1$s приложения</item>
+        <item quantity="many">%1$s приложений</item>
+        <item quantity="other">%1$s приложения</item>
+    </plurals>
+    <string name="settings_bypass_lan">Локальная сеть в обход VPN</string>
+    <string name="settings_bypass_lan_hint">Принтеры, телевизоры и роутер остаются доступными</string>
+    <string name="apps_body_only">VPN используют только отмеченные приложения.</string>
+    <string name="apps_body_except">Отмеченные приложения идут в обход VPN.</string>
+    <string name="apps_search">Поиск приложений</string>
+
+    <!-- Settings: share over Wi-Fi -->
+    <string name="settings_share">Раздача по Wi-Fi</string>
+    <string name="settings_share_toggle">Раздавать это подключение</string>
+    <string name="settings_share_hint">Устройства в вашей сети Wi-Fi или точке доступа смогут использовать ZeroNet через прокси</string>
+    <string name="settings_share_permission_denied">Android не разрешил доступ к локальной сети, поэтому раздача остаётся выключенной.</string>
+    <string name="settings_share_live">Раздаётся сейчас</string>
+    <string name="settings_share_when_connected">Запустится при подключении</string>
+    <string name="settings_share_no_network">Подключитесь к сети Wi-Fi или включите точку доступа, чтобы раздавать.</string>
+    <string name="settings_share_auth">Защита паролем</string>
+    <string name="settings_share_auth_hint">Необязательно. Другим устройствам он нужен для доступа к прокси.</string>
+    <string name="settings_share_user">Имя пользователя</string>
+    <string name="settings_share_pass">Пароль</string>
+    <string name="settings_share_http_off">Раздача по HTTP отключена, пока задан пароль</string>
+    <string name="settings_share_address">Адрес в этой сети</string>
+    <string name="settings_share_socks">SOCKS5</string>
+    <string name="settings_share_http">HTTP</string>
+    <string name="settings_share_port">Порт %1$s</string>
+    <string name="settings_share_qr_description">QR-код для прокси по адресу %1$s</string>
+    <string name="settings_share_qr_hint">Отсканируйте его на другом устройстве любым прокси-приложением.</string>
+
+    <!-- Settings: anti-censorship -->
+    <string name="settings_evasion">Защита от блокировок</string>
+    <string name="settings_evasion_level">Уровень</string>
+    <string name="settings_evasion_strong">Сильный</string>
+    <string name="settings_evasion_off_hint">Обычные соединения. Быстрее всего, но легче заблокировать.</string>
+    <string name="settings_evasion_auto_hint">Маскирует трафик, только когда сервер заблокирован</string>
+    <string name="settings_evasion_strong_hint">Всегда маскирует трафик. Немного медленнее, но заблокировать гораздо сложнее.</string>
+    <string name="settings_block_quic">Блокировать QUIC</string>
+    <string name="settings_block_quic_hint">Приложения переходят на TCP вместо зависаний</string>
+    <string name="settings_remote_dns">DNS для заблокированных сайтов</string>
+    <string name="settings_remote_dns_hint">Запрос идёт через туннель, поэтому провайдер не видит и не меняет ответ</string>
+    <string name="settings_custom_dns_hint">Свой резолвер (например, 8.8.8.8)</string>
+    <string name="settings_custom_dns_note">Оставьте пустым, чтобы использовать провайдера выше. Принимает IP, tls://… или https://…/dns-query.</string>
+    <string name="settings_block_ads">Блокировать рекламу и трекеры</string>
+    <string name="settings_block_ads_hint">Фильтрует известные рекламные домены для всех приложений</string>
+
+    <!-- Settings: appearance -->
+    <string name="settings_appearance">Оформление</string>
+    <string name="settings_palette">Тема</string>
+    <string name="settings_palette_dynamic_note">Цвета обоев включены, поэтому тема задаёт только цвета подключения</string>
+    <string name="settings_theme_mode">Светлая или тёмная</string>
+    <string name="settings_theme_light">Светлая</string>
+    <string name="settings_theme_dark">Тёмная</string>
+    <string name="settings_amoled">Чистый чёрный</string>
+    <string name="settings_amoled_hint">Экономит заряд на OLED-экранах</string>
+    <string name="settings_dynamic">Цвета обоев</string>
+    <string name="settings_dynamic_hint">Цвета Material You из ваших обоев</string>
+    <string name="settings_language">Язык</string>
+    <string name="settings_motion">Анимация</string>
+    <string name="settings_motion_full">Полная</string>
+    <string name="settings_motion_reduced">Сокращённая</string>
+    <string name="settings_motion_full_hint">Все анимации</string>
+    <string name="settings_motion_reduced_hint">Только простые затухания</string>
+    <string name="palette_golden">Золотая</string>
+    <string name="palette_nightshade">Паслён</string>
+    <string name="palette_arctic">Арктика</string>
+    <string name="palette_sakura">Сакура</string>
+    <string name="palette_paper">Бумага</string>
+    <string name="palette_contrast">Контраст</string>
+
+    <!-- Settings: data & privacy -->
+    <string name="settings_privacy">Данные и приватность</string>
+    <string name="settings_logs">Сохранять логи</string>
+    <string name="settings_logs_hint">По умолчанию выключено. Логи остаются на этом телефоне.</string>
+    <string name="settings_clear_history">Очистить найденные серверы</string>
+    <string name="settings_clear_history_hint">Забыть публичные серверы и результаты проверок. Добавленные вами серверы останутся.</string>
+    <plurals name="clear_history_body">
+        <item quantity="one">Забыть %1$s найденный сервер и результаты его проверок? Добавленные вами серверы останутся.</item>
+        <item quantity="few">Забыть %1$s найденных сервера и результаты их проверок? Добавленные вами серверы останутся.</item>
+        <item quantity="many">Забыть %1$s найденных серверов и результаты их проверок? Добавленные вами серверы останутся.</item>
+        <item quantity="other">Забыть %1$s найденного сервера и результаты их проверок? Добавленные вами серверы останутся.</item>
+    </plurals>
+    <string name="clear_history_nothing">Нет найденных серверов для очистки.</string>
+
+    <!-- Settings: about -->
+    <string name="settings_about">О приложении</string>
+    <string name="settings_version">Версия</string>
+    <string name="settings_engine">Движок</string>
+    <string name="settings_engine_hint">Ядро с открытым кодом, которое управляет подключением</string>
+    <string name="settings_licences">Лицензии открытого кода</string>
+    <string name="settings_licences_hint">ZeroNet — свободное ПО под лицензией MIT</string>
+    <string name="licences_body">ZeroNet построен на этих проектах.</string>
+
+    <!-- Settings search keywords: extra words that find each card (both languages are searched). -->
+    <string name="kw_connection">vpn прокси авто подключение переподключение постоянный kill switch блокировка mtu ipv6 сеть</string>
+    <string name="kw_sources">источники подписка список github страна страны обновление обновить</string>
+    <string name="kw_split">раздельное обход по приложениям приложения исключить маршрут маршрутизация иран локальная сеть lan</string>
+    <string name="kw_share">раздача lan wifi точка доступа модем socks http прокси порт qr пароль</string>
+    <string name="kw_evasion">цензура блокировка фрагментация dpi sni dns doh quic реклама блокировщик трекер</string>
+    <string name="kw_appearance">тема цвет тёмная светлая amoled чёрный язык персидский английский фарси анимация движение</string>
+    <string name="kw_privacy">логи история удалить очистить данные приватность поделиться анонимно сообщество другие помощь</string>
+    <string name="kw_about">версия лицензия исходный код открытый код движок zray обновление апгрейд новое</string>
+
+    <!-- Onboarding -->
+    <string name="onboarding_perm_title">ZeroNet нужны два разрешения</string>
+    <string name="onboarding_perm_text">VPN, чтобы трафик ваших приложений мог идти через туннель, и уведомления, чтобы вы видели, подключены ли вы. Android запрашивает каждое один раз, а позже их можно изменить в системных настройках.</string>
+    <string name="onboarding_allow">Разрешить</string>
+    <string name="onboarding_later">Не сейчас</string>
+
+    <!-- Connection profiles -->
+    <string name="profile_normal">Обычный</string>
+    <string name="profile_fast">Быстрый</string>
+    <string name="profile_gaming">Игровой</string>
+    <string name="profile_normal_hint">Только зашифрованные серверы, с готовыми резервами</string>
+    <string name="profile_fast_hint">Подключается к первому рабочему серверу</string>
+    <string name="profile_gaming_hint">Минимальный пинг, UDP включён, без смены сервера во время игры</string>
+    <string name="gaming_title">ИГРОВОЙ РЕЖИМ</string>
+    <string name="gaming_ping">ПИНГ %1$s мс</string>
+
+    <!-- In-app updates -->
+    <string name="update_sheet_title">Обновление</string>
+    <string name="update_title_available">Вышла версия ZeroNet %1$s</string>
+    <string name="update_title_downloading">Загрузка %1$s</string>
+    <string name="update_title_ready">%1$s готова к установке</string>
+    <string name="update_title_reinstall">Это обновление нельзя установить поверх вашей копии</string>
+    <string name="update_title_failed">Обновление не завершилось</string>
+    <string name="update_whats_new">Что нового</string>
+    <string name="update_size">Загрузка %1$s. Ваши серверы и настройки останутся как есть.</string>
+    <string name="update_progress">%1$s из %2$s</string>
+    <string name="update_ready_hint">Android попросит вас подтвердить установку.</string>
+    <string name="update_allow_hint">Android спросит один раз: разрешите ZeroNet устанавливать приложения, затем вернитесь и нажмите «Установить».</string>
+    <string name="update_reinstall_body">Оно подписано другим ключом, чем ZeroNet на этом телефоне, поэтому Android не установит его поверх. Чтобы получить его, удалите ZeroNet и установите новую версию со страницы релиза. Ваши серверы и настройки будут удалены.</string>
+    <string name="update_now">Обновить сейчас</string>
+    <string name="update_later">Позже</string>
+    <string name="update_cancel">Отмена</string>
+    <string name="update_install">Установить</string>
+    <string name="update_allow">Разрешить установку</string>
+    <string name="update_open_page">Открыть страницу релиза</string>
+    <string name="update_retry">Повторить</string>
+    <string name="settings_updates">Обновления</string>
+    <string name="settings_update_check">Проверить обновления</string>
+    <string name="settings_update_checking">Проверка…</string>
+    <string name="settings_update_latest">У вас последняя версия</string>
+    <string name="settings_update_available">Доступна версия %1$s</string>
+    <string name="settings_update_downloading">Загрузка… %1$s</string>
+    <string name="settings_update_ready">Версия %1$s готова к установке</string>
+    <string name="settings_update_failed">Не удалось проверить: %1$s</string>
+    <string name="settings_share_results">Помогите другим подключиться</string>
+    <string name="settings_share_results_hint">Анонимно делитесь тем, какие публичные серверы и чистые IP сработали в вашей сети, чтобы другие в ней подключались быстрее. Ваши собственные конфиги никогда не отправляются.</string>
+    <string name="settings_kill_switch_app">Блокировать трафик без сервера</string>
+    <string name="settings_kill_switch_app_hint">Пока ZeroNet ищет, перезапускается или ничего не находит, приложения остаются без интернета, а не выходят в сеть без защиты. ZeroNet продолжает попытки, пока сервер не заработает.</string>
+    <string name="stage_blocked">Рабочего сервера пока нет. Трафик заблокирован (kill switch), пока ZeroNet продолжает попытки…</string>
+    <string name="widget_blocked">Заблокировано — поиск</string>
+    <string name="notification_blocked_detail">Kill switch: приложения без сети, пока сервер не заработает</string>
+    <string name="widget_failed">Не удалось подключиться</string>
+    <string name="widget_tap_connect">Нажмите для подключения</string>
+    <string name="widget_tap_disconnect">Нажмите для отключения</string>
+    <string name="widget_toggle">Подключиться или отключиться</string>
+    <string name="widget_description">Подключайтесь одним касанием и смотрите, какой сервер используется</string>
+    <string name="trusted_title">Доверенные сети</string>
+    <string name="trusted_body">В этих сетях ZeroNet остаётся выключенным: он не подключается там автоматически и отключается, когда вы к ним присоединяетесь.</string>
+    <string name="trusted_add">Доверять этой сети (%1$s)</string>
+    <string name="trusted_none">Нет доверенных сетей.</string>
+    <string name="trusted_current">Вы находитесь в этой сети</string>
+    <string name="trusted_remove">Перестать доверять %1$s</string>
+    <string name="trusted_unknown_network">Эта сеть</string>
+    <string name="kind_split">Раздельный путь</string>
+    <string name="kind_quic">QUIC</string>
+    <string name="kind_crowd">Работает у других</string>
+    <string name="kind_hint_split">XHTTP с раздельными путями загрузки и выгрузки: самый трудный для распознавания фильтрами тип.</string>
+    <string name="kind_hint_direct">REALITY: выглядит как посещение реального, нефильтруемого сайта.</string>
+    <string name="kind_hint_cdn">За CDN, например Cloudflare: его блокировка заблокировала бы значительную часть интернета.</string>
+    <string name="kind_hint_quic">Hysteria2 или TUIC поверх UDP: быстро, когда UDP проходит, и бесполезно, когда нет.</string>
+    <string name="kind_hint_other">Обычная конфигурация без маскировки: работает только там, где ещё не фильтруется.</string>
+    <string name="kind_hint_crowd">Другие пользователи ZeroNet сообщили, что этот сервер работает в их сетях.</string>
+    <string name="settings_diagnostics">Диагностика</string>
+    <string name="settings_diag_test">Проверить моё соединение</string>
+    <string name="settings_diag_test_hint">Узнайте, что блокирует ваша сеть и какие типы серверов проходят</string>
+    <string name="settings_diag_logs">Просмотреть журналы</string>
+    <string name="settings_diag_logs_hint">Что ZeroNet пробовал, что ответило и почему возникли сбои</string>
+    <string name="kw_diagnostics">диагностика тест проверка журналы логи отладка проблема не работает dpi dns</string>
+    <string name="diag_title">Проверка соединения</string>
+    <string name="diag_body">Проверяет вашу сеть вне туннеля, затем пробует несколько сохранённых серверов каждого типа.</string>
+    <string name="diag_not_run">Ещё не запускалось.</string>
+    <string name="diag_run">Запустить тест</string>
+    <string name="diag_run_again">Запустить снова</string>
+    <string name="diag_network">Сеть</string>
+    <string name="diag_internet">Обычный интернет</string>
+    <string name="diag_dns">DNS (фильтруемые сайты)</string>
+    <string name="diag_tls">Имена TLS-серверов (DPI)</string>
+    <string name="diag_tunnel">Через туннель</string>
+    <string name="diag_family">Серверы: %1$s</string>
+    <string name="diag_status_pending">Ожидание</string>
+    <string name="diag_status_running">Проверка…</string>
+    <string name="diag_status_ok">Работает</string>
+    <string name="diag_status_warn">Частично</string>
+    <string name="diag_status_bad">Заблокировано</string>
+    <string name="diag_status_skipped">Пропущено</string>
+    <string name="diag_verdict_offline">Сети нет. Сначала подключитесь к Wi-Fi или мобильным данным.</string>
+    <string name="diag_verdict_no_internet">Эта сеть вообще не выходит в интернет, и ни один сервер не ответил.</string>
+    <string name="diag_verdict_families">Сейчас проходят такие типы: %1$s. ZeroNet отдаёт им предпочтение автоматически.</string>
+    <string name="diag_verdict_no_servers">Пока нет сохранённых серверов для проверки. Подключитесь один раз (или обновите список серверов) и запустите тест снова.</string>
+    <string name="diag_verdict_none_work">Ни один из сохранённых серверов не ответил. Обновите список серверов, попробуйте сканер чистых IP или добавьте свою конфигурацию.</string>
+    <string name="logs_title">Журналы</string>
+    <string name="logs_body">Журнал соединения записывает, что пробовал ZeroNet. Включите подробные журналы в разделе «Конфиденциальность», чтобы получить больше данных из ядра.</string>
+    <string name="logs_body_detailed">Подробные журналы включены. Делитесь ими, когда просите о помощи; в них есть имена серверов и ошибки, но не сайты, которые вы посещаете.</string>
+    <string name="logs_connection">Соединение</string>
+    <string name="logs_core">Ядро</string>
+    <string name="logs_empty">Пока ничего не записано.</string>
+    <string name="logs_refresh">Обновить</string>
+    <string name="logs_copy">Копировать</string>
+    <string name="logs_share">Поделиться</string>
+    <string name="logs_clear">Очистить</string>
+</resources>

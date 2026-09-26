@@ -90,6 +90,10 @@ pub enum ComponentId {
     /// The version row: check for an update, or reopen the one found.
     SettingCheckUpdates,
     SettingAutoUpdateToggle,
+    /// Share how found servers fared (crowd reports).
+    SettingShareResultsToggle,
+    /// How deep the config finder searches the public feeds.
+    SettingFinderDepthCycle,
     /// The update dialog's main button (update, restart, retry, open page).
     UpdatePrimary,
     /// The update dialog's second button (later, hide).
@@ -155,6 +159,8 @@ pub enum ComponentId {
     FooterFeedback,
     FooterShowQr,
     FooterFind,
+    /// Start the config finder.
+    FooterFindServers,
     FooterHelp,
     FooterQuit,
 

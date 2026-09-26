@@ -124,6 +124,20 @@
                 android:resource="@xml/update_paths" />
         </provider>
 
+        <!-- Home-screen widget; in :vpn next to the engine it shows. -->
+        <receiver
+            android:name=".service.ZeroWidget"
+            android:exported="false"
+            android:label="@string/app_name"
+            android:process=":vpn">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_info" />
+        </receiver>
+
         <receiver
             android:name=".service.BootReceiver"
             android:exported="true"

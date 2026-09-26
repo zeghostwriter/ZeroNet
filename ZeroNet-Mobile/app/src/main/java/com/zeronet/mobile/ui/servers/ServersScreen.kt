@@ -394,7 +394,7 @@ fun ServerRow(server: Server, active: Boolean, actions: ServersActions, modifier
                 onClick = { actions.onConnect(ConnectTarget.Specific(server.key)) },
             )
             .semantics {
-                contentDescription = "$title, $country, $kind, $delay"
+                contentDescription = "$title, $country, $kind${if (server.crowdVerified) ", " + context.getString(R.string.kind_crowd) else ""}, $delay"
                 if (active) stateDescription = activeLabel
                 customActions = listOf(
                     CustomAccessibilityAction(favLabel) { actions.onFavorite(server, !server.favorite); true },
@@ -410,11 +410,11 @@ fun ServerRow(server: Server, active: Boolean, actions: ServersActions, modifier
             Text(title, style = MaterialTheme.typography.titleSmall, color = c.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Spacer(Modifier.height(2.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Badge(kind, when (server.kind) {
-                    com.zeronet.mobile.model.ServerKind.Direct -> c.accent
-                    com.zeronet.mobile.model.ServerKind.Cdn -> c.info
-                    com.zeronet.mobile.model.ServerKind.Other -> c.muted
-                })
+                Badge(kind, kindColor(server.kind))
+                if (server.crowdVerified) {
+                    Spacer(Modifier.width(6.dp))
+                    Badge(stringResource(R.string.kind_crowd), c.ok)
+                }
                 if (!indent && country.isNotBlank() && country != title) {
                     Spacer(Modifier.width(6.dp))
                     Text(country, style = MaterialTheme.typography.bodySmall, color = c.muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -435,6 +435,19 @@ fun ServerRow(server: Server, active: Boolean, actions: ServersActions, modifier
             iconSize = 20.dp,
         )
         IconAction(ZeroIcons.ChevronEnd, detailsLabel, onClick = { actions.onDetails(server) }, tint = c.muted, iconSize = 18.dp, size = 40.dp)
+    }
+}
+
+/** Badge colour per kind: the harder a kind is to filter, the warmer. */
+@Composable
+fun kindColor(kind: com.zeronet.mobile.model.ServerKind): androidx.compose.ui.graphics.Color {
+    val c = ZeroTheme.colors
+    return when (kind) {
+        com.zeronet.mobile.model.ServerKind.Split -> c.accentHot
+        com.zeronet.mobile.model.ServerKind.Direct -> c.accent
+        com.zeronet.mobile.model.ServerKind.Cdn -> c.info
+        com.zeronet.mobile.model.ServerKind.Quic -> c.warn
+        com.zeronet.mobile.model.ServerKind.Other -> c.muted
     }
 }
 

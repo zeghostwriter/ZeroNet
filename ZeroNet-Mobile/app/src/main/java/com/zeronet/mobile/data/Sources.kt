@@ -16,8 +16,11 @@ data class FeedSource(
     val repo: String,
     val url: String,
     val tier: Int,
+    /** Detached-signature URL (`<url>.sig`); set for the project's own signed list. */
+    val sigUrl: String? = null,
 ) {
     fun toJson(): JSONObject = JSONObject().put("id", id).put("url", url).put("tier", tier)
+        .apply { if (sigUrl != null) put("sig_url", sigUrl) }
 }
 
 object Sources {
@@ -30,7 +33,7 @@ object Sources {
         // when it yields enough, never downloads the big ones. Served from
         // jsDelivr, which is often reachable when raw.githubusercontent.com
         // is not.
-        FeedSource("zeronet", "ZeroNet verified", "zeghostwriter/ZeroNet", "https://cdn.jsdelivr.net/gh/zeghostwriter/ZeroNet@crowd-data/verified.txt", 0),
+        FeedSource("zeronet", "ZeroNet verified", "zeghostwriter/ZeroNet", "https://cdn.jsdelivr.net/gh/zeghostwriter/ZeroNet@crowd-data/verified.txt", 0, "https://cdn.jsdelivr.net/gh/zeghostwriter/ZeroNet@crowd-data/verified.txt.sig"),
         FeedSource("limilco", "liMilCo", "liMilCo/v2r", "$RAW/liMilCo/v2r/main/new_configs.txt", 1),
         FeedSource("sinavm", "SVM", "sinavm/SVM", "$RAW/sinavm/SVM/main/lite/subscriptions/xray/base64/mix", 1),
         FeedSource("anonymou3", "Multi Proxy (tested)", "4n0nymou3/multi-proxy-config-fetcher", "$RAW/4n0nymou3/multi-proxy-config-fetcher/main/configs/proxy_configs_tested.txt", 1),

@@ -55,6 +55,10 @@ class ZeroVpnService : VpnService(), TunnelHost {
                 Engine.disconnect()
                 return START_NOT_STICKY
             }
+            ACTION_SWITCH -> {
+                Engine.switchServer()
+                return START_STICKY
+            }
             ACTION_CONNECT -> Engine.start(this, fromSystem = false)
             // null intent (restart) or SERVICE_INTERFACE (always-on VPN / system)
             else -> {
@@ -210,14 +214,17 @@ class ZeroVpnService : VpnService(), TunnelHost {
     private fun buildNotification(state: ConnState, stats: TrafficStats?): Notification {
         val title: String
         val text: String
+        var showSwitch = false
         when (state) {
             is ConnState.Connected -> {
-                title = getString(R.string.notification_connected)
-                text = if (stats != null) {
+                val ping = getString(R.string.notification_server_ping, state.server.name, state.delayMs)
+                title = if (stats != null) {
                     "↓ ${formatRate(stats.downRate)}   ↑ ${formatRate(stats.upRate)}"
                 } else {
-                    state.server.name
+                    getString(R.string.notification_connected)
                 }
+                text = ping
+                showSwitch = state.pool > 1
             }
             is ConnState.Searching -> {
                 title = getString(R.string.notification_searching)
@@ -226,7 +233,11 @@ class ZeroVpnService : VpnService(), TunnelHost {
                 } else ""
             }
             is ConnState.Connecting -> { title = getString(R.string.notification_connecting); text = state.server?.name.orEmpty() }
-            is ConnState.Reconnecting -> { title = getString(R.string.notification_reconnecting); text = "" }
+            is ConnState.Reconnecting -> if (state.reason == Engine.REASON_BLOCKED) {
+                title = getString(R.string.widget_blocked); text = getString(R.string.notification_blocked_detail)
+            } else {
+                title = getString(R.string.notification_reconnecting); text = ""
+            }
             else -> { title = getString(R.string.app_name); text = "" }
         }
         val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) Notification.Builder(this, CHANNEL) else @Suppress("DEPRECATION") Notification.Builder(this)
@@ -237,9 +248,14 @@ class ZeroVpnService : VpnService(), TunnelHost {
             .setOnlyAlertOnce(true)
             .setShowWhen(false)
             .setContentIntent(openAppIntent())
-            .addAction(
-                Notification.Action.Builder(null, getString(R.string.notification_disconnect), disconnectIntent()).build(),
+        if (showSwitch) {
+            builder.addAction(
+                Notification.Action.Builder(null, getString(R.string.notification_switch), switchIntent()).build(),
             )
+        }
+        builder.addAction(
+            Notification.Action.Builder(null, getString(R.string.notification_disconnect), disconnectIntent()).build(),
+        )
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             builder.setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE)
         }
@@ -257,10 +273,16 @@ class ZeroVpnService : VpnService(), TunnelHost {
         PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
     )
 
+    private fun switchIntent(): PendingIntent = PendingIntent.getService(
+        this, 2, Intent(this, ZeroVpnService::class.java).setAction(ACTION_SWITCH),
+        PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+    )
+
     companion object {
         private const val TAG = "ZeroVpn"
         const val ACTION_CONNECT = "${BuildConfig.APPLICATION_ID}.CONNECT"
         const val ACTION_DISCONNECT = "${BuildConfig.APPLICATION_ID}.DISCONNECT"
+        const val ACTION_SWITCH = "${BuildConfig.APPLICATION_ID}.SWITCH"
         private const val CHANNEL = "tunnel"
         private const val NOTIFICATION_ID = 1
 

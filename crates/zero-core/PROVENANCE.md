@@ -1,6 +1,6 @@
 # Provenance
 
-- License: MPL-2.0, inherited from the workspace.
+- License: MIT, inherited from the workspace.
 - Implementation: original Zray-Core code, including the bounded HTTP/TLS
   protocol sniffer used for route-only and destination-rewrite decisions.
 - Upstream behavioral references: `RESEARCH-01.md` and the Xray-core oracle

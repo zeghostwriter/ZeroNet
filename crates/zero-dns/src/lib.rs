@@ -435,6 +435,62 @@ impl Resolver {
             .clone()
     }
 
+    /// Whether any configured server hands out FakeDNS addresses.
+    pub fn has_fake(&self) -> bool {
+        self.settings
+            .servers
+            .iter()
+            .any(|server| server.endpoint == ResolverEndpoint::FakeDns)
+    }
+
+    /// A view that never answers with FakeDNS addresses, for the runtime's
+    /// own lookups: proxy server names, direct connections, ECH records.
+    ///
+    /// FakeDNS exists for the applications behind the TUN: they get a
+    /// synthetic address at once, and the name travels to the proxy, which
+    /// resolves it remotely. The runtime itself must connect somewhere real,
+    /// so handing the dialer `198.18.x.y` for a proxy server's own name would
+    /// break every connection. Without FakeDNS in the configuration this is
+    /// the resolver itself, sharing its cache.
+    ///
+    /// Memoized like [`Resolver::for_tag`], so the view's cache persists.
+    pub fn without_fake(&self) -> Self {
+        if !self.has_fake() {
+            return self.clone();
+        }
+        const KEY: &str = "\0real";
+        if let Some(view) = lock(&self.views).get(KEY) {
+            return view.clone();
+        }
+        let mut settings = (*self.settings).clone();
+        settings.servers = settings
+            .servers
+            .iter()
+            .filter(|server| server.endpoint != ResolverEndpoint::FakeDns)
+            .cloned()
+            .collect::<Vec<_>>()
+            .into_boxed_slice();
+        let view = Self::with_shared(
+            Arc::new(settings),
+            Arc::clone(&self.tls),
+            Arc::clone(&self.pools),
+        );
+        lock(&self.views)
+            .entry(Arc::from(KEY))
+            .or_insert(view)
+            .clone()
+    }
+
+    /// Keep `previous`'s FakeDNS allocations when this resolver replaces it
+    /// on a configuration reload. Applications cache the synthetic addresses
+    /// they were given; a fresh pool would leave every one of them pointing
+    /// at nothing (or, once reallocated, at another name).
+    pub fn adopt_fake_state(mut self, previous: &Resolver) -> Self {
+        self.fake = Arc::clone(&previous.fake);
+        self.fake_next = Arc::clone(&previous.fake_next);
+        self
+    }
+
     /// Resolve an address without ever changing a literal IP into a DNS query.
     pub async fn resolve_address(
         &self,
@@ -2084,6 +2140,76 @@ mod tests {
             resolver.reverse_fake(first[0]).await.as_deref(),
             Some("example.com")
         );
+    }
+
+    /// A fake catch-all in front of a real resolver: the applications get
+    /// synthetic addresses, the runtime's own view gets the real one, and a
+    /// replacement resolver keeps the mappings handed out before it.
+    #[tokio::test]
+    async fn the_runtime_view_never_sees_fake_addresses() {
+        let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let address = socket.local_addr().unwrap();
+        tokio::spawn(async move {
+            let mut buffer = [0u8; 512];
+            loop {
+                let Ok((len, peer)) = socket.recv_from(&mut buffer).await else { return };
+                let mut response = buffer[..len].to_vec();
+                response[2] = 0x81;
+                response[3] = 0x80;
+                response[6] = 0;
+                response[7] = 1;
+                response.extend_from_slice(&[0xc0, 0x0c, 0, 1, 0, 1, 0, 0, 0, 30, 0, 4, 93, 184, 216, 34]);
+                let _ = socket.send_to(&response, peer).await;
+            }
+        });
+        let server = |endpoint| DnsServer {
+            endpoint,
+            domains: Vec::new(),
+            expect_ips: Vec::new(),
+            skip_fallback: false,
+            tag: None,
+        };
+        let settings = DnsSettings {
+            servers: vec![
+                server(ResolverEndpoint::FakeDns),
+                server(ResolverEndpoint::Udp {
+                    address: Address::parse_host("127.0.0.1"),
+                    port: address.port(),
+                }),
+            ]
+            .into_boxed_slice(),
+            ..DnsSettings::default()
+        };
+        let resolver = Resolver::new(settings.clone());
+        assert!(resolver.has_fake());
+
+        let client = resolver.lookup("proxy.example", QueryStrategy::UseIpv4).await.unwrap();
+        assert!(matches!(client[0], IpAddr::V4(v4) if v4.octets()[0] == 198 && v4.octets()[1] == 18));
+
+        let real = resolver.without_fake();
+        assert!(!real.has_fake());
+        let answer = real.lookup("proxy.example", QueryStrategy::UseIpv4).await.unwrap();
+        assert_eq!(answer, vec![IpAddr::V4(Ipv4Addr::new(93, 184, 216, 34))]);
+        // Memoized: the same view (and cache) every time.
+        assert!(Arc::ptr_eq(&real.cache, &resolver.without_fake().cache));
+        // A synthetic address is still reversible, on the client resolver only.
+        assert_eq!(resolver.reverse_fake(client[0]).await.as_deref(), Some("proxy.example"));
+
+        // A reload with changed DNS settings builds a new resolver; adopting
+        // the old FakeDNS state keeps the address the application holds.
+        let replacement = Resolver::new(settings).adopt_fake_state(&resolver);
+        assert_eq!(replacement.reverse_fake(client[0]).await.as_deref(), Some("proxy.example"));
+        let again = replacement.lookup("proxy.example", QueryStrategy::UseIpv4).await.unwrap();
+        assert_eq!(again, client);
+        let other = replacement.lookup("other.example", QueryStrategy::UseIpv4).await.unwrap();
+        assert_ne!(other, client, "the adopted pool continues, it does not restart");
+    }
+
+    #[tokio::test]
+    async fn a_resolver_without_fakedns_is_its_own_runtime_view() {
+        let resolver = Resolver::new(DnsSettings::default());
+        assert!(!resolver.has_fake());
+        assert!(Arc::ptr_eq(&resolver.cache, &resolver.without_fake().cache));
     }
 
     #[tokio::test]

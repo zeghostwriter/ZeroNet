@@ -259,6 +259,15 @@ mod logging {
         }
     }
 
+    /// Change the level of the installed subscriber.
+    pub fn set_level(level: LevelFilter) -> Result<(), String> {
+        LEVEL
+            .get()
+            .ok_or_else(|| "logging is not initialised".to_string())?
+            .modify(|filter| *filter = level)
+            .map_err(|error| format!("could not change the log level: {error}"))
+    }
+
     /// Install the subscriber once per process; later calls only change the
     /// level.
     pub fn init(data_dir: &Path, level: LevelFilter) -> Result<(), String> {
@@ -558,6 +567,25 @@ pub extern "system" fn Java_com_zeronet_mobile_core_ZrayNative_init<'local>(
     })
 }
 
+/// `setLogLevel(level): String?` — change how much the core logs (to
+/// `zray.log` and logcat) without restarting anything.
+#[no_mangle]
+pub extern "system" fn Java_com_zeronet_mobile_core_ZrayNative_setLogLevel<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    level: JString<'local>,
+) -> jstring {
+    let result = contained(
+        "setLogLevel",
+        || Err("setLogLevel panicked".to_string()),
+        || {
+            let level = logging::parse_level(&read_string(&mut env, &level)?)?;
+            logging::set_level(level)
+        },
+    );
+    outcome(&mut env, result)
+}
+
 /// `setTun(fd, mtu): String?`
 #[no_mangle]
 pub extern "system" fn Java_com_zeronet_mobile_core_ZrayNative_setTun<'local>(
@@ -722,6 +750,51 @@ pub extern "system" fn Java_com_zeronet_mobile_core_ZrayNative_parseLinks<'local
         },
     );
     java_string(&mut env, &answer.to_string())
+}
+
+/// `verifySignature(publicKeyHex, body, signature): Boolean` — whether
+/// `signature` (an `ed25519:<hex>` line) is a valid Ed25519 signature over
+/// `body` for `publicKeyHex`. Used to authenticate the crowd-data lists.
+#[no_mangle]
+pub extern "system" fn Java_com_zeronet_mobile_core_ZrayNative_verifySignature<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    public_key_hex: JString<'local>,
+    body: JString<'local>,
+    signature: JString<'local>,
+) -> jboolean {
+    contained("verifySignature", || JNI_FALSE, || {
+        let ok = (|| -> Option<bool> {
+            let key = read_string(&mut env, &public_key_hex).ok()?;
+            let body = read_string(&mut env, &body).ok()?;
+            let signature = read_string(&mut env, &signature).ok()?;
+            Some(zero_discovery::sign::verify_with(
+                &key,
+                body.as_bytes(),
+                &signature,
+            ))
+        })()
+        .unwrap_or(false);
+        if ok {
+            JNI_TRUE
+        } else {
+            JNI_FALSE
+        }
+    })
+}
+
+/// `builtInPublicKey(): String` — the crowd-data signing key compiled into
+/// the native library, hex-encoded, or empty when no key was built in
+/// (verification is then skipped rather than failing everything).
+#[no_mangle]
+pub extern "system" fn Java_com_zeronet_mobile_core_ZrayNative_builtInPublicKey<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+) -> jstring {
+    let key = contained("builtInPublicKey", String::new, || {
+        zero_discovery::sign::PUBLIC_KEY_HEX.to_string()
+    });
+    java_string(&mut env, &key)
 }
 
 /// `discover(requestJson, listener): Long`

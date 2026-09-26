@@ -1,0 +1,55 @@
+name: create crowd signing key
+
+# Run once, by hand (Actions → create crowd signing key → Run workflow).
+#
+# The crowd-data lists apps trust first — verified.txt (tested servers) and
+# rankings.json (which server works on which network) — are fetched over a
+# censored, filtered link where a CDN or a network in the middle could serve
+# a substitute. verified.txt is the graver risk: it can introduce servers the
+# app has never seen. So each file is signed in CI with an Ed25519 key whose
+# public half is compiled into the app, and the app refuses a body whose
+# signature does not verify.
+#
+# This makes a fresh key pair and prints both halves to the run summary:
+#
+#   * the PUBLIC key — paste it into
+#     crates/zero-discovery/src/sign.rs (PUBLIC_KEY_HEX) and commit;
+#   * the PRIVATE seed — store it as the repository secret CROWD_SIGNING_KEY
+#     (Settings → Secrets and variables → Actions). The harvest and crowd
+#     workflows read it to sign; it never leaves CI.
+#
+# Nothing is committed by this workflow: the private key must never land in
+# the repository, and the public key is pasted in by hand so a human confirms
+# the change to what the app trusts.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  create:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: crowd
+      - run: cargo build --release -p zero-discovery --bin zeronet-sign
+      - name: generate a key pair
+        run: |
+          {
+            echo "### Crowd-data signing key"
+            echo
+            echo "A fresh Ed25519 key pair. Two manual steps make it live:"
+            echo
+            echo "1. Paste the **public key** into \`crates/zero-discovery/src/sign.rs\` (\`PUBLIC_KEY_HEX\`) and commit."
+            echo "2. Store the **private seed** as the repository secret \`CROWD_SIGNING_KEY\` (Settings → Secrets and variables → Actions)."
+            echo
+            echo '```'
+            target/release/zeronet-sign keygen
+            echo '```'
+            echo
+            echo "The private seed is shown only here, in this run's summary. Copy it now; it cannot be recovered. Delete this run afterwards if you like."
+          } >> "$GITHUB_STEP_SUMMARY"

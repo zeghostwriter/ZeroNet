@@ -19,6 +19,8 @@ zero-config = { workspace = true }
 zero-runtime = { workspace = true }
 zero-tun = { workspace = true }
 zero-scanner = { workspace = true }
+# The config finder: feed discovery, liveness tests and the crowd rankings.
+zero-discovery = { workspace = true }
 
 tokio = { workspace = true, features = ["rt-multi-thread", "net", "io-util", "macros", "time", "sync", "signal"] }
 ratatui = { version = "0.29", default-features = false, features = ["crossterm"] }

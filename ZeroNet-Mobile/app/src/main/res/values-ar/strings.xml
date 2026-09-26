@@ -1,0 +1,532 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Service notification and quick-settings tile (used by the :vpn process). -->
+    <string name="notification_channel">حالة الاتصال</string>
+    <string name="notification_connected">متصل</string>
+    <string name="notification_searching">جارٍ البحث عن خادم…</string>
+    <string name="notification_searching_detail">تم فحص %1$d · %2$d يعمل</string>
+    <string name="notification_connecting">جارٍ الاتصال…</string>
+    <string name="notification_reconnecting">جارٍ إعادة الاتصال…</string>
+    <string name="notification_disconnect">قطع الاتصال</string>
+    <string name="notification_switch">تبديل الخادم</string>
+    <string name="notification_server_ping">%1$s · %2$d مِلّي ثانية</string>
+    <string name="tile_connected">متصل</string>
+    <string name="tile_disconnected">مغلق</string>
+    <string name="tile_searching">جارٍ البحث…</string>
+
+    <!-- Tabs -->
+    <string name="tab_home">الرئيسية</string>
+    <string name="tab_servers">الخوادم</string>
+    <string name="tab_scanner">الماسح</string>
+    <string name="tab_settings">الإعدادات</string>
+
+    <!-- Common actions -->
+    <string name="action_add">إضافة</string>
+    <string name="action_back">رجوع</string>
+    <string name="action_cancel">إلغاء</string>
+    <string name="action_clear">مسح</string>
+    <string name="action_close">إغلاق</string>
+    <string name="action_collapse">إخفاء الخوادم</string>
+    <string name="action_connect">اتصال</string>
+    <string name="action_copy_link">نسخ الرابط</string>
+    <string name="action_copy_value">نسخ %1$s</string>
+    <string name="action_delete">حذف</string>
+    <string name="action_details">التفاصيل</string>
+    <string name="action_expand">عرض الخوادم</string>
+    <string name="action_favorite">إضافة إلى المفضلة</string>
+    <string name="action_find_servers">البحث عن خوادم</string>
+    <string name="action_grant_permission">السماح بـ VPN</string>
+    <string name="action_hide_qr">إخفاء رمز QR</string>
+    <string name="action_paste">لصق</string>
+    <string name="action_refresh_servers">تحديث الخوادم</string>
+    <string name="action_remove_subscription">حذف %1$s</string>
+    <string name="action_save">حفظ</string>
+    <string name="action_share">عرض رمز QR</string>
+    <string name="action_test">اختبار</string>
+    <string name="action_test_servers">اختبار الخوادم</string>
+    <string name="action_try_again">حاول مرة أخرى</string>
+    <string name="action_unfavorite">إزالة من المفضلة</string>
+
+    <!-- Home: the orb -->
+    <string name="orb_connect">اتصال</string>
+    <string name="orb_connecting">جارٍ الاتصال</string>
+    <string name="orb_connected">متصل</string>
+    <string name="orb_disconnecting">جارٍ الإيقاف</string>
+    <string name="orb_failed">إعادة المحاولة</string>
+    <string name="orb_action_connect">اتصال</string>
+    <string name="orb_action_disconnect">قطع الاتصال</string>
+    <string name="state_disconnected">غير متصل</string>
+    <string name="state_connecting">جارٍ الاتصال</string>
+    <string name="state_connected_to">متصل بـ %1$s</string>
+    <string name="state_active">متصل الآن</string>
+
+    <!-- Home: the stage line under the orb -->
+    <string name="stage_history">تجربة الخوادم التي عملت سابقًا…</string>
+    <string name="stage_fetch">جلب قوائم خوادم جديدة…</string>
+    <string name="stage_parse">قراءة %1$s خادم…</string>
+    <string name="stage_tcp">فحص %1$s خادم · %2$s متاح</string>
+    <string name="stage_real">اختبار %1$s خادم · %2$s يعمل</string>
+    <string name="stage_connecting">جارٍ تشغيل النفق…</string>
+    <string name="stage_connecting_to">جارٍ الاتصال بـ %1$s…</string>
+    <string name="stage_reconnecting">انقطع الاتصال. جارٍ تبديل الخادم…</string>
+    <string name="stage_chosen_down">إعداداتك لا تستجيب. جارٍ تجربتها مرة أخرى…</string>
+    <string name="stage_disconnecting">جارٍ قطع الاتصال…</string>
+    <string name="stage_connected_pool">الخوادم الاحتياطية جاهزة: %1$s</string>
+
+    <!-- Home: why a connection failed -->
+    <string name="fail_no_server">لم يُعثر على خادم يعمل على هذه الشبكة. حاول بعد دقيقة، أو اضبط مقاومة الحجب على «قوية».</string>
+    <string name="fail_no_network">أنت غير متصل بالإنترنت. تحقق من Wi-Fi أو بيانات الجوال.</string>
+    <string name="fail_vpn_permission">يحتاج ZeroNet إلى إذن لإعداد VPN.</string>
+    <string name="fail_vpn_revoked">استحوذ تطبيق VPN آخر على الاتصال.</string>
+    <string name="fail_core">تعذّر بدء الاتصال. حاول مرة أخرى.</string>
+    <string name="fail_server_unavailable">هذا الخادم لا يستجيب. جرّب الأسرع بدلًا منه.</string>
+
+    <!-- Home: server card and stats -->
+    <string name="server_fastest">الخادم الأسرع</string>
+    <string name="server_fastest_hint">يختاره ZeroNet لك</string>
+    <string name="server_fastest_picked">الأسرع</string>
+    <string name="server_country_best">أفضل خادم في هذا البلد</string>
+    <string name="server_card_action">اختيار خادم</string>
+    <string name="stats_download">تنزيل</string>
+    <string name="stats_upload">رفع</string>
+    <string name="stats_session">مدة الجلسة</string>
+
+    <!-- Units and time -->
+    <string name="unit_bps">بت/ث</string>
+    <string name="unit_kbps">كيلوبت/ث</string>
+    <string name="unit_mbps">ميجابت/ث</string>
+    <string name="unit_gbps">جيجابت/ث</string>
+    <string name="unit_b_value">%1$s بايت</string>
+    <string name="unit_kb_value">%1$s كيلوبايت</string>
+    <string name="unit_mb_value">%1$s ميجابايت</string>
+    <string name="unit_gb_value">%1$s جيجابايت</string>
+    <!-- Isolated LTR so "140 ms" never renders as "ms 140" inside Arabic text. -->
+    <string name="delay_ms">⁦%1$s ms⁩</string>
+    <string name="delay_unknown">—</string>
+    <string name="delay_failed">فشل</string>
+    <string name="ago_never">أبدًا</string>
+    <string name="ago_now">الآن</string>
+    <string name="ago_minutes">قبل %1$s دقيقة</string>
+    <string name="ago_hours">قبل %1$s ساعة</string>
+    <string name="ago_days">قبل %1$s يوم</string>
+
+    <!-- Server words -->
+    <string name="country_unknown">موقع غير معروف</string>
+    <string name="kind_direct">مباشر</string>
+    <string name="kind_cdn">CDN</string>
+    <string name="kind_other">عادي</string>
+    <string name="source_user">أضفته أنت</string>
+    <string name="source_subscription">اشتراكك</string>
+    <string name="source_feed">قائمة عامة · %1$s</string>
+    <string name="source_public">قائمة عامة</string>
+
+    <!-- Server picker sheet -->
+    <string name="picker_title">اختيار خادم</string>
+    <string name="picker_favorites">المفضلة</string>
+    <string name="picker_mine">إعداداتك</string>
+    <string name="picker_subscriptions">اشتراكاتك</string>
+    <string name="server_subscription_hint">يبدّل فقط بين إعدادات هذا الاشتراك</string>
+    <string name="picker_countries">البلدان</string>
+    <string name="picker_empty">لا توجد خوادم بعد. اتصل مرة واحدة وسيجد ZeroNet بعضها.</string>
+
+    <!-- Servers tab -->
+    <plurals name="servers_count">
+        <item quantity="zero">لا خوادم</item>
+        <item quantity="one">خادم واحد</item>
+        <item quantity="two">خادمان</item>
+        <item quantity="few">%1$s خوادم</item>
+        <item quantity="many">%1$s خادمًا</item>
+        <item quantity="other">%1$s خادم</item>
+    </plurals>
+    <plurals name="servers_subtitle">
+        <item quantity="zero">لا خوادم · %2$s يعمل</item>
+        <item quantity="one">خادم واحد · %2$s يعمل</item>
+        <item quantity="two">خادمان · %2$s يعمل</item>
+        <item quantity="few">%1$s خوادم · %2$s يعمل</item>
+        <item quantity="many">%1$s خادمًا · %2$s يعمل</item>
+        <item quantity="other">%1$s خادم · %2$s يعمل</item>
+    </plurals>
+    <string name="servers_subtitle_empty">لم يُعثر على شيء بعد</string>
+    <string name="servers_search">ابحث عن بلد أو اسم</string>
+    <string name="servers_recommended">المقترحة</string>
+    <string name="servers_countries">البلدان</string>
+    <string name="servers_mine">خوادمي</string>
+    <string name="servers_rec_empty_title">لا توجد خوادم مختبَرة بعد</string>
+    <string name="servers_rec_empty_body">اختبر القائمة لترى أي خوادم تعمل على اتصالك.</string>
+    <string name="servers_testing">اختبار %1$s من %2$s…</string>
+    <string name="servers_working_count">%1$s يعمل</string>
+    <string name="servers_subscriptions">الاشتراكات</string>
+    <string name="servers_your_servers">إعداداتك</string>
+    <string name="servers_mine_empty_title">لم تُضِف شيئًا بعد</string>
+    <string name="servers_mine_empty_body">الصق رابط إعداد أو رابط اشتراك.</string>
+    <string name="servers_add_title">إضافة إعدادات</string>
+    <string name="servers_add_body">روابط إعدادات أو رابط اشتراك</string>
+    <string name="servers_no_matches">لا شيء يطابق ”%1$s“</string>
+    <string name="servers_empty_title">لا توجد خوادم بعد</string>
+    <string name="servers_empty_body">اضغط على «البحث عن خوادم». ينزّل ZeroNet قوائم عامة ويختبرها على اتصالك.</string>
+    <string name="servers_finding">جارٍ البحث…</string>
+
+    <!-- Server detail sheet -->
+    <string name="detail_delay">التأخير</string>
+    <string name="detail_error">سبب الفشل</string>
+    <string name="detail_last_tested">آخر اختبار</string>
+    <string name="detail_protocol">البروتوكول</string>
+    <string name="detail_transport">النقل</string>
+    <string name="detail_security">الأمان</string>
+    <string name="detail_address">العنوان</string>
+    <string name="detail_source">المصدر</string>
+    <string name="detail_history">معدّل النجاح</string>
+    <string name="detail_history_value">%1$s من %2$s اختبار</string>
+    <string name="detail_testing">جارٍ الاختبار…</string>
+    <string name="detail_qr_description">رمز QR لرابط هذا الخادم</string>
+    <string name="detail_share_warning">أي شخص يملك هذا الرمز يمكنه استخدام الخادم. شاركه فقط مع من تثق بهم.</string>
+    <string name="detail_delete_confirm">حذف هذا الخادم؟ لا يمكن التراجع عن هذا.</string>
+
+    <!-- Import sheet -->
+    <string name="import_title">إضافة إعدادات</string>
+    <string name="scan_qr">مسح رمز QR</string>
+    <string name="scan_from_photo">من صورة</string>
+    <string name="scan_hint">وجّه الكاميرا إلى رمز QR الخاص بإعداد أو اشتراك.</string>
+    <string name="scan_no_camera">لا يوجد وصول للكاميرا. لا يزال بإمكانك اختيار صورة أو لقطة شاشة للرمز.</string>
+    <string name="scan_not_found">لم يُعثر على رمز QR في تلك الصورة.</string>
+    <string name="import_body">الصق رابط إعداد واحدًا أو أكثر، أو رابط اشتراك.</string>
+    <string name="import_links">الروابط</string>
+    <string name="import_subscription">اشتراك</string>
+    <string name="import_links_placeholder">vless://، vmess://، trojan://، ss://…</string>
+    <string name="import_result">أُضيف %1$s · %2$s موجود مسبقًا · %3$s غير معروف</string>
+    <string name="import_error">تعذّر الاستيراد: %1$s</string>
+    <string name="import_sub_url">https://…</string>
+    <string name="import_sub_name">الاسم (اختياري)</string>
+    <string name="import_sub_invalid">أدخل عنوانًا يبدأ بـ https://</string>
+    <string name="import_sub_hint">يحدّثه ZeroNet مع القوائم العامة.</string>
+
+    <!-- Transient messages -->
+    <string name="msg_copied">تم النسخ</string>
+    <string name="msg_deleted">تم حذف الخادم</string>
+    <string name="msg_subscription_added">أُضيف الاشتراك. جارٍ جلب خوادمه…</string>
+    <string name="msg_vpn_permission_denied">لا يمكن لـ ZeroNet الاتصال بدون إذن VPN</string>
+    <string name="msg_history_cleared">تم مسح الخوادم المكتشَفة</string>
+
+    <!-- Scanner tab -->
+    <string name="scanner_explainer">اعثر على عناوين Cloudflare التي لا تزال تستجيب على شبكتك</string>
+    <string name="scanner_ready">جاهز</string>
+    <string name="scanner_scanning">جارٍ المسح…</string>
+    <string name="scanner_done">انتهى</string>
+    <string name="scanner_idle_hint">حوالي دقيقة</string>
+    <string name="scanner_progress_description">تقدّم المسح</string>
+    <string name="scanner_progress_state">%1$s بالمئة</string>
+    <string name="scanner_scanned">تم المسح</string>
+    <string name="scanner_responsive">استجاب</string>
+    <string name="scanner_best">الأفضل</string>
+    <string name="scanner_start">بدء المسح</string>
+    <string name="scanner_stop">إيقاف</string>
+    <string name="scanner_again">مسح مرة أخرى</string>
+    <string name="scanner_error_title">توقّف المسح</string>
+    <string name="scanner_results">أسرع العناوين</string>
+    <string name="scanner_copy_best">نسخ أفضل %1$s</string>
+    <string name="scanner_how_title">لماذا المسح؟</string>
+    <string name="scanner_how_body">كثير من الخوادم تقع خلف Cloudflare. عندما تُحجب عناوين IP المعتادة له، فإن عنوان IP نظيفًا لا يزال يعمل على مزوّد خدمتك يعيد تشغيلها. يستخدم ZeroNet أفضل النتائج تلقائيًا.</string>
+    <string name="scanner_none_found">لم يستجب أي عنوان هذه المرة. حاول لاحقًا أو على شبكة أخرى.</string>
+    <string name="scanner_port">المنفذ %1$s</string>
+    <string name="scanner_copy_ip">نسخ %1$s</string>
+
+    <!-- Settings: shared -->
+    <string name="settings_search">ابحث في الإعدادات</string>
+    <string name="settings_no_results">لا إعدادات تطابق ”%1$s“</string>
+    <string name="settings_applies_next">يُطبَّق عند الاتصال التالي</string>
+    <string name="settings_reconnect_now">أعد الاتصال الآن</string>
+    <string name="option_off">مغلق</string>
+    <string name="option_auto">تلقائي</string>
+    <string name="option_system">افتراضي النظام</string>
+
+    <!-- Settings: connection -->
+    <string name="settings_connection">الاتصال</string>
+    <string name="settings_mode">الوضع</string>
+    <string name="settings_mode_vpn">VPN</string>
+    <string name="settings_mode_proxy">بروكسي فقط</string>
+    <string name="settings_mode_vpn_hint">كل التطبيقات تمرّ عبر ZeroNet.</string>
+    <string name="settings_mode_proxy_hint">تستخدمه فقط التطبيقات التي توجّهها إلى البروكسي المحلي. بدون أيقونة VPN.</string>
+    <string name="settings_autoconnect">الاتصال تلقائيًا</string>
+    <string name="settings_autoconnect_app">عند فتح التطبيق</string>
+    <string name="settings_autoconnect_boot">عند تشغيل الهاتف</string>
+    <string name="settings_autoswitch">التبديل إلى خادم أسرع</string>
+    <string name="settings_autoswitch_hint">عندما يبطؤ الخادم الحالي أو ينقطع</string>
+    <string name="settings_speed_floor">الحد الأدنى للسرعة</string>
+    <string name="settings_speed_floor_off_hint">بدّل فقط عندما ينقطع الخادم الحالي</string>
+    <string name="settings_speed_floor_low_hint">غادِر أي خادم أقل من 1 ميجابت/ث</string>
+    <string name="settings_speed_floor_medium_hint">غادِر أي خادم أقل من 3 ميجابت/ث</string>
+    <string name="settings_speed_floor_custom_hint">السرعة بالكيلوبت/ث</string>
+    <string name="settings_speed_floor_low">1 ميجابت/ث</string>
+    <string name="settings_speed_floor_medium">3 ميجابت/ث</string>
+    <string name="settings_speed_floor_custom">مخصص</string>
+    <string name="settings_more_connection">مفتاح الإيقاف، IPv6، MTU</string>
+    <string name="settings_more_connection_hint">خيارات اتصال متقدمة</string>
+    <string name="settings_kill_switch">مفتاح الإيقاف</string>
+    <string name="settings_kill_switch_body">يمكن لأندرويد حجب كل الإنترنت متى لم يكن ZeroNet متصلًا. من إعدادات VPN في النظام، افتح ZeroNet وفعّل «VPN دائم التشغيل» و«حظر الاتصالات بدون VPN».</string>
+    <string name="settings_kill_switch_open">فتح إعدادات VPN</string>
+    <string name="settings_ipv6">IPv6 عبر النفق</string>
+    <string name="settings_ipv6_hint">اتركه مغلقًا ما لم تحتجه شبكتك</string>
+    <string name="settings_mtu">حجم الحزمة (MTU)</string>
+    <string name="settings_mtu_hint">%1$s يعمل في كل مكان تقريبًا. اخفضه إذا تعطّلت بعض المواقع.</string>
+
+    <!-- Settings: servers & sources -->
+    <string name="settings_sources_card">الخوادم والمصادر</string>
+    <string name="settings_sources">مصادر الخوادم</string>
+    <string name="settings_sources_value">%1$s من %2$s قائمة عامة مفعّلة</string>
+    <plurals name="subscriptions_count">
+        <item quantity="zero">لا اشتراكات</item>
+        <item quantity="one">اشتراك واحد</item>
+        <item quantity="two">اشتراكان</item>
+        <item quantity="few">%1$s اشتراكات</item>
+        <item quantity="many">%1$s اشتراكًا</item>
+        <item quantity="other">%1$s اشتراك</item>
+    </plurals>
+    <string name="settings_preferred_countries">البلدان المفضّلة</string>
+    <string name="settings_preferred_countries_hint">«الأسرع» يجرّب هذه أولًا</string>
+    <string name="settings_refresh">تحديث القوائم</string>
+    <string name="settings_refresh_auto">تلقائي</string>
+    <string name="settings_refresh_manual">يدوي</string>
+    <string name="settings_refresh_auto_hint">تتحدّث القوائم عند الاتصال</string>
+    <string name="settings_refresh_manual_hint">فقط عند السحب لأسفل في تبويب الخوادم</string>
+    <string name="settings_subscriptions">اشتراكاتك</string>
+    <string name="sources_body">القوائم العامة التي يبحث فيها ZeroNet، واشتراكاتك الخاصة.</string>
+    <string name="sources_public">القوائم العامة</string>
+    <string name="sources_tier_0">تُختبر كل ساعتين؛ وتُجرَّب أولًا</string>
+    <string name="sources_tier_1">تُفحص عند كل اتصال</string>
+    <string name="sources_tier_2">تُفحص عند الحاجة</string>
+    <string name="sources_tier_3">تُفحص في البحث المعمّق</string>
+    <string name="sources_no_subscriptions">لم تُضِف أيًّا منها بعد.</string>
+    <string name="sources_add_title">إضافة اشتراك</string>
+    <string name="countries_search">ابحث عن بلد</string>
+
+    <!-- Settings: split tunnelling -->
+    <string name="settings_split">النفق المنفصل</string>
+    <string name="settings_iran_direct">المواقع الإيرانية تتخطى الـ VPN</string>
+    <string name="settings_iran_direct_hint">المواقع الإيرانية وتطبيقات البنوك تُفتح بدون VPN</string>
+    <string name="settings_apps">التطبيقات</string>
+    <string name="settings_apps_all">الكل</string>
+    <string name="settings_apps_only">المحددة فقط</string>
+    <string name="settings_apps_except">الكل عدا المحددة</string>
+    <string name="settings_apps_proxy_note">يُطبَّق فقط في وضع VPN</string>
+    <string name="settings_choose_apps">اختيار التطبيقات</string>
+    <string name="settings_apps_none">لم يُحدَّد شيء</string>
+    <plurals name="apps_selected">
+        <item quantity="zero">لا تطبيقات</item>
+        <item quantity="one">تطبيق واحد</item>
+        <item quantity="two">تطبيقان</item>
+        <item quantity="few">%1$s تطبيقات</item>
+        <item quantity="many">%1$s تطبيقًا</item>
+        <item quantity="other">%1$s تطبيق</item>
+    </plurals>
+    <string name="settings_bypass_lan">الشبكة المحلية تتخطى الـ VPN</string>
+    <string name="settings_bypass_lan_hint">تبقى الطابعات والتلفزيونات والراوتر في متناولك</string>
+    <string name="apps_body_only">التطبيقات التي تحددها فقط تستخدم الـ VPN.</string>
+    <string name="apps_body_except">التطبيقات التي تحددها تتخطى الـ VPN.</string>
+    <string name="apps_search">ابحث عن تطبيق</string>
+
+    <!-- Settings: share over Wi-Fi -->
+    <string name="settings_share">المشاركة عبر Wi-Fi</string>
+    <string name="settings_share_toggle">مشاركة هذا الاتصال</string>
+    <string name="settings_share_hint">يمكن للأجهزة على شبكة Wi-Fi أو نقطة الاتصال لديك استخدام ZeroNet عبر بروكسي</string>
+    <string name="settings_share_permission_denied">لم يسمح أندرويد بالوصول إلى الشبكة المحلية، لذا بقيت المشاركة مغلقة.</string>
+    <string name="settings_share_live">قيد المشاركة الآن</string>
+    <string name="settings_share_when_connected">يبدأ عند الاتصال</string>
+    <string name="settings_share_no_network">اتصل بشبكة Wi-Fi أو شغّل نقطة الاتصال للمشاركة.</string>
+    <string name="settings_share_auth">الحماية بكلمة مرور</string>
+    <string name="settings_share_auth_hint">اختياري. تحتاجه الأجهزة الأخرى لاستخدام البروكسي.</string>
+    <string name="settings_share_user">اسم المستخدم</string>
+    <string name="settings_share_pass">كلمة المرور</string>
+    <string name="settings_share_http_off">مشاركة HTTP مغلقة أثناء ضبط كلمة مرور</string>
+    <string name="settings_share_address">العنوان على هذه الشبكة</string>
+    <string name="settings_share_socks">SOCKS5</string>
+    <string name="settings_share_http">HTTP</string>
+    <string name="settings_share_port">المنفذ %1$s</string>
+    <string name="settings_share_qr_description">رمز QR للبروكسي على %1$s</string>
+    <string name="settings_share_qr_hint">امسحه على الجهاز الآخر بأي تطبيق بروكسي.</string>
+
+    <!-- Settings: anti-censorship -->
+    <string name="settings_evasion">مقاومة الحجب</string>
+    <string name="settings_evasion_level">الشدة</string>
+    <string name="settings_evasion_strong">قوية</string>
+    <string name="settings_evasion_off_hint">اتصالات عادية. الأسرع، لكن أسهل في الحجب.</string>
+    <string name="settings_evasion_auto_hint">يخفي حركة البيانات فقط عندما يُحجب خادم</string>
+    <string name="settings_evasion_strong_hint">يخفي حركة البيانات دائمًا. أبطأ قليلًا، لكن أصعب بكثير في الحجب.</string>
+    <string name="settings_block_quic">حظر QUIC</string>
+    <string name="settings_block_quic_hint">تلجأ التطبيقات إلى TCP بدل التعطّل</string>
+    <string name="settings_remote_dns">DNS للمواقع المحجوبة</string>
+    <string name="settings_remote_dns_hint">يُطلب عبر النفق، فلا يستطيع مزوّد خدمتك رؤية الجواب أو تغييره</string>
+    <string name="settings_custom_dns_hint">محلّل مخصص (مثل 8.8.8.8)</string>
+    <string name="settings_custom_dns_note">اتركه فارغًا لاستخدام مزوّد من الأعلى. يقبل عنوان IP أو ‏tls://…‎ أو ‏https://…/dns-query‎.</string>
+    <string name="settings_block_ads">حظر الإعلانات والمتتبّعات</string>
+    <string name="settings_block_ads_hint">يفلتر نطاقات الإعلانات المعروفة لكل التطبيقات</string>
+
+    <!-- Settings: appearance -->
+    <string name="settings_appearance">المظهر</string>
+    <string name="settings_palette">السمة</string>
+    <string name="settings_palette_dynamic_note">ألوان الخلفية مفعّلة، لذا تحدّد السمة ألوان الاتصال فقط</string>
+    <string name="settings_theme_mode">فاتح أو داكن</string>
+    <string name="settings_theme_light">فاتح</string>
+    <string name="settings_theme_dark">داكن</string>
+    <string name="settings_amoled">أسود خالص</string>
+    <string name="settings_amoled_hint">يوفّر الطاقة على شاشات OLED</string>
+    <string name="settings_dynamic">ألوان الخلفية</string>
+    <string name="settings_dynamic_hint">ألوان Material You من خلفيتك</string>
+    <string name="settings_language">اللغة</string>
+    <string name="settings_motion">الحركة</string>
+    <string name="settings_motion_full">كاملة</string>
+    <string name="settings_motion_reduced">مخفّضة</string>
+    <string name="settings_motion_full_hint">كل الحركات</string>
+    <string name="settings_motion_reduced_hint">تلاشٍ بسيط فقط</string>
+    <string name="palette_golden">ذهبي</string>
+    <string name="palette_nightshade">ليلي</string>
+    <string name="palette_arctic">قطبي</string>
+    <string name="palette_sakura">ساكورا</string>
+    <string name="palette_paper">ورقي</string>
+    <string name="palette_contrast">تباين</string>
+
+    <!-- Settings: data & privacy -->
+    <string name="settings_privacy">البيانات والخصوصية</string>
+    <string name="settings_logs">حفظ السجلّات</string>
+    <string name="settings_logs_hint">مغلق افتراضيًا. تبقى السجلّات على هذا الهاتف.</string>
+    <string name="settings_clear_history">مسح الخوادم المكتشَفة</string>
+    <string name="settings_clear_history_hint">نسيان الخوادم العامة ونتائج الاختبارات. تبقى الخوادم التي أضفتها.</string>
+    <plurals name="clear_history_body">
+        <item quantity="zero">نسيان الخوادم المكتشَفة ونتائج اختباراتها؟ تبقى الخوادم التي أضفتها.</item>
+        <item quantity="one">نسيان خادم مكتشَف واحد ونتائج اختباره؟ تبقى الخوادم التي أضفتها.</item>
+        <item quantity="two">نسيان خادمين مكتشَفين ونتائج اختباريهما؟ تبقى الخوادم التي أضفتها.</item>
+        <item quantity="few">نسيان %1$s خوادم مكتشَفة ونتائج اختباراتها؟ تبقى الخوادم التي أضفتها.</item>
+        <item quantity="many">نسيان %1$s خادمًا مكتشَفًا ونتائج اختباراتها؟ تبقى الخوادم التي أضفتها.</item>
+        <item quantity="other">نسيان %1$s خادم مكتشَف ونتائج اختباراتها؟ تبقى الخوادم التي أضفتها.</item>
+    </plurals>
+    <string name="clear_history_nothing">لا توجد خوادم مكتشَفة لمسحها.</string>
+
+    <!-- Settings: about -->
+    <string name="settings_about">حول</string>
+    <string name="settings_version">الإصدار</string>
+    <string name="settings_engine">المحرّك</string>
+    <string name="settings_engine_hint">النواة مفتوحة المصدر التي تُشغّل الاتصال</string>
+    <string name="settings_licences">تراخيص المصدر المفتوح</string>
+    <string name="settings_licences_hint">ZeroNet برنامج حر بموجب رخصة MIT</string>
+    <string name="licences_body">بُني ZeroNet على هذه المشاريع.</string>
+
+    <!-- Settings search keywords: extra words that find each card (both languages are searched). -->
+    <string name="kw_connection">vpn بروكسي اتصال تلقائي إعادة اتصال دائم التشغيل مفتاح الإيقاف mtu ipv6 شبكة</string>
+    <string name="kw_sources">مصادر اشتراك قائمة github بلد بلدان تحديث تجديد</string>
+    <string name="kw_split">نفق منفصل تخطي لكل تطبيق تطبيقات استثناء توجيه مسار إيران محلي lan شبكة محلية</string>
+    <string name="kw_share">مشاركة lan wifi نقطة اتصال socks http بروكسي منفذ qr كلمة مرور</string>
+    <string name="kw_evasion">حجب رقابة فلترة تجزئة dpi sni dns doh quic إعلانات حظر إعلانات متتبع</string>
+    <string name="kw_appearance">سمة لون ألوان داكن فاتح amoled أسود لغة عربية إنجليزية فارسية حركة أنيميشن</string>
+    <string name="kw_privacy">سجلات تاريخ حذف مسح بيانات خصوصية مشاركة مجهول جماعي آخرون مساعدة</string>
+    <string name="kw_about">إصدار ترخيص رخصة كود مصدري مفتوح المصدر محرك zray تحديث ترقية جديد</string>
+
+    <!-- Onboarding -->
+    <string name="onboarding_perm_title">يحتاج ZeroNet إلى إذنين</string>
+    <string name="onboarding_perm_text">إذن VPN لتمرّ حركة بيانات تطبيقاتك عبر النفق، وإذن الإشعارات لترى إن كنت متصلًا. يطلب أندرويد كلًّا منهما مرة واحدة، ويمكنك تغييرهما لاحقًا من إعدادات النظام.</string>
+    <string name="onboarding_allow">السماح</string>
+    <string name="onboarding_later">ليس الآن</string>
+
+    <!-- Connection profiles -->
+    <string name="profile_normal">عادي</string>
+    <string name="profile_fast">سريع</string>
+    <string name="profile_gaming">ألعاب</string>
+    <string name="profile_normal_hint">خوادم مشفّرة فقط، مع خوادم احتياطية جاهزة</string>
+    <string name="profile_fast_hint">يتصل بأول خادم يعمل</string>
+    <string name="profile_gaming_hint">أقل زمن استجابة، UDP مفعّل، بلا تبديل خوادم أثناء اللعب</string>
+    <string name="gaming_title">وضع الألعاب</string>
+    <string name="gaming_ping">زمن الاستجابة %1$s ms</string>
+
+    <!-- In-app updates -->
+    <string name="update_sheet_title">تحديث</string>
+    <string name="update_title_available">صدر ZeroNet %1$s</string>
+    <string name="update_title_downloading">جارٍ تنزيل %1$s</string>
+    <string name="update_title_ready">%1$s جاهز للتثبيت</string>
+    <string name="update_title_reinstall">هذا التحديث لا يمكن تثبيته فوق نسختك</string>
+    <string name="update_title_failed">لم يكتمل التحديث</string>
+    <string name="update_whats_new">الجديد</string>
+    <string name="update_size">حجم التنزيل %1$s. تبقى خوادمك وإعداداتك كما هي.</string>
+    <string name="update_progress">%1$s من %2$s</string>
+    <string name="update_ready_hint">سيطلب منك أندرويد تأكيد التثبيت.</string>
+    <string name="update_allow_hint">يطلب أندرويد مرة واحدة: اسمح لـ ZeroNet بتثبيت التطبيقات، ثم عُد واضغط «تثبيت».</string>
+    <string name="update_reinstall_body">هذا الإصدار موقّع بمفتاح مختلف عن ZeroNet الموجود على هذا الهاتف، لذا لن يثبّته أندرويد فوقه. للحصول عليه، احذف ZeroNet وثبّت النسخة الجديدة من صفحة الإصدار. ستُحذف خوادمك وإعداداتك.</string>
+    <string name="update_now">تحديث الآن</string>
+    <string name="update_later">لاحقًا</string>
+    <string name="update_cancel">إلغاء</string>
+    <string name="update_install">تثبيت</string>
+    <string name="update_allow">السماح بالتثبيت</string>
+    <string name="update_open_page">فتح صفحة الإصدار</string>
+    <string name="update_retry">حاول مرة أخرى</string>
+    <string name="settings_updates">التحديثات</string>
+    <string name="settings_update_check">التحقق من التحديثات</string>
+    <string name="settings_update_checking">جارٍ التحقق…</string>
+    <string name="settings_update_latest">لديك أحدث إصدار</string>
+    <string name="settings_update_available">الإصدار %1$s متاح</string>
+    <string name="settings_update_downloading">جارٍ التنزيل… %1$s</string>
+    <string name="settings_update_ready">الإصدار %1$s جاهز للتثبيت</string>
+    <string name="settings_update_failed">تعذّر التحقق: %1$s</string>
+    <string name="settings_share_results">ساعِد الآخرين على الاتصال</string>
+    <string name="settings_share_results_hint">يشارك بشكل مجهول أي خوادم عامة وعناوين IP نظيفة عملت على شبكتك، ليتصل الآخرون عليها بسرعة أكبر. لا تُرسَل إعداداتك الخاصة أبدًا.</string>
+    <string name="settings_kill_switch_app">حظر البيانات بدون خادم</string>
+    <string name="settings_kill_switch_app_hint">أثناء بحث ZeroNet أو إعادة تشغيله أو عدم عثوره على شيء، لا تحصل التطبيقات على إنترنت بدلاً من الخروج دون حماية. يواصل ZeroNet المحاولة حتى يعمل أحد الخوادم.</string>
+    <string name="stage_blocked">لا يوجد خادم يعمل بعد. البيانات محظورة (مفتاح الإيقاف) بينما يواصل ZeroNet المحاولة…</string>
+    <string name="widget_blocked">محظور — جارٍ البحث</string>
+    <string name="notification_blocked_detail">مفتاح الإيقاف: التطبيقات غير متصلة حتى يعمل أحد الخوادم</string>
+    <string name="widget_failed">تعذّر الاتصال</string>
+    <string name="widget_tap_connect">اضغط للاتصال</string>
+    <string name="widget_tap_disconnect">اضغط لقطع الاتصال</string>
+    <string name="widget_toggle">اتصال أو قطع اتصال</string>
+    <string name="widget_description">اتصل بضغطة واحدة وشاهد الخادم المستخدم</string>
+    <string name="trusted_title">الشبكات الموثوقة</string>
+    <string name="trusted_body">يبقى ZeroNet متوقفاً على هذه الشبكات: لا يتصل تلقائياً هناك، ويقطع الاتصال عند انضمامك إلى إحداها.</string>
+    <string name="trusted_add">الوثوق بهذه الشبكة (%1$s)</string>
+    <string name="trusted_none">لا توجد شبكات موثوقة.</string>
+    <string name="trusted_current">أنت على هذه الشبكة</string>
+    <string name="trusted_remove">إيقاف الوثوق بـ %1$s</string>
+    <string name="trusted_unknown_network">هذه الشبكة</string>
+    <string name="kind_split">مسار منفصل</string>
+    <string name="kind_quic">QUIC</string>
+    <string name="kind_crowd">يعمل لدى الآخرين</string>
+    <string name="kind_hint_split">XHTTP بمسارَي رفع وتنزيل منفصلين: أصعب نوع تتعرّف عليه أنظمة الترشيح.</string>
+    <string name="kind_hint_direct">REALITY: يبدو وكأنه زيارة لموقع حقيقي غير مُرشَّح.</string>
+    <string name="kind_hint_cdn">خلف شبكة CDN مثل Cloudflare: حظره يعني حظر جزء كبير من الويب.</string>
+    <string name="kind_hint_quic">Hysteria2 أو TUIC عبر UDP: سريع عندما يمر UDP، وعديم الفائدة عندما لا يمر.</string>
+    <string name="kind_hint_other">إعداد عادي بدون تمويه: يعمل فقط حيث لم يُرشَّح بعد.</string>
+    <string name="kind_hint_crowd">أبلغ مستخدمو ZeroNet آخرون أن هذا الخادم يعمل على شبكاتهم.</string>
+    <string name="settings_diagnostics">التشخيص</string>
+    <string name="settings_diag_test">اختبار اتصالي</string>
+    <string name="settings_diag_test_hint">اكتشف ما تحظره شبكتك وأي أنواع الخوادم يمر عبرها</string>
+    <string name="settings_diag_logs">عرض السجلات</string>
+    <string name="settings_diag_logs_hint">ما حاوله ZeroNet، وما الذي استجاب، ولماذا فشلت الأمور</string>
+    <string name="kw_diagnostics">تشخيص اختبار حل مشاكل سجلات تصحيح مشكلة لا يعمل dpi dns</string>
+    <string name="diag_title">اختبار الاتصال</string>
+    <string name="diag_body">يفحص شبكتك خارج النفق، ثم يجرّب عدداً من الخوادم المحفوظة من كل نوع.</string>
+    <string name="diag_not_run">لم يُشغَّل بعد.</string>
+    <string name="diag_run">تشغيل الاختبار</string>
+    <string name="diag_run_again">تشغيل مرة أخرى</string>
+    <string name="diag_network">الشبكة</string>
+    <string name="diag_internet">إنترنت عادي</string>
+    <string name="diag_dns">DNS (المواقع المُرشَّحة)</string>
+    <string name="diag_tls">أسماء خوادم TLS (DPI)</string>
+    <string name="diag_tunnel">عبر النفق</string>
+    <string name="diag_family">الخوادم: %1$s</string>
+    <string name="diag_status_pending">في الانتظار</string>
+    <string name="diag_status_running">جارٍ الاختبار…</string>
+    <string name="diag_status_ok">يعمل</string>
+    <string name="diag_status_warn">جزئياً</string>
+    <string name="diag_status_bad">محظور</string>
+    <string name="diag_status_skipped">تم التخطي</string>
+    <string name="diag_verdict_offline">لا توجد شبكة. اتصل أولاً بشبكة Wi-Fi أو ببيانات الجوال.</string>
+    <string name="diag_verdict_no_internet">هذه الشبكة لا تصل إلى الإنترنت إطلاقاً، ولم يستجب أي خادم.</string>
+    <string name="diag_verdict_families">حالياً تمر هذه الأنواع: %1$s. يفضّلها ZeroNet تلقائياً.</string>
+    <string name="diag_verdict_no_servers">لا توجد خوادم محفوظة لاختبارها بعد. اتصل مرة واحدة (أو حدّث قائمة الخوادم) ثم شغّل الاختبار مرة أخرى.</string>
+    <string name="diag_verdict_none_work">لم يستجب أي من الخوادم المحفوظة. حدّث قائمة الخوادم، أو جرّب ماسح عناوين IP النظيفة، أو أضف إعداداً خاصاً بك.</string>
+    <string name="logs_title">السجلات</string>
+    <string name="logs_body">سجل الاتصال يدوّن ما حاوله ZeroNet. فعّل السجلات المفصّلة في الخصوصية للحصول على المزيد من النواة.</string>
+    <string name="logs_body_detailed">السجلات المفصّلة مُفعّلة. شاركها عند طلب المساعدة؛ فهي تحتوي على أسماء الخوادم والأخطاء، وليس المواقع التي تزورها.</string>
+    <string name="logs_connection">الاتصال</string>
+    <string name="logs_core">النواة</string>
+    <string name="logs_empty">لا شيء مُسجَّل بعد.</string>
+    <string name="logs_refresh">تحديث</string>
+    <string name="logs_copy">نسخ</string>
+    <string name="logs_share">مشاركة</string>
+    <string name="logs_clear">مسح</string>
+</resources>

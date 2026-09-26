@@ -7,6 +7,7 @@
 pub mod grpc;
 pub mod httpupgrade;
 pub mod hysteria2;
+pub mod quic_pool;
 mod relay;
 pub mod tcp_header;
 pub mod tuic;

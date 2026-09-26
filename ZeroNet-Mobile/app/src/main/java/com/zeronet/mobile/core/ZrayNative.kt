@@ -18,6 +18,9 @@ object ZrayNative {
 
     @JvmStatic external fun init(dataDir: String, logLevel: String): String?
 
+    /** Change the core's log level ("warn", "info", "debug"…) live. */
+    @JvmStatic external fun setLogLevel(level: String): String?
+
     @JvmStatic external fun setTun(fd: Int, mtu: Int): String?
     @JvmStatic external fun start(configJson: String): String?
     @JvmStatic external fun reload(configJson: String): String?
@@ -28,6 +31,11 @@ object ZrayNative {
 
     @JvmStatic external fun buildConfig(requestJson: String): String
     @JvmStatic external fun parseLinks(text: String): String
+
+    /** Whether [signature] (an `ed25519:<hex>` line) signs [body] for [publicKeyHex]. */
+    @JvmStatic external fun verifySignature(publicKeyHex: String, body: String, signature: String): Boolean
+    /** The crowd-data signing key compiled into the library (hex), or "" when none was. */
+    @JvmStatic external fun builtInPublicKey(): String
 
     @JvmStatic external fun discover(requestJson: String, listener: NativeListener): Long
     @JvmStatic external fun testLinks(requestJson: String, listener: NativeListener): Long

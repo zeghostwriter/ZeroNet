@@ -132,6 +132,7 @@ fn parse_link_inner(link: &str) -> Result<ShareLink, String> {
         // `hy2://` is the short form the Hysteria project itself documents.
         "hysteria2" | "hy2" => parse_hysteria2(rest),
         "tuic" => parse_tuic(rest),
+        "wireguard" | "wg" => parse_wireguard(rest),
         _ => Err(format!("unsupported share link scheme {scheme:?}")),
     }
 }
@@ -573,6 +574,52 @@ fn parse_tuic(rest: &str) -> Result<ShareLink, String> {
             password: password.into(),
         }),
         stream,
+        mux: MuxConfig::default(),
+    };
+    outbound.validate()?;
+    Ok(ShareLink {
+        link: String::new(),
+        remark: p.remark,
+        outbound,
+    })
+}
+
+/// `wireguard://<private key>@host:port?publickey=…&address=…&reserved=a,b,c`
+/// with optional `presharedkey`, `keepalive` and AmneziaWG `jc`/`jmin`/
+/// `jmax`/`s1`…`s4`/`h1`…`h4` — the form v2rayN, NekoBox and Hiddify share.
+fn parse_wireguard(rest: &str) -> Result<ShareLink, String> {
+    let p = split_link(rest)?;
+    let get = |k: &str| p.query.get(k).map(String::as_str).filter(|v| !v.is_empty());
+    let mut settings = serde_json::json!({
+        "secretKey": p.credential,
+        "endpoint": if p.host.contains(':') { format!("[{}]:{}", p.host.trim_matches(|c| c == '[' || c == ']'), p.port) } else { format!("{}:{}", p.host, p.port) },
+        "peers": [{"publicKey": get("publickey").or(get("peerpublickey")).unwrap_or("")}],
+        "address": get("address").or(get("ip")).unwrap_or(""),
+    });
+    if let Some(psk) = get("presharedkey") {
+        settings["peers"][0]["presharedKey"] = psk.into();
+    }
+    if let Some(keepalive) = get("keepalive").and_then(|v| v.parse::<u64>().ok()) {
+        settings["keepAlive"] = keepalive.into();
+    }
+    if let Some(reserved) = get("reserved") {
+        let bytes: Vec<u64> = reserved.split(',').filter_map(|b| b.trim().parse().ok()).collect();
+        settings["reserved"] = if bytes.len() == 3 { bytes.into() } else { reserved.into() };
+    }
+    let mut amnezia = serde_json::Map::new();
+    for key in ["jc", "jmin", "jmax", "s1", "s2", "s3", "s4", "h1", "h2", "h3", "h4"] {
+        if let Some(value) = get(key) {
+            amnezia.insert(key.into(), value.parse::<u64>().map(Into::into).unwrap_or_else(|_| value.into()));
+        }
+    }
+    if !amnezia.is_empty() {
+        settings["amnezia"] = amnezia.into();
+    }
+    let protocol = crate::xray_json::parse_amnezia_wireguard(Some(&settings), "wireguard link")?;
+    let outbound = Outbound {
+        tag: Arc::from("proxy"),
+        protocol,
+        stream: StreamSettings::default(),
         mux: MuxConfig::default(),
     };
     outbound.validate()?;

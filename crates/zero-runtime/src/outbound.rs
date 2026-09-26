@@ -438,6 +438,39 @@ pub async fn connect_with_resolver(
     .await
 }
 
+/// The tunnel parameters of a WireGuard/AmneziaWG outbound.
+pub fn wireguard_stack_params(wireguard: &zero_config::AmneziaWireguardConfig) -> zero_protocol::wg_stack::WgStackParams {
+    use zero_protocol::amnezia::{AmneziaParams, HeaderRange, RangeU16};
+    let range = |r: zero_config::AmneziaHeaderRange| HeaderRange { min: r.min, max: r.max };
+    zero_protocol::wg_stack::WgStackParams {
+        private_key: wireguard.private_key,
+        peer_public_key: wireguard.peer_public_key,
+        preshared_key: wireguard.preshared_key,
+        addresses: vec![wireguard.tunnel_address],
+        persistent_keepalive: wireguard.persistent_keepalive,
+        obfuscation: AmneziaParams {
+            junk_count: wireguard.junk_count,
+            junk_size: RangeU16 { min: wireguard.junk_min, max: wireguard.junk_max },
+            init_padding: RangeU16::fixed(wireguard.s1),
+            response_padding: RangeU16::fixed(wireguard.s2),
+            cookie_padding: RangeU16::fixed(wireguard.s3),
+            transport_padding: RangeU16::fixed(wireguard.s4),
+            init_header: range(wireguard.h1),
+            response_header: range(wireguard.h2),
+            cookie_header: range(wireguard.h3),
+            transport_header: range(wireguard.h4),
+        },
+        reserved: wireguard.reserved,
+        // Names are resolved inside the tunnel (Cloudflare's resolver, which
+        // WARP and most WireGuard exits reach), never on the local network.
+        dns: if wireguard.tunnel_address.is_ipv4() {
+            "1.1.1.1:53".parse().expect("a literal address")
+        } else {
+            "[2606:4700:4700::1111]:53".parse().expect("a literal address")
+        },
+    }
+}
+
 async fn connect_resolved(
     outbound: &Outbound,
     destination: &Destination,
@@ -459,9 +492,19 @@ async fn connect_resolved(
             return connect_mux_pooled(outbound, destination, address, addrs, resolver).await;
         }
     }
-    if matches!(&outbound.protocol, OutboundProtocol::AmneziaWireguard(_)) {
-        return Err(Failure::new(FailureKind::LocalPolicy, Stage::RequestSent)
-            .with_detail("AmneziaWG carries UDP/IP packets, not a TCP stream"));
+    if let OutboundProtocol::AmneziaWireguard(wireguard) = &outbound.protocol {
+        // Streams ride a user-space TCP stack inside the tunnel, which the
+        // outbound's UDP datagrams share (one WireGuard session per peer).
+        let peer = *addrs.first().ok_or_else(|| {
+            Failure::new(FailureKind::DnsNoData, Stage::Resolving).with_detail("WireGuard peer has no address")
+        })?;
+        let stack = zero_protocol::wg_stack::shared(peer, wireguard_stack_params(wireguard)).map_err(|error| {
+            Failure::new(FailureKind::LocalPolicy, Stage::SocketConnected).with_detail(error)
+        })?;
+        return stack
+            .connect_host(&destination.address, destination.port)
+            .await
+            .map_err(|error| Failure::new(FailureKind::TcpTimeout, Stage::RequestSent).with_detail(error));
     }
     if let OutboundProtocol::Hysteria2(hysteria) = &outbound.protocol {
         let fallback_host = address.host_string();

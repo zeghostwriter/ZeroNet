@@ -6,6 +6,7 @@ import android.net.NetworkCapabilities
 import android.telephony.TelephonyManager
 import android.util.Log
 import com.zeronet.mobile.BuildConfig
+import com.zeronet.mobile.core.ZrayNative
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -83,12 +84,23 @@ object Crowd {
         val cached = file(context)
         val age = System.currentTimeMillis() - cached.lastModified()
         if (cached.exists() && age < TTL_MS) return read(cached)
+        // The compiled-in signing key, if any: while set, a freshly
+        // downloaded ranking must carry a matching `<url>.sig` or it is
+        // refused. A build with no key skips the check and behaves as before.
+        val key = runCatching { ZrayNative.builtInPublicKey() }.getOrNull().orEmpty()
         val routes = listOfNotNull(Proxy.NO_PROXY, tunnel)
         for (route in routes) {
             for (url in RANKING_URLS) {
                 val text = runCatching { get(url, route, timeoutMs) }.getOrNull() ?: continue
                 val parsed = runCatching { JSONObject(text) }.getOrNull() ?: continue
                 if (parsed.optInt("v") != 1) continue
+                if (key.isNotEmpty()) {
+                    val sig = runCatching { get("$url.sig", route, timeoutMs) }.getOrNull()
+                    if (sig == null || !ZrayNative.verifySignature(key, text, sig)) {
+                        Log.w(TAG, "rankings signature did not verify for $url")
+                        continue
+                    }
+                }
                 runCatching {
                     val tmp = File(cached.parentFile, "rankings.tmp")
                     tmp.writeText(text)
@@ -106,7 +118,7 @@ object Crowd {
     fun picks(rankings: JSONObject, network: String, limit: Int): List<Pick> {
         val nets = rankings.optJSONObject("nets") ?: return emptyList()
         val out = LinkedHashMap<String, Pick>()
-        for (name in listOf(network, ALL).distinct()) {
+        for (name in fallbacks(network)) {
             val servers = nets.optJSONObject(name)?.optJSONArray("servers") ?: continue
             for (i in 0 until servers.length()) {
                 val s = servers.optJSONObject(i) ?: continue
@@ -123,12 +135,25 @@ object Crowd {
     /** Clean Cloudflare addresses others found on [network]. */
     fun cleanIps(rankings: JSONObject, network: String): List<CleanIp> {
         val nets = rankings.optJSONObject("nets") ?: return emptyList()
-        val list = nets.optJSONObject(network)?.optJSONArray("clean_ips")
-            ?: nets.optJSONObject(ALL)?.optJSONArray("clean_ips")
+        val list = fallbacks(network).firstNotNullOfOrNull { nets.optJSONObject(it)?.optJSONArray("clean_ips") }
             ?: return emptyList()
         return (0 until list.length()).mapNotNull { i ->
             list.optJSONObject(i)?.let { CleanIp(it.optString("ip"), it.optInt("ms", -1)) }?.takeIf { it.ip.isNotEmpty() }
         }
+    }
+
+    /**
+     * The ranking buckets to read for [network], most specific first: the
+     * exact network, then its country (carriers share a list, so an Iranian
+     * user on a small carrier still gets a list ranked by other Iranians),
+     * then the worldwide fallback. A country is only known for cellular
+     * networks (`cell:<mcc><mnc>` → `mcc:<mcc>`).
+     */
+    private fun fallbacks(network: String): List<String> {
+        val country = network.removePrefix("cell:")
+            .takeIf { it != network && it.length in 5..6 && it.all(Char::isDigit) }
+            ?.let { "mcc:${it.take(3)}" }
+        return listOfNotNull(network, country, ALL).distinct()
     }
 
     // ------------------------------------------------------------ writing

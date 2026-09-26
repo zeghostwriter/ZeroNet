@@ -24,7 +24,7 @@ members = [
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.95"
-license = "MPL-2.0"
+license = "MIT"
 repository = "https://github.com/zray/zray-core"
 
 [workspace.dependencies]
@@ -122,7 +122,7 @@ opt-level = "s"
 [patch.crates-io]
 # The ordinary crates.io rustls API cannot control ClientHello extension order,
 # GREASE, or padding. Keep the exact shaping support pinned to the same audited
-# MPL-2.0 revision used by the bundled Xray reference.
+# revision used by the bundled Xray reference (the fork itself is MPL-2.0).
 rustls = { git = "https://github.com/aimalygin/shaped-rustls", rev = "3a131beaef0183b0cb61e5a9070a703b6be39ed3" }
 # TUN userspace stack with local fixes for per-connection memory: duplicate
 # sockets from retransmitted SYNs and orphaned connections held for two
