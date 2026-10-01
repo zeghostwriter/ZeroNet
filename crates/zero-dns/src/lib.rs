@@ -1677,14 +1677,21 @@ fn parse_trust_anchor(blob: &[u8]) -> Vec<rustls_pki_types::CertificateDer<'stat
 }
 
 fn normalize_name(name: &str) -> Result<Arc<str>, ResolveError> {
-    let name = name.trim().trim_end_matches('.').to_ascii_lowercase();
+    // Names are almost always already trimmed, dot-free and lowercase, and the
+    // result is an `Arc<str>` that allocates anyway, so the intermediate
+    // `String` is only worth building when the name needs changing.
+    let name = name.trim().trim_end_matches('.');
     if name.is_empty() {
         return Err(ResolveError::EmptyName);
     }
     if name.len() > MAX_NAME {
         return Err(ResolveError::NameTooLong);
     }
-    Ok(Arc::from(name))
+    if name.bytes().any(|b| b.is_ascii_uppercase()) {
+        Ok(Arc::from(name.to_ascii_lowercase()))
+    } else {
+        Ok(Arc::from(name))
+    }
 }
 
 fn filter_strategy(mut ips: Vec<IpAddr>, strategy: QueryStrategy) -> Vec<IpAddr> {
@@ -1696,7 +1703,67 @@ fn filter_strategy(mut ips: Vec<IpAddr>, strategy: QueryStrategy) -> Vec<IpAddr>
     ips
 }
 
+/// `normalize_pattern(value) == name`, without building the normalized form.
+/// `name` has already been through `normalize_name`, so it is trimmed, has no
+/// trailing dot and is lowercase. This runs per pattern per candidate server
+/// on every uncached query, so the `String` the normalizing form built is
+/// worth avoiding.
+fn equals_normalized(value: &str, name: &str) -> bool {
+    let value = value.trim().trim_end_matches('.');
+    value.len() == name.len()
+        && value
+            .bytes()
+            .zip(name.bytes())
+            .all(|(a, b)| a.to_ascii_lowercase() == b)
+}
+
+/// `name.ends_with(&format!(".{value}"))` for a normalized `value`, without
+/// the `format!`.
+fn ends_with_label(value: &str, name: &str) -> bool {
+    let value = value.trim().trim_end_matches('.');
+    // The dot has to be a real label boundary in `name`, one byte before the
+    // value's own length.
+    match name.len().checked_sub(value.len() + 1) {
+        Some(at) if name.as_bytes()[at] == b'.' => equals_normalized(value, &name[at + 1..]),
+        _ => false,
+    }
+}
+
 fn domain_matches(pattern: &DomainPattern, name: &str) -> bool {
+    match pattern {
+        DomainPattern::Full(value) => equals_normalized(value, name),
+        DomainPattern::Suffix(value) => {
+            equals_normalized(value, name) || ends_with_label(value, name)
+        }
+        DomainPattern::Keyword(value) => {
+            // `name` is already lowercase, so a needle that is too needs no
+            // allocation; only an uppercase one does, and that is rare.
+            if value.bytes().any(|b| b.is_ascii_uppercase()) {
+                name.contains(&value.to_ascii_lowercase())
+            } else {
+                name.contains(value.as_ref())
+            }
+        }
+        DomainPattern::Regex(value) => Regex::new(value)
+            .map(|regex| regex.is_match(name))
+            .unwrap_or(false),
+        DomainPattern::Geosite(_) => false,
+    }
+}
+
+#[cfg(test)]
+fn normalize_pattern(value: &str) -> String {
+    value.trim().trim_end_matches('.').to_ascii_lowercase()
+}
+
+/// The allocating form of [`domain_matches`], kept as the definition the
+/// allocation-free one is checked against.
+///
+/// `domain_matches` runs per pattern per candidate server on every uncached
+/// query, and used to build a `String` per pattern (and a `format!` for every
+/// suffix). These are the expressions it replaced.
+#[cfg(test)]
+fn domain_matches_allocating(pattern: &DomainPattern, name: &str) -> bool {
     match pattern {
         DomainPattern::Full(value) => normalize_pattern(value) == name,
         DomainPattern::Suffix(value) => {
@@ -1711,8 +1778,99 @@ fn domain_matches(pattern: &DomainPattern, name: &str) -> bool {
     }
 }
 
-fn normalize_pattern(value: &str) -> String {
-    value.trim().trim_end_matches('.').to_ascii_lowercase()
+#[cfg(test)]
+mod domain_pattern_tests {
+    use super::{domain_matches, domain_matches_allocating, normalize_name, ResolveError};
+
+    fn pattern(value: &str) -> zero_config::routing::DomainPattern {
+        zero_config::routing::DomainPattern::parse(value)
+    }
+
+    /// The two forms must agree on every pattern kind, at every casing and
+    /// trailing-dot shape, against names as `candidates` passes them.
+    #[test]
+    fn the_allocation_free_matcher_agrees_with_the_allocating_one() {
+        let patterns = [
+            "full:example.com",
+            "full:Example.COM",
+            "full:example.com.",
+            "full:  example.com  ",
+            "full:ex",
+            "full:example.co",
+            "full:example.comm",
+            "domain:example.com",
+            "domain:Example.COM",
+            "domain:example.com.",
+            "domain:com",
+            "domain:ample.com",
+            "domain:example.co",
+            "keyword:tracker",
+            "keyword:Tracker",
+            "keyword:track",
+            "regexp:^ads[0-9]+\\.",
+            "regexp:[unclosed",
+            "geosite:category-ads-all",
+        ];
+        let names = [
+            "example.com",
+            "a.example.com",
+            "a.b.example.com",
+            "notexample.com",
+            "example.com.evil.net",
+            "ex",
+            "example.co",
+            "example.comm",
+            "com",
+            "ample.com",
+            "tracker.example",
+            "ads12.example",
+            "ad.example",
+        ];
+        for spec in patterns {
+            let parsed = pattern(spec);
+            for name in names {
+                assert_eq!(
+                    domain_matches(&parsed, name),
+                    domain_matches_allocating(&parsed, name),
+                    "{spec} against {name}"
+                );
+            }
+        }
+    }
+
+    /// `normalize_name` skips the lowercase copy when it can, so the
+    /// properties that copy provided are checked on their own.
+    #[test]
+    fn normalize_name_agrees_with_a_straight_lowercase() {
+        for input in [
+            "example.com",
+            "EXAMPLE.com",
+            "Example.Com",
+            "example.com.",
+            "  example.com  ",
+            "ExAmPlE.CoM.",
+            "a",
+            "xn--bcher-kva.example",
+        ] {
+            let want = input.trim().trim_end_matches('.').to_ascii_lowercase();
+            assert_eq!(
+                normalize_name(input).map(|got| got.to_string()),
+                Ok(want),
+                "{input:?}"
+            );
+        }
+        assert!(matches!(normalize_name(""), Err(ResolveError::EmptyName)));
+        assert!(matches!(
+            normalize_name("   "),
+            Err(ResolveError::EmptyName)
+        ));
+        assert!(matches!(normalize_name("."), Err(ResolveError::EmptyName)));
+        let long = "a".repeat(300);
+        assert!(matches!(
+            normalize_name(&long),
+            Err(ResolveError::NameTooLong)
+        ));
+    }
 }
 
 /// Reports a raced query's time when it finishes or is aborted.

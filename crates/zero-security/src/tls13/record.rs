@@ -104,11 +104,15 @@ impl RecordCrypter {
     }
 
     fn nonce(&self) -> [u8; 12] {
+        // RFC 8446 §5.3: the 12-byte nonce is the static IV with the 64-bit
+        // sequence number XORed into its last 8 bytes. Those 8 bytes are one
+        // contiguous big-endian word, so the whole xor is one load, one xor
+        // and one store instead of eight byte loads and eight byte stores
+        // with a bounds check each. This runs on every record, twice when
+        // sealing (the tag is computed over the same nonce).
         let mut n = self.static_iv;
-        let seq = self.seq.to_be_bytes();
-        for (i, b) in seq.iter().enumerate() {
-            n[4 + i] ^= b;
-        }
+        let seq = u64::from_be_bytes(n[4..12].try_into().unwrap()) ^ self.seq;
+        n[4..12].copy_from_slice(&seq.to_be_bytes());
         n
     }
 

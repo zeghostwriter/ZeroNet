@@ -198,8 +198,12 @@ impl<S> VisionStream<S> {
     where
         S: AsyncRead + Unpin,
     {
-        let mut scratch = [0u8; READ_CHUNK];
-        let mut read_buf = ReadBuf::new(&mut scratch);
+        // Read straight into the buffer the bytes are heading for. A stack
+        // scratch array of READ_CHUNK bytes is zeroed on every call and then
+        // copied over byte for byte, so the steady state paid a memset and a
+        // second pass over every byte of the connection for nothing.
+        self.read_input.reserve(READ_CHUNK);
+        let mut read_buf = ReadBuf::uninit(self.read_input.spare_capacity_mut());
         match Pin::new(&mut self.inner).poll_read(cx, &mut read_buf) {
             Poll::Ready(Ok(())) => {
                 let n = read_buf.filled().len();
@@ -207,7 +211,10 @@ impl<S> VisionStream<S> {
                     self.eof = true;
                     Poll::Ready(Ok(false))
                 } else {
-                    self.read_input.extend_from_slice(&scratch[..n]);
+                    // `filled` is always a prefix of what was handed in, so
+                    // exactly these `n` bytes were written and are now
+                    // initialised.
+                    unsafe { self.read_input.advance_mut(n) };
                     Poll::Ready(Ok(true))
                 }
             }

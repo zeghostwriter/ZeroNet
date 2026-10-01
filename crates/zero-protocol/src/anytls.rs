@@ -295,6 +295,15 @@ impl<S> AnyTlsStream<S> {
         out.extend_from_slice(&(payload.len() as u16).to_be_bytes());
         out.extend_from_slice(payload);
     }
+
+    /// Decode the frame header at the head of the read buffer. The caller has
+    /// already established that at least `HEADER_LEN` bytes are buffered.
+    fn peek_header(&self) -> io::Result<FrameHeader> {
+        let raw: [u8; HEADER_LEN] = self.read_buf.data()[..HEADER_LEN]
+            .try_into()
+            .expect("header length checked");
+        decode_header(&raw)
+    }
 }
 
 impl<S: AsyncRead + Unpin> AsyncRead for AnyTlsStream<S> {
@@ -327,12 +336,16 @@ impl<S: AsyncRead + Unpin> AsyncRead for AnyTlsStream<S> {
 
             // Header first, then the whole frame; both usually arrive in the
             // same transport read.
+            //
+            // The header is decoded once and carried in `header`. It cannot
+            // change between sizing the fill, filling, and dispatching, and
+            // decoding it re-reads the bytes and walks the command allow-list,
+            // so decoding it per step is the same work three times per frame.
+            let mut header: Option<FrameHeader> = None;
             let mut need = HEADER_LEN;
             if this.read_buf.len() >= HEADER_LEN {
-                let raw: [u8; HEADER_LEN] = this.read_buf.data()[..HEADER_LEN]
-                    .try_into()
-                    .expect("header length checked");
-                need += decode_header(&raw)?.length;
+                header = Some(this.peek_header()?);
+                need += header.expect("just set").length;
             }
             if this.read_buf.len() < need {
                 match this
@@ -355,10 +368,8 @@ impl<S: AsyncRead + Unpin> AsyncRead for AnyTlsStream<S> {
                     Poll::Pending if delivered => return Poll::Ready(Ok(())),
                     Poll::Pending => return Poll::Pending,
                 }
-                let raw: [u8; HEADER_LEN] = this.read_buf.data()[..HEADER_LEN]
-                    .try_into()
-                    .expect("header length checked");
-                let need = HEADER_LEN + decode_header(&raw)?.length;
+                header = Some(this.peek_header()?);
+                let need = HEADER_LEN + header.expect("just set").length;
                 match this.read_buf.poll_fill(Pin::new(&mut this.inner), cx, need) {
                     Poll::Ready(Ok(true)) => {}
                     Poll::Ready(Ok(false)) if delivered => return Poll::Ready(Ok(())),
@@ -374,10 +385,13 @@ impl<S: AsyncRead + Unpin> AsyncRead for AnyTlsStream<S> {
                 }
             }
 
-            let raw: [u8; HEADER_LEN] = this.read_buf.data()[..HEADER_LEN]
-                .try_into()
-                .expect("header length checked");
-            let header = decode_header(&raw)?;
+            // Every path above either decodes the header or fills until it can.
+            let Some(header) = header else {
+                return Poll::Ready(Err(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "truncated AnyTLS frame header",
+                )));
+            };
             let frame_len = HEADER_LEN + header.length;
             match header.command {
                 CMD_PSH if header.stream_id == this.stream_id => {

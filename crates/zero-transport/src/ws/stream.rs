@@ -7,7 +7,7 @@ use std::io;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
-use bytes::{Buf, BytesMut};
+use bytes::{Buf, BufMut, BytesMut};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
 use zero_core::{Failure, FailureKind, Stage};
 
@@ -251,16 +251,22 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for WebSocketStream<S> {
                 return Poll::Ready(Ok(()));
             }
 
-            // Read straight into the frame buffer rather than through a stack
-            // scratch buffer and a second copy.
-            let start = this.read_buf.len();
-            this.read_buf.resize(start + READ_CHUNK, 0);
-            let mut rb = ReadBuf::new(&mut this.read_buf[start..]);
-            let polled = Pin::new(&mut this.inner).poll_read(cx, &mut rb);
-            let filled = rb.filled().len();
-            this.read_buf.truncate(start + filled);
-            match polled {
+            // Read straight into the frame buffer. `resize(_, 0)` zeroed the
+            // whole chunk on every read, over bytes the socket then overwrote.
+            this.read_buf.reserve(READ_CHUNK);
+            let (ptr, len) = {
+                let chunk = this.read_buf.spare_capacity_mut();
+                (chunk.as_mut_ptr().cast(), chunk.len())
+            };
+            // SAFETY: `spare_capacity_mut` just handed out this region, and
+            // `reserve` guarantees it is at least READ_CHUNK long.
+            let mut rb = unsafe { ReadBuf::uninit(std::slice::from_raw_parts_mut(ptr, len)) };
+            match Pin::new(&mut this.inner).poll_read(cx, &mut rb) {
                 Poll::Ready(Ok(())) => {
+                    let filled = rb.filled().len();
+                    // SAFETY: `filled` is the prefix the reader wrote, so these
+                    // bytes are initialised.
+                    unsafe { this.read_buf.advance_mut(filled) };
                     if filled == 0 {
                         // Peer closed without a CLOSE frame.
                         this.read_closed = true;
