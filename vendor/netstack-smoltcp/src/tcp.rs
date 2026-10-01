@@ -48,8 +48,41 @@ enum TcpSocketState {
 /// timeout, holding its buffers the whole time.
 const ORPHAN_LINGER: std::time::Duration = std::time::Duration::from_secs(30);
 
+/// How many connections may exist at once.
+///
+/// Every admitted SYN costs a socket plus four buffers, two of them sized by
+/// `TCP_WINDOW` and two half that, which at the window `zero-tun` asks for is
+/// the 192 KB per connection `PATCHES.md` records. That memory stays resident
+/// for the life of the connection, and nothing else bounded the total: the
+/// live-flow set only stopped retransmitted SYNs from duplicating a
+/// connection, so a peer opening connections faster than they closed grew it
+/// without limit from a few bytes per attempt. This matches
+/// `UDP_INFLIGHT_LIMIT` in the runtime, which bounds the other half of the
+/// same interface; past it a new SYN is refused and existing connections are
+/// untouched.
+const MAX_LIVE_SOCKETS: usize = 512;
+
 /// The four-tuple a TCP connection is known by.
 type Flow = (SocketAddr, SocketAddr);
+
+/// Record `flow` as live if it is not already and there is room, and report
+/// whether the caller should build a socket for it.
+///
+/// Reused by every SYN so a retransmission lands on the connection the first
+/// one created, and so the live count is bounded: the set is emptied one entry
+/// at a time as sockets close, and until then it is the only record of what is
+/// still holding buffers.
+fn claim(flows: &SpinMutex<HashSet<Flow>>, flow: Flow) -> bool {
+    let mut live = flows.lock();
+    if live.contains(&flow) {
+        return false;
+    }
+    if live.len() >= MAX_LIVE_SOCKETS {
+        return false;
+    }
+    live.insert(flow);
+    true
+}
 
 struct TcpSocketControl {
     /// Which connection this is, so its entry in the live-flow set can be
@@ -161,7 +194,14 @@ impl TcpListenerRunner {
             // the first one: upstream built a second socket (and a second
             // stream the proxy would dial out for) that never saw traffic
             // and lived for the full idle timeout.
-            if packet.syn() && !packet.ack() && flows.lock().insert((src_addr, dst_addr)) {
+            //
+            // `claim` holds the set's lock across both decisions, so two SYNs
+            // racing in cannot both pass a check the other has just made stale.
+            // It admits the connection, and returns false when the flow is
+            // already live or the live set is full, in which case nothing is
+            // allocated and the SYN falls through to the smoltcp socket below,
+            // which has none to answer.
+            if packet.syn() && !packet.ack() && claim(&flows, (src_addr, dst_addr)) {
                 let mut socket = TcpSocket::new(
                     TcpSocketBuffer::new(vec![0u8; tcp_recv_buffer_size as usize]),
                     TcpSocketBuffer::new(vec![0u8; tcp_send_buffer_size as usize]),
@@ -651,5 +691,46 @@ impl AsyncWrite for TcpStream {
         self.notify.notify_one();
 
         Poll::Pending
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn flow(port: u16) -> Flow {
+        (
+            SocketAddr::new(std::net::IpAddr::V4(std::net::Ipv4Addr::new(10, 0, 0, 1)), port),
+            SocketAddr::new(std::net::IpAddr::V4(std::net::Ipv4Addr::new(1, 1, 1, 1)), 443),
+        )
+    }
+
+    /// A peer's SYN budget is finite, and a retransmitted SYN never takes a
+    /// second slot.
+    #[test]
+    fn a_flow_is_claimed_once_and_only_up_to_the_limit() {
+        let flows: SpinMutex<HashSet<Flow>> = SpinMutex::new(HashSet::new());
+
+        for port in 0..MAX_LIVE_SOCKETS as u16 {
+            assert!(claim(&flows, flow(port)), "flow {port} should be admitted");
+        }
+        assert_eq!(flows.lock().len(), MAX_LIVE_SOCKETS);
+
+        // The connection the limit is there to hold back: nothing is allocated
+        // for it, so it leaves no trace in the set either.
+        assert!(
+            !claim(&flows, flow(MAX_LIVE_SOCKETS as u16)),
+            "a SYN past the limit must not be admitted"
+        );
+        assert_eq!(flows.lock().len(), MAX_LIVE_SOCKETS);
+
+        // A retransmission of a live flow is the duplicate the live set has
+        // always rejected, and must stay rejected at the limit too.
+        assert!(!claim(&flows, flow(0)));
+
+        // A closed connection frees its slot for the next SYN.
+        flows.lock().remove(&flow(7));
+        assert!(claim(&flows, flow(MAX_LIVE_SOCKETS as u16)));
+        assert_eq!(flows.lock().len(), MAX_LIVE_SOCKETS);
     }
 }
