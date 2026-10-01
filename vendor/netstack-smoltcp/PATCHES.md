@@ -26,3 +26,11 @@ costs about 192 KB instead of the 1.3 MB the defaults allocated.
    FIN too. A half-close therefore never finished while the application
    kept its end open, and the relay above could not start its half-close
    timer, holding the connection for the full idle timeout instead.
+5. **The number of live connections is capped.** Patch 1 stopped a
+   retransmitted SYN from duplicating a connection but bounded nothing else,
+   so a peer opening connections faster than they closed allocated a socket
+   and four buffers per SYN, about 192 KB each, for the life of the
+   connection. The live-four-tuple set now also admits a flow only while under
+   `MAX_LIVE_SOCKETS` (512, the bound `UDP_INFLIGHT_LIMIT` applies to the UDP
+   half of this interface). A SYN past it builds nothing and is answered with
+   a RST; existing connections are unaffected.
