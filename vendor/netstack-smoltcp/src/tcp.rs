@@ -48,8 +48,30 @@ enum TcpSocketState {
 /// timeout, holding its buffers the whole time.
 const ORPHAN_LINGER: std::time::Duration = std::time::Duration::from_secs(30);
 
+/// How many connections may exist at once. Each costs the 192 KB of buffers
+/// `PATCHES.md` records, held for the life of the connection, and the live-flow
+/// set only stopped retransmitted SYNs from duplicating one rather than
+/// bounding the total. Matches `UDP_INFLIGHT_LIMIT` in the runtime, which
+/// bounds the UDP half of the same interface.
+const MAX_LIVE_SOCKETS: usize = 512;
+
 /// The four-tuple a TCP connection is known by.
 type Flow = (SocketAddr, SocketAddr);
+
+/// Record `flow` as live if it is new and there is room, and report whether the
+/// caller should build a socket. One lock covers both, so two SYNs racing in
+/// cannot both pass a check the other has just made stale.
+fn claim(flows: &SpinMutex<HashSet<Flow>>, flow: Flow) -> bool {
+    let mut live = flows.lock();
+    if live.contains(&flow) {
+        return false;
+    }
+    if live.len() >= MAX_LIVE_SOCKETS {
+        return false;
+    }
+    live.insert(flow);
+    true
+}
 
 struct TcpSocketControl {
     /// Which connection this is, so its entry in the live-flow set can be
@@ -161,7 +183,10 @@ impl TcpListenerRunner {
             // the first one: upstream built a second socket (and a second
             // stream the proxy would dial out for) that never saw traffic
             // and lived for the full idle timeout.
-            if packet.syn() && !packet.ack() && flows.lock().insert((src_addr, dst_addr)) {
+            //
+            // A refused SYN allocates nothing and falls through to the socket
+            // loop, which has none to answer and so sends a RST.
+            if packet.syn() && !packet.ack() && claim(&flows, (src_addr, dst_addr)) {
                 let mut socket = TcpSocket::new(
                     TcpSocketBuffer::new(vec![0u8; tcp_recv_buffer_size as usize]),
                     TcpSocketBuffer::new(vec![0u8; tcp_send_buffer_size as usize]),
@@ -651,5 +676,42 @@ impl AsyncWrite for TcpStream {
         self.notify.notify_one();
 
         Poll::Pending
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn flow(port: u16) -> Flow {
+        (
+            SocketAddr::new(std::net::IpAddr::V4(std::net::Ipv4Addr::new(10, 0, 0, 1)), port),
+            SocketAddr::new(std::net::IpAddr::V4(std::net::Ipv4Addr::new(1, 1, 1, 1)), 443),
+        )
+    }
+
+    #[test]
+    fn a_flow_is_claimed_once_and_only_up_to_the_limit() {
+        let flows: SpinMutex<HashSet<Flow>> = SpinMutex::new(HashSet::new());
+
+        for port in 0..MAX_LIVE_SOCKETS as u16 {
+            assert!(claim(&flows, flow(port)), "flow {port} should be admitted");
+        }
+        assert_eq!(flows.lock().len(), MAX_LIVE_SOCKETS);
+
+        // Past the limit nothing is admitted, so nothing is allocated either.
+        assert!(
+            !claim(&flows, flow(MAX_LIVE_SOCKETS as u16)),
+            "a SYN past the limit must not be admitted"
+        );
+        assert_eq!(flows.lock().len(), MAX_LIVE_SOCKETS);
+
+        // A retransmission still takes no second slot, at the limit included.
+        assert!(!claim(&flows, flow(0)));
+
+        // A closed connection frees its slot.
+        flows.lock().remove(&flow(7));
+        assert!(claim(&flows, flow(MAX_LIVE_SOCKETS as u16)));
+        assert_eq!(flows.lock().len(), MAX_LIVE_SOCKETS);
     }
 }
