@@ -508,21 +508,49 @@ fn build_udp_packet(
     if udp_len > u16::MAX as usize {
         return Err("AmneziaWG UDP packet is too large".into());
     }
-    let mut udp = vec![0u8; udp_len];
-    udp[..2].copy_from_slice(&source_port.to_be_bytes());
-    udp[2..4].copy_from_slice(&destination_port.to_be_bytes());
-    udp[4..6].copy_from_slice(&(udp_len as u16).to_be_bytes());
-    udp[8..].copy_from_slice(payload);
-    let checksum = udp_checksum(source, destination, &udp);
-    udp[6..8].copy_from_slice(&checksum.to_be_bytes());
+    let header_len = match (source, destination) {
+        (IpAddr::V4(_), IpAddr::V4(_)) => 20,
+        (IpAddr::V6(_), IpAddr::V6(_)) => 40,
+        _ => return Err("AmneziaWG tunnel and destination address families differ".into()),
+    };
+    // Only IPv4 states its own total length in a 16-bit field; the IPv6 payload
+    // field holds `udp_len`, which the check above already bounds.
+    let total_len = header_len + udp_len;
+    if header_len == 20 && total_len > u16::MAX as usize {
+        return Err("AmneziaWG IPv4 packet is too large".into());
+    }
 
+    // One buffer, payload copied once: the shape this replaces built the UDP
+    // segment separately, copied it behind the header, then summed a third
+    // buffer holding another copy. Only the head is zeroed — the UDP checksum
+    // field must be clear until the pass below, and the IP bytes are all
+    // written by hand. Past ~1 KiB the clearing is real stores over bytes about
+    // to be overwritten, so the buffer is reserved instead and grown.
+    let head_len = header_len + 8;
+    let (mut packet, payload_to_append) = if payload.len() < 1024 {
+        let mut packet = vec![0u8; total_len];
+        packet[head_len..].copy_from_slice(payload);
+        (packet, false)
+    } else {
+        let mut packet = Vec::with_capacity(total_len);
+        packet.resize(head_len, 0);
+        (packet, true)
+    };
+    packet[header_len..header_len + 2].copy_from_slice(&source_port.to_be_bytes());
+    packet[header_len + 2..header_len + 4].copy_from_slice(&destination_port.to_be_bytes());
+    packet[header_len + 4..header_len + 6].copy_from_slice(&(udp_len as u16).to_be_bytes());
+    if payload_to_append {
+        packet.extend_from_slice(payload);
+    }
+
+    let checksum = udp_checksum(source, destination, &packet[header_len..]);
+    packet[header_len + 6..header_len + 8].copy_from_slice(&checksum.to_be_bytes());
+
+    // The IP header does not enter the UDP pseudo-header as bytes, only as the
+    // addresses and protocol already passed above, so it can go in afterwards
+    // and be summed on its own.
     match (source, destination) {
         (IpAddr::V4(source), IpAddr::V4(destination)) => {
-            let total_len = 20usize + udp_len;
-            if total_len > u16::MAX as usize {
-                return Err("AmneziaWG IPv4 packet is too large".into());
-            }
-            let mut packet = vec![0u8; total_len];
             packet[0] = 0x45;
             packet[2..4].copy_from_slice(&(total_len as u16).to_be_bytes());
             packet[6..8].copy_from_slice(&0x4000u16.to_be_bytes());
@@ -532,22 +560,18 @@ fn build_udp_packet(
             packet[16..20].copy_from_slice(&destination.octets());
             let checksum = internet_checksum(&packet[..20]);
             packet[10..12].copy_from_slice(&checksum.to_be_bytes());
-            packet[20..].copy_from_slice(&udp);
-            Ok(packet)
         }
         (IpAddr::V6(source), IpAddr::V6(destination)) => {
-            let mut packet = vec![0u8; 40 + udp_len];
             packet[0] = 0x60;
             packet[4..6].copy_from_slice(&(udp_len as u16).to_be_bytes());
             packet[6] = 17;
             packet[7] = 64;
             packet[8..24].copy_from_slice(&source.octets());
             packet[24..40].copy_from_slice(&destination.octets());
-            packet[40..].copy_from_slice(&udp);
-            Ok(packet)
         }
-        _ => Err("AmneziaWG tunnel and destination address families differ".into()),
+        _ => unreachable!(),
     }
+    Ok(packet)
 }
 
 fn parse_ipv4_udp_packet(packet: &[u8]) -> Result<(SocketAddr, Vec<u8>), String> {
@@ -594,45 +618,109 @@ fn parse_ipv6_udp_packet(packet: &[u8]) -> Result<(SocketAddr, Vec<u8>), String>
     ))
 }
 
+// The pseudo-header is summed in place rather than assembled into a buffer in
+// front of a copy of the datagram: every piece of it is an even number of
+// bytes, so the 16-bit word boundaries of the concatenation are exactly the
+// boundaries within each piece, and one's-complement addition makes the total
+// of the parts equal to the total of the whole. Same number, no allocation and
+// no second copy of the payload on a path that runs once per packet.
+//
+// The odd byte can only land at the very end of the concatenation, because a
+// pseudo-header is even-length; padding it with a zero is what the buffered
+// version did by construction.
 fn udp_checksum(source: IpAddr, destination: IpAddr, udp: &[u8]) -> u16 {
-    let mut pseudo = Vec::with_capacity(match (source, destination) {
-        (IpAddr::V4(_), IpAddr::V4(_)) => 12 + udp.len(),
-        (IpAddr::V6(_), IpAddr::V6(_)) => 40 + udp.len(),
-        _ => return 0,
-    });
-    match (source, destination) {
+    let sum = match (source, destination) {
         (IpAddr::V4(source), IpAddr::V4(destination)) => {
-            pseudo.extend_from_slice(&source.octets());
-            pseudo.extend_from_slice(&destination.octets());
-            pseudo.extend_from_slice(&[0, 17]);
-            pseudo.extend_from_slice(&(udp.len() as u16).to_be_bytes());
+            let mut sum = checksum_add(0, &source.octets());
+            sum = checksum_add(sum, &destination.octets());
+            sum = checksum_add(sum, &[0, 17]);
+            sum = checksum_add(sum, &(udp.len() as u16).to_be_bytes());
+            checksum_add(sum, udp)
         }
         (IpAddr::V6(source), IpAddr::V6(destination)) => {
-            pseudo.extend_from_slice(&source.octets());
-            pseudo.extend_from_slice(&destination.octets());
-            pseudo.extend_from_slice(&(udp.len() as u32).to_be_bytes());
-            pseudo.extend_from_slice(&[0, 0, 0, 17]);
+            let mut sum = checksum_add(0, &source.octets());
+            sum = checksum_add(sum, &destination.octets());
+            sum = checksum_add(sum, &(udp.len() as u32).to_be_bytes());
+            sum = checksum_add(sum, &[0, 0, 0, 17]);
+            checksum_add(sum, udp)
         }
-        _ => unreachable!(),
+        _ => return 0,
+    };
+    nonzero_checksum(checksum_finish(sum))
+}
+
+fn internet_checksum(bytes: &[u8]) -> u16 {
+    checksum_finish(checksum_add(0, bytes))
+}
+
+/// Add `bytes` to a running one's-complement sum of 16-bit big-endian words,
+/// accumulated in the machine's own byte order and rotated back once by
+/// [`checksum_finish`].
+///
+/// Folding a carry is reduction modulo 2^16 - 1, and in that modulus 2^16 == 1,
+/// so 2^32 - 1 = (2^16 - 1)(2^16 + 1) means a 32-bit word read straight out of
+/// the buffer already carries the residue of the two 16-bit words inside it:
+/// one load and one add per four bytes, over eight independent accumulators so
+/// the adds do not serialize.
+///
+/// Byte order falls out of the same argument. Swapping a word's halves is
+/// multiplication by 2^8, which is its own inverse mod 2^16 - 1 and distributes
+/// over a sum, so the native-order total is the native-order image of the sum
+/// asked for and one swap on the 16-bit residue settles it: `rev` per word
+/// becomes `rev` per packet.
+///
+/// Zero is the one value a residue class cannot decide, but a sum of
+/// non-negative words is zero only if every byte was, and a swap preserves both
+/// 0x0000 and 0xffff. Four bytes contribute at most 2^32, so 64 bits cannot
+/// wrap for any datagram.
+fn checksum_add(mut sum: u64, bytes: &[u8]) -> u64 {
+    let (groups, rest) = bytes.as_chunks::<32>();
+    let (mut a, mut b, mut c, mut d) = (0u64, 0u64, 0u64, 0u64);
+    let (mut e, mut f, mut g, mut h) = (0u64, 0u64, 0u64, 0u64);
+    for word in groups {
+        a += u32::from_le_bytes([word[0], word[1], word[2], word[3]]) as u64;
+        b += u32::from_le_bytes([word[4], word[5], word[6], word[7]]) as u64;
+        c += u32::from_le_bytes([word[8], word[9], word[10], word[11]]) as u64;
+        d += u32::from_le_bytes([word[12], word[13], word[14], word[15]]) as u64;
+        e += u32::from_le_bytes([word[16], word[17], word[18], word[19]]) as u64;
+        f += u32::from_le_bytes([word[20], word[21], word[22], word[23]]) as u64;
+        g += u32::from_le_bytes([word[24], word[25], word[26], word[27]]) as u64;
+        h += u32::from_le_bytes([word[28], word[29], word[30], word[31]]) as u64;
     }
-    pseudo.extend_from_slice(udp);
-    let checksum = internet_checksum(&pseudo);
+    sum += ((a + b) + (c + d)) + ((e + f) + (g + h));
+    let (words, tail) = rest.as_chunks::<4>();
+    for word in words {
+        sum += u32::from_le_bytes(*word) as u64;
+    }
+    let (pairs, odd) = tail.as_chunks::<2>();
+    for pair in pairs {
+        sum += u16::from_le_bytes(*pair) as u64;
+    }
+    if let [last] = odd {
+        // A trailing odd byte is the high half of a word padded with a zero low
+        // half, so big-endian it is worth `last << 8` and in this convention it
+        // is worth exactly `last`.
+        sum += *last as u64;
+    }
+    sum
+}
+
+/// Fold an accumulated native-order sum to a 16-bit residue, rotate it back to
+/// big-endian word order, and complement it. See [`checksum_add`] for why the
+/// rotation is the whole of the endianness correction.
+fn checksum_finish(mut sum: u64) -> u16 {
+    while sum > u16::MAX as u64 {
+        sum = (sum & u16::MAX as u64) + (sum >> 16);
+    }
+    !((sum as u16).swap_bytes())
+}
+
+fn nonzero_checksum(checksum: u16) -> u16 {
     if checksum == 0 {
         0xffff
     } else {
         checksum
     }
-}
-
-fn internet_checksum(bytes: &[u8]) -> u16 {
-    let mut sum = 0u32;
-    for chunk in bytes.chunks(2) {
-        sum += u16::from_be_bytes([chunk[0], *chunk.get(1).unwrap_or(&0)]) as u32;
-        while sum > u16::MAX as u32 {
-            sum = (sum & u16::MAX as u32) + (sum >> 16);
-        }
-    }
-    !(sum as u16)
 }
 
 #[cfg(test)]
@@ -708,5 +796,60 @@ mod tests {
         let (returned, payload) = parse_ipv6_udp_packet(&packet).unwrap();
         assert_eq!(returned, SocketAddr::new(source, 40123));
         assert_eq!(payload, b"hello");
+    }
+
+    /// The packet is built two ways depending on payload size, and the
+    /// threshold sits inside the range a real datagram spans, so both branches
+    /// have to be shown to produce the same header, payload and checksums.
+    #[test]
+    fn both_buffer_shapes_build_the_same_packet_across_the_threshold() {
+        for (source, destination) in [
+            (
+                IpAddr::V4(std::net::Ipv4Addr::new(10, 0, 0, 2)),
+                IpAddr::V4(std::net::Ipv4Addr::new(1, 1, 1, 1)),
+            ),
+            (
+                IpAddr::V6("fd00::2".parse::<std::net::Ipv6Addr>().unwrap()),
+                IpAddr::V6("2001:db8::1".parse::<std::net::Ipv6Addr>().unwrap()),
+            ),
+        ] {
+            for payload_len in [0usize, 1, 1023, 1024, 1025, 1252, 9000] {
+                let payload: Vec<u8> = (0..payload_len)
+                    .map(|index| (index * 31 + 7) as u8)
+                    .collect();
+                let packet = build_udp_packet(source, destination, 40123, 53, &payload).unwrap();
+                let header_len = if source.is_ipv4() { 20 } else { 40 };
+                let (address, returned) = if source.is_ipv4() {
+                    parse_ipv4_udp_packet(&packet).unwrap()
+                } else {
+                    parse_ipv6_udp_packet(&packet).unwrap()
+                };
+                assert_eq!(address, SocketAddr::new(source, 40123), "{payload_len}");
+                assert_eq!(returned, payload, "payload at {payload_len}");
+                let udp = &packet[header_len..];
+                assert_eq!(u16::from_be_bytes([udp[4], udp[5]]), udp.len() as u16);
+                // Both checksums cover the bytes with their own field clear.
+                let mut for_sum = udp.to_vec();
+                for_sum[6..8].fill(0);
+                assert_eq!(
+                    u16::from_be_bytes([udp[6], udp[7]]),
+                    udp_checksum(source, destination, &for_sum),
+                    "udp checksum at {payload_len}"
+                );
+                if source.is_ipv4() {
+                    let mut header = packet[..20].to_vec();
+                    header[10..12].fill(0);
+                    assert_eq!(
+                        u16::from_be_bytes([packet[10], packet[11]]),
+                        internet_checksum(&header),
+                        "ip checksum at {payload_len}"
+                    );
+                    assert_eq!(
+                        u16::from_be_bytes([packet[2], packet[3]]),
+                        packet.len() as u16
+                    );
+                }
+            }
+        }
     }
 }
