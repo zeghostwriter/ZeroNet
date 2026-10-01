@@ -16,7 +16,7 @@ use std::io;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
-use bytes::{Buf, BytesMut};
+use bytes::{Buf, BufMut, BytesMut};
 use rand::RngCore;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
@@ -125,9 +125,15 @@ impl<S> VisionStream<S> {
         Ok(())
     }
 
-    fn make_write_payload(&mut self, input: &[u8]) -> Vec<u8> {
+    /// Append the framed (or, once padding has ended, verbatim) form of
+    /// `input` onto `out` — the writer's own `pending_write`, so the framed
+    /// bytes are copied exactly once. The previous shape built a fresh `Vec`
+    /// per call and swept every framed byte a second time into `pending_write`.
+    fn append_write_payload(&mut self, input: &[u8], out: &mut BytesMut) {
         if !self.write_padding {
-            return input.to_vec();
+            out.reserve(input.len());
+            out.put_slice(input);
+            return;
         }
 
         self.write_attempts = self.write_attempts.saturating_add(1);
@@ -144,7 +150,6 @@ impl<S> VisionStream<S> {
             COMMAND_CONTINUE
         };
 
-        let mut out = Vec::with_capacity(input.len() + 1024 + 21);
         let mut offset = 0usize;
         let long_padding = self.inner_looks_tls;
         while offset < input.len() {
@@ -157,16 +162,16 @@ impl<S> VisionStream<S> {
             } else {
                 COMMAND_CONTINUE
             };
-            out.extend_from_slice(&make_frame(
+            make_frame_into(
                 &input[offset..end],
                 prefix,
                 frame_command,
                 long_padding,
-            ));
+                out,
+            );
             self.write_first = false;
             offset = end;
         }
-        out
     }
 
     fn poll_flush_pending(&mut self, cx: &mut Context<'_>) -> Poll<io::Result<()>>
@@ -237,10 +242,17 @@ impl<S> VisionStream<S> {
         Ok(true)
     }
 
-    fn parse_one_frame(&mut self) -> io::Result<Option<Vec<u8>>> {
+    /// Consume one complete Vision frame from `read_input`, if the buffer holds
+    /// one, appending its content to `read_output`. Returns `true` when a frame
+    /// was consumed.
+    ///
+    /// The content lands in `read_output` directly: giving it back as a `Vec`
+    /// for the caller to copy over swept every downloaded byte twice and cost
+    /// an allocation per frame, on the read path.
+    fn parse_one_frame(&mut self) -> io::Result<bool> {
         if self.read_mode == ReadMode::InitialUuid {
             if self.read_input.len() < self.uuid.len() {
-                return Ok(None);
+                return Ok(false);
             }
             if self.read_input[..16] != self.uuid {
                 return Err(io::Error::new(
@@ -253,7 +265,7 @@ impl<S> VisionStream<S> {
         }
 
         if self.read_input.len() < 5 {
-            return Ok(None);
+            return Ok(false);
         }
         let command = self.read_input[0];
         if !matches!(command, COMMAND_CONTINUE | COMMAND_END | COMMAND_DIRECT) {
@@ -272,11 +284,12 @@ impl<S> VisionStream<S> {
         }
         let total = 5 + content_len + padding_len;
         if self.read_input.len() < total {
-            return Ok(None);
+            return Ok(false);
         }
 
         let frame = self.read_input.split_to(total);
-        let content = frame[5..5 + content_len].to_vec();
+        self.read_output.put_slice(&frame[5..5 + content_len]);
+        drop(frame);
         if command != COMMAND_CONTINUE {
             if command == COMMAND_DIRECT {
                 if let Some(switch) = self.direct_read_switch.as_mut() {
@@ -285,7 +298,7 @@ impl<S> VisionStream<S> {
             }
             self.read_mode = ReadMode::Plain;
         }
-        Ok(Some(content))
+        Ok(true)
     }
 }
 
@@ -313,13 +326,8 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for VisionStream<S> {
                     Err(e) => return Poll::Ready(Err(e)),
                 },
                 ReadMode::InitialUuid | ReadMode::Frames => match self.parse_one_frame() {
-                    Ok(Some(content)) => {
-                        if !content.is_empty() {
-                            self.read_output.extend_from_slice(&content);
-                        }
-                        continue;
-                    }
-                    Ok(None) => {}
+                    Ok(true) => continue,
+                    Ok(false) => {}
                     Err(e) => return Poll::Ready(Err(e)),
                 },
                 ReadMode::Plain => {
@@ -369,8 +377,9 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncWrite for VisionStream<S> {
             return Pin::new(&mut self.inner).poll_write(cx, buf);
         }
 
-        let framed = self.make_write_payload(buf);
-        self.pending_write.extend_from_slice(&framed);
+        let mut framed = std::mem::take(&mut self.pending_write);
+        self.append_write_payload(buf, &mut framed);
+        self.pending_write = framed;
         let accepted = buf.len();
         match self.poll_flush_pending(cx) {
             Poll::Ready(Ok(())) | Poll::Pending => Poll::Ready(Ok(accepted)),
@@ -394,6 +403,21 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncWrite for VisionStream<S> {
 }
 
 fn make_frame(content: &[u8], uuid: Option<&[u8; 16]>, command: u8, long_padding: bool) -> Vec<u8> {
+    let mut out = BytesMut::with_capacity(uuid.map_or(0, |_| 16) + 5 + content.len() + 1024);
+    make_frame_into(content, uuid, command, long_padding, &mut out);
+    out.to_vec()
+}
+
+/// `make_frame` appended onto an existing buffer, so a batch of frames is
+/// framed straight into the writer's own `pending_write` — no per-call `Vec`,
+/// and no second sweep copying the framed bytes there afterwards.
+fn make_frame_into(
+    content: &[u8],
+    uuid: Option<&[u8; 16]>,
+    command: u8,
+    long_padding: bool,
+    out: &mut BytesMut,
+) {
     let max_padding = MAX_FRAME_PLAINTEXT.saturating_sub(content.len());
     let mut rng = rand::rngs::OsRng;
     let padding = if long_padding && content.len() < LONG_PADDING_MIN {
@@ -405,18 +429,17 @@ fn make_frame(content: &[u8], uuid: Option<&[u8; 16]>, command: u8, long_padding
     }
     .min(max_padding);
 
-    let mut out = Vec::with_capacity(uuid.map_or(0, |_| 16) + 5 + content.len() + padding);
+    out.reserve(uuid.map_or(0, |_| 16) + 5 + content.len() + padding);
     if let Some(uuid) = uuid {
-        out.extend_from_slice(uuid);
+        out.put_slice(uuid);
     }
-    out.push(command);
-    out.extend_from_slice(&(content.len() as u16).to_be_bytes());
-    out.extend_from_slice(&(padding as u16).to_be_bytes());
-    out.extend_from_slice(content);
+    out.put_u8(command);
+    out.put_u16(content.len() as u16);
+    out.put_u16(padding as u16);
+    out.put_slice(content);
     let old = out.len();
     out.resize(old + padding, 0);
     rng.fill_bytes(&mut out[old..]);
-    out
 }
 
 fn looks_like_tls_client_hello(input: &[u8]) -> bool {
@@ -553,5 +576,108 @@ mod tests {
         let mut got = Vec::new();
         reader.read_to_end(&mut got).await.unwrap();
         assert_eq!(got, [b"\0\0".as_slice(), b"payload", b"tail"].concat());
+    }
+
+    /// A reference unframer in the *old* shape, so the in-place append can be
+    /// compared against it byte for byte.
+    fn reference_unframe(bytes: &[u8]) -> Vec<u8> {
+        let mut input = BytesMut::from(bytes);
+        let mut out = Vec::new();
+        if !input.is_empty() {
+            if input.len() < 16 + 5 {
+                return out;
+            }
+            input.advance(16);
+        }
+        loop {
+            if input.len() < 5 {
+                break;
+            }
+            let command = input[0];
+            let content_len = u16::from_be_bytes([input[1], input[2]]) as usize;
+            let padding_len = u16::from_be_bytes([input[3], input[4]]) as usize;
+            let total = 5 + content_len + padding_len;
+            if content_len + padding_len > MAX_FRAME_PLAINTEXT || input.len() < total {
+                break;
+            }
+            let frame = input.split_to(total);
+            let content = frame[5..5 + content_len].to_vec();
+            out.extend_from_slice(&content);
+            if command != COMMAND_CONTINUE {
+                break;
+            }
+        }
+        out
+    }
+
+    /// Every content length that crosses a framing decision — empty, sub-MTU,
+    /// exactly the frame bound, and multiples of it — recovered by both the
+    /// stream's reader and the reference unframer.
+    #[tokio::test]
+    async fn written_frames_decode_to_the_exact_plaintext_by_both_unframers() {
+        for len in [
+            0usize,
+            1,
+            3,
+            5,
+            100,
+            895,
+            MAX_FRAME_PLAINTEXT - 1,
+            MAX_FRAME_PLAINTEXT,
+            MAX_FRAME_PLAINTEXT + 1,
+            2 * MAX_FRAME_PLAINTEXT,
+            2 * MAX_FRAME_PLAINTEXT + 777,
+        ] {
+            let plaintext: Vec<u8> = (0..len).map(|i| (i * 29 + 11) as u8).collect();
+            // `append_write_payload` needs no inner stream, so a dummy
+            // carrier type stands in for one.
+            let mut sent = BytesMut::new();
+            VisionStream::<Vec<u8>>::new_client(Vec::new(), UUID)
+                .append_write_payload(&plaintext, &mut sent);
+
+            let (mut producer, input) = tokio::io::duplex(4 * 1024 * 1024);
+            let mut server = VisionStream::new_server(input, UUID);
+            tokio::spawn(async move {
+                producer.write_all(&sent).await.unwrap();
+                producer.shutdown().await.unwrap();
+            });
+            let mut got = Vec::new();
+            server.read_to_end(&mut got).await.unwrap();
+            assert_eq!(got, plaintext, "stream reader, {len} B");
+
+            let wire = framed_wire(&plaintext);
+            assert_eq!(reference_unframe(&wire), plaintext, "reference, {len} B");
+        }
+    }
+
+    /// The framed form of `plaintext` as bytes, for the reference unframer.
+    fn framed_wire(plaintext: &[u8]) -> Vec<u8> {
+        let mut sent = BytesMut::new();
+        VisionStream::<Vec<u8>>::new_client(Vec::new(), UUID)
+            .append_write_payload(plaintext, &mut sent);
+        sent.to_vec()
+    }
+
+    /// With padding ended, a write appends the input verbatim.
+    #[test]
+    fn unpadded_append_is_the_input_itself() {
+        let mut stream = VisionStream::<Vec<u8>>::new_server(Vec::new(), UUID);
+        stream.write_padding = false;
+        let mut out = BytesMut::new();
+        stream.append_write_payload(b"payload", &mut out);
+        assert_eq!(&out[..], b"payload");
+
+        // And the padded branch still emits a UUID-prefixed header before its
+        // content, with the two length fields agreeing with what follows.
+        let mut padded = BytesMut::new();
+        let mut stream = VisionStream::<Vec<u8>>::new_server(Vec::new(), UUID);
+        stream.append_write_payload(b"payload", &mut padded);
+        assert_eq!(&padded[..16], &[0x42; 16]);
+        assert_eq!(padded[16], COMMAND_CONTINUE);
+        let content_len = u16::from_be_bytes([padded[17], padded[18]]) as usize;
+        let padding_len = u16::from_be_bytes([padded[19], padded[20]]) as usize;
+        assert_eq!(content_len, 7);
+        assert_eq!(padded.len(), 16 + 5 + content_len + padding_len);
+        assert_eq!(&padded[21..21 + content_len], b"payload");
     }
 }
