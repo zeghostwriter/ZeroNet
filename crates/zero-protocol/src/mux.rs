@@ -831,10 +831,32 @@ where
         }
     };
     let downlink = async {
-        let mut buf = vec![0u8; 16 * 1024];
+        // Read straight into the frame's payload. Copying each chunk into a
+        // `Frame::keep(.., buf[..n].to_vec())` first cost an allocation and a
+        // full copy of every chunk, for a frame that is encoded into `out` and
+        // dropped on the next line.
+        //
+        // The fields are set here rather than through `Frame::keep`, which
+        // derives `OPTION_DATA` from whether the payload was empty when it was
+        // called. This frame is reused, so that has to be stated once: the
+        // empty case is handled by `Frame::end` below, so this frame is only
+        // ever encoded with a non-empty payload.
+        let mut frame = Frame {
+            session_id,
+            status: STATUS_KEEP,
+            option: OPTION_DATA,
+            target: None,
+            global_id: None,
+            payload: Vec::new(),
+        };
         let mut out = Vec::with_capacity(16 * 1024 + 16);
         loop {
-            let n = remote_read.read(&mut buf).await?;
+            // `reserve` then `read_buf` reads into the payload's own spare
+            // capacity, so no 16 KiB of zeros is written per chunk and no copy
+            // out of a scratch buffer is needed either.
+            frame.payload.clear();
+            frame.payload.reserve(16 * 1024);
+            let n = remote_read.read_buf(&mut frame.payload).await?;
             out.clear();
             if n == 0 {
                 encode_frame_into(&Frame::end(session_id, false), &mut out)?;
@@ -842,7 +864,7 @@ where
                 outer_write.shutdown().await?;
                 return Ok::<(), io::Error>(());
             }
-            encode_frame_into(&Frame::keep(session_id, buf[..n].to_vec()), &mut out)?;
+            encode_frame_into(&frame, &mut out)?;
             outer_write.write_all(&out).await?;
             outer_write.flush().await?;
         }
@@ -1258,6 +1280,53 @@ mod tests {
         assert_eq!(&first_response, b"first");
         assert_eq!(&second_response, b"second");
         server.await.unwrap();
+    }
+
+    /// The server-side relay's downlink reuses one `Frame` across chunks.
+    /// `Frame::keep` derives `OPTION_DATA` from the payload being empty when it
+    /// is called, so a relay that builds the frame once and fills it per chunk
+    /// must state the option itself -- otherwise every chunk is encoded as
+    /// metadata with no data and the reply silently arrives empty.
+    ///
+    /// This is the only test that drives `relay_server` at all, and the payload
+    /// is deliberately longer than one chunk so the reuse is exercised more
+    /// than once, and not a multiple of the chunk size so the last one is short.
+    #[tokio::test]
+    async fn a_relayed_reply_keeps_its_payload_across_several_chunks() {
+        let (mut client, carrier) = tokio::io::duplex(256 * 1024);
+        let (remote, mut peer) = tokio::io::duplex(256 * 1024);
+        let first = Frame::new(1, destination(), Vec::new());
+        let relay = tokio::spawn(relay_server(
+            zero_core::boxed(carrier),
+            first,
+            zero_core::boxed(remote),
+        ));
+
+        let payload: Vec<u8> = (0..(16 * 1024 * 2 + 517))
+            .map(|i| (i % 251) as u8)
+            .collect();
+        let expected = payload.clone();
+        tokio::spawn(async move {
+            peer.write_all(&payload).await.unwrap();
+        });
+
+        let mut got: Vec<u8> = Vec::new();
+        let mut chunks = 0;
+        while got.len() < expected.len() {
+            let frame = read_frame(&mut client).await.unwrap();
+            assert_eq!((frame.session_id, frame.status), (1, STATUS_KEEP));
+            assert_ne!(
+                frame.option & OPTION_DATA,
+                0,
+                "a data chunk must carry OPTION_DATA, or the payload is dropped"
+            );
+            got.extend_from_slice(&frame.payload);
+            chunks += 1;
+            assert!(chunks <= 8, "relay is not making progress");
+        }
+        assert_eq!(got, expected, "the relayed reply was not byte-identical");
+        drop(client);
+        relay.await.unwrap().unwrap();
     }
 
     /// Regression: the server pool awaited `route()` inside the carrier read

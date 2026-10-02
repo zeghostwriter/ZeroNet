@@ -610,10 +610,12 @@ struct WgLink {
     /// go out without re-encoding, and the reserved bytes apply.
     plain: bool,
     rng: rand::rngs::StdRng,
-    /// Reused buffers: WireGuard output, decrypted input, network input.
+    /// Reused buffers: WireGuard output, decrypted input, network input, and a
+    /// scratch copy for stamping the reserved bytes.
     out: Vec<u8>,
     clear: Vec<u8>,
     network: Vec<u8>,
+    stamp: Vec<u8>,
 }
 
 struct Driver {
@@ -664,6 +666,7 @@ impl WgLink {
             out: vec![0u8; NETWORK_BUFFER],
             clear: vec![0u8; NETWORK_BUFFER],
             network: vec![0u8; NETWORK_BUFFER],
+            stamp: Vec::new(),
         }
     }
 }
@@ -1082,11 +1085,11 @@ impl Driver {
 
 impl WgLink {
     async fn timers(&mut self) {
+        let mut out = std::mem::take(&mut self.out);
         loop {
-            match self.tunnel.update_timers(&mut self.out) {
+            match self.tunnel.update_timers(&mut out) {
                 TunnResult::WriteToNetwork(packet) => {
-                    let packet = packet.to_vec();
-                    self.send(&packet).await;
+                    self.send(packet).await;
                 }
                 TunnResult::Err(boringtun::noise::errors::WireGuardError::ConnectionExpired) => {
                     // No session for a long while; the next packet starts one.
@@ -1095,14 +1098,19 @@ impl WgLink {
                 _ => break,
             }
         }
+        self.out = out;
     }
 
     /// Encrypt one packet and send it. Returns whether anything went out.
     async fn encapsulate(&mut self, packet: &[u8]) -> bool {
-        match self.tunnel.encapsulate(packet, &mut self.out) {
+        // boringtun hands back a slice of the buffer it wrote into, so the
+        // buffer is moved out of `self` for the duration: `send` needs `&mut
+        // self`, and a slice borrowed from a field would still be live. This
+        // is the same trick `on_datagram` uses for `network` and `clear`.
+        let mut out = std::mem::take(&mut self.out);
+        let sent = match self.tunnel.encapsulate(packet, &mut out) {
             TunnResult::WriteToNetwork(encrypted) => {
-                let encrypted = encrypted.to_vec();
-                self.send(&encrypted).await;
+                self.send(encrypted).await;
                 true
             }
             // Queued inside boringtun until the handshake completes.
@@ -1112,7 +1120,9 @@ impl WgLink {
                 false
             }
             _ => false,
-        }
+        };
+        self.out = out;
+        sent
     }
 
     /// A datagram of `length` bytes arrived in `self.network` from `source`.
@@ -1148,8 +1158,7 @@ impl WgLink {
         loop {
             match state {
                 TunnResult::WriteToNetwork(reply) => {
-                    let reply = reply.to_vec();
-                    self.send(&reply).await;
+                    self.send(reply).await;
                     // Flush packets queued during the handshake.
                     state = self.tunnel.decapsulate(None, &[], &mut clear);
                 }
@@ -1176,9 +1185,15 @@ impl WgLink {
                 }
             }
             if self.params.reserved != [0; 3] && packet.len() >= 4 {
-                let mut stamped = packet.to_vec();
-                stamped[1..4].copy_from_slice(&self.params.reserved);
-                self.socket.send_to(&stamped, self.peer).await
+                // Into the reused buffer: this ran once per datagram, and the
+                // only thing done to the copy is overwriting three bytes.
+                let mut stamp = std::mem::take(&mut self.stamp);
+                stamp.clear();
+                stamp.extend_from_slice(packet);
+                stamp[1..4].copy_from_slice(&self.params.reserved);
+                let sent = self.socket.send_to(&stamp, self.peer).await;
+                self.stamp = stamp;
+                sent
             } else {
                 self.socket.send_to(packet, self.peer).await
             }
