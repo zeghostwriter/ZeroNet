@@ -37,16 +37,26 @@
 
 </div>
 
+<!-- These four charts are the 2026-04 measurement, not a current run. The
+     harness that drew them did not validate the payload, timed the transfer
+     window including connection setup, measured no ceiling for its own load
+     generator and held the core order fixed. They are kept so the table above
+     stays backed by the file that produced it. Current runs publish their own
+     charts, in CI, at docs/benchmarks/. -->
 <p align="center">
-  <img src="docs/benchmarks/throughput-tls.png" alt="Throughput, VLESS + TLS" width="49%">
-  <img src="docs/benchmarks/memory.png" alt="Memory usage" width="49%">
-  <img src="docs/benchmarks/cpu-tls.png" alt="CPU per GB, VLESS + TLS" width="49%">
-  <img src="docs/benchmarks/throughput-plain.png" alt="Throughput, plain VLESS" width="49%">
+  <img src="docs/benchmarks/throughput-tls.png" alt="Throughput, VLESS + TLS, measured April 2026" width="49%">
+  <img src="docs/benchmarks/memory.png" alt="Memory usage, measured April 2026" width="49%">
+  <img src="docs/benchmarks/cpu-tls.png" alt="CPU per GB, VLESS + TLS, measured April 2026" width="49%">
+  <img src="docs/benchmarks/throughput-plain.png" alt="Throughput, plain VLESS, measured April 2026" width="49%">
 </p>
 
 <div dir="rtl">
 
-در همه‌ی تست‌ها، Zray مصرف CPU کمتری داشت. تنها موردی که Xray جلو بود، دانلود تک‌اتصالی بدون TLS بود (۸۷۳ در برابر ۷۹۹ مگابایت بر ثانیه). همه‌ی نتایج را همان‌طور که اندازه گرفته شد گذاشته‌ایم. روش تست و ابزار تکرار آن در [docs/benchmarks](docs/benchmarks) است.
+در همه‌ی تست‌ها، Zray مصرف CPU کمتری داشت. تنها موردی که Xray جلو بود، دانلود تک‌اتصالی بدون TLS بود (۸۷۳ در برابر ۷۹۹ مگابایت بر ثانیه). نمودارها بالا هستند.
+
+> **این اعداد از کجا آمده‌اند.** جدول و نمودارها در آوریل ۲۰۲۶ روی یک Xeon چهار هسته‌ای اندازه‌گیری شدند: یک پروتکل، دو لایه‌ی امنیتی، و یک رقیب. روش و اعداد خام در [`docs/benchmarks/results/2026-04-legacy/`](docs/benchmarks/results/2026-04-legacy/) است.
+>
+> ابزار اندازه‌گیری بعداً عوض شد: حالا داده را اعتبارسنجی می‌کند، پنجره‌ی انتقال را از برقراری اتصال جدا می‌کند، سقف سرعت خودش را اندازه می‌گیرد و منتشر می‌کند، ترتیب هسته‌ها را می‌چرخاند، کنار هر مقایسه پراکندگی خودِ هسته‌ی مرجع را نشان می‌دهد، و sing-box و xray-rust را هم اضافه می‌کند. روی GitHub Actions و روی سخت‌افزار ثبت‌شده اجرا می‌شود، و هر خانه‌ای که یک هسته پشتیبانی نمی‌کند خالی می‌ماند همراه با دلیلش — حذف نمی‌شود. جزئیات: [`docs/benchmarks`](docs/benchmarks) و [`protocol-support.md`](docs/benchmarks/protocol-support.md).
 
 ### 📥 نصب (فقط چند کلیک)
 
@@ -122,9 +132,24 @@ from the same config file. Only the client core changed:
 | Peak memory under load | 51 MB | **21 MB** (2.4× less) |
 
 Zray used less CPU per gigabyte in every test. Xray was faster in one case:
-a single plain-TCP download (873 vs 799 MB/s). We publish every number as
-measured. The charts are above; the method and the harness to reproduce them
-are in [docs/benchmarks](docs/benchmarks).
+a single plain-TCP download (873 vs 799 MB/s). The charts are above.
+
+> **Where these numbers come from, and what has replaced them.** The table and
+> the charts were measured in April 2026 on a 4-vCPU Xeon, with one protocol at
+> two security layers against one comparator. The method and the raw numbers are
+> in [`docs/benchmarks/results/2026-04-legacy/`](docs/benchmarks/results/2026-04-legacy/).
+>
+> The harness has since been replaced by one that validates the payload,
+> separates the transfer window from connection setup, measures and publishes its
+> own ceiling, rotates and reverses the core order, prints every comparison next
+> to the baseline's own run-to-run spread, and adds sing-box and xray-rust. It
+> runs in GitHub Actions on a recorded runner, and every cell that a core cannot
+> be configured for is shown as empty with the reason rather than left out.
+> See [`docs/benchmarks`](docs/benchmarks) and
+> [`docs/benchmarks/protocol-support.md`](docs/benchmarks/protocol-support.md).
+> The numbers above are kept as they were published; they are not comparable with
+> the current runs, and re-measuring them on the new harness is the next thing
+> this table needs.
 
 ### 📥 Install
 

@@ -1,0 +1,700 @@
+name: benchmark
+
+# The benchmark runs in CI rather than on a maintainer's machine, for three
+# reasons that are all about the numbers rather than about convenience:
+#
+#  * Every core is built or downloaded from a pinned source on a runner whose
+#    hardware is recorded, so a result carries its host with it.
+#  * A shared runner's noise is a property of the runner. Measuring there and
+#    publishing the spread next to every comparison is honest about that;
+#    measuring on a quiet workstation and publishing only the median is not.
+#  * The capability probe -- which of the four cores accepts which connection --
+#    is fast enough to run on every pull request, so a regression in support
+#    shows up in review rather than in a release note.
+on:
+  pull_request:
+    paths:
+      - "crates/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "docs/benchmarks/**"
+      - ".github/workflows/benchmark.yml"
+  push:
+    branches: [main]
+    paths:
+      - "crates/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "docs/benchmarks/**"
+      - ".github/workflows/benchmark.yml"
+  schedule:
+    # Sunday, 04:17 UTC. The full suite takes hours on a shared runner, so it is
+    # neither on a pull request nor on every push.
+    - cron: "17 4 * * 0"
+  workflow_dispatch:
+    inputs:
+      base_ref:
+        description: >-
+          Git ref to build a second Zray from, as the `zray-base` baseline. A
+          pull request run sets this to the merge base on its own; set it by hand
+          to compare two commits at any time, e.g. v0.2.0. Two sentinels also
+          work: `@main` for the default branch with no pull requests applied, and
+          `@merged-prs` for every open pull request in `repo` merged into one
+          commit, which is the state the branch will actually land on.
+        type: string
+        default: ""
+      repo:
+        description: >-
+          Repository `--list-prs` and `@merged-prs` work against. Defaults to the
+          project this harness lives in.
+        type: string
+        default: ""
+      gate_regression:
+        description: >-
+          Percent. Fail the run when the candidate is worse than the base by more
+          than this, on any scenario whose whole 95% interval is on the wrong side
+          of the tolerance. 5 means 5%.
+        type: string
+        default: ""
+      cores:
+        description: "Cores to compare, comma separated. The first is the baseline."
+        type: string
+        default: "zray,xray,singbox,xray-rust"
+      server_core:
+        description: "Core that serves the proxy side of every cell"
+        type: choice
+        options: [xray, singbox, zray]
+        default: xray
+      suite:
+        description: "Scenario suite"
+        type: choice
+        options: [smoke, standard, full]
+        default: standard
+      runs:
+        description: "Repeats per cell"
+        type: string
+        default: "3"
+      bytes:
+        description: "Bytes per transfer sample, e.g. 512M or 2G"
+        type: string
+        default: "512M"
+      iterations:
+        description: "Round trips per latency and setup sample"
+        type: string
+        default: "1000"
+      only:
+        description: "Run only scenarios whose id contains this. Comma separated, repeatable."
+        type: string
+        default: ""
+      exclude:
+        description: "Skip scenarios whose id contains this. Comma separated."
+        type: string
+        default: ""
+      build_xray_rust:
+        description: "Build xray-rust from its pinned tag (slow, needs disk)"
+        type: boolean
+        default: true
+      user_configs:
+        description: >-
+          Configuration files to measure in place. Paste Xray or sing-box JSON, or
+          a base64 subscription body, as one document per block. Every core that
+          can read each one is run against it. Keep it under 64 KB: a
+          workflow_dispatch input is stored in the run's event log.
+        type: string
+        default: ""
+      user_config_urls:
+        description: "https:// URLs of configurations or subscriptions to fetch and measure. Comma separated."
+        type: string
+        default: ""
+      user_target:
+        description: >-
+          HOST:PORT of an endpoint that answers this harness's own protocol, for
+          the supplied configurations to be measured moving bytes against. Without
+          it each config is still measured -- by whether its tunnel comes up and
+          how fast, which every config supports -- but no bytes are moved, because
+          the only endpoint a config names is its own proxy server.
+        type: string
+        default: ""
+      comment:
+        description: "Post the report as a pull request comment"
+        type: boolean
+        default: true
+      strict:
+        description: "Fail if any cell is unsupported, errored or timed out"
+        type: boolean
+        default: false
+
+# A benchmark cancelled half way through leaves a partial artefact that looks
+# like a result. Let the first run finish.
+concurrency:
+  group: benchmark-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  PYTHONUNBUFFERED: "1"
+  RUST_BACKTRACE: "1"
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Which connections does each core accept?
+  #
+  # No traffic and no long-lived process: every core's own config validator is
+  # handed each generated configuration and the answer, with its diagnostic, is
+  # recorded. It runs on every pull request because it is the cheapest signal in
+  # the repository and the one most likely to be wanted in review.
+  # ---------------------------------------------------------------------------
+  capability:
+    name: connection support
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: install the chart dependency
+        run: python3 -m pip install --disable-pip-version-check -r docs/benchmarks/harness/requirements.txt
+
+      - name: the harness's own checks
+        working-directory: docs/benchmarks/harness
+        run: python3 test_harness.py
+
+      - name: the published support document matches the capability data
+        working-directory: docs/benchmarks/harness
+        run: python3 bench.py --emit-support-doc --check
+
+      - name: build the load generator
+        working-directory: docs/benchmarks/harness/loadgen
+        run: cargo build --release
+
+      - name: re-run the load generator checks against the built binary
+        working-directory: docs/benchmarks/harness
+        run: python3 test_harness.py
+
+      - name: build Zray
+        run: cargo build --release -p zray-cli
+
+      # xray-rust publishes no binaries and is the core with the largest gaps in
+      # the table, so it is worth the disk. The harness degrades to a recorded
+      # "unavailable" if this step fails, and the reason reaches the report.
+      - name: build xray-rust from its pinned tag
+        if: ${{ github.event.inputs.build_xray_rust != 'false' }}
+        working-directory: docs/benchmarks/harness
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/src" "$RUNNER_TEMP/bin"
+          git clone --depth 1 --branch v0.7.0 \
+            https://github.com/aimalygin/xray-rust.git "$RUNNER_TEMP/src/xray-rust"
+          # The pinned toolchain in that project is a second toolchain download;
+          # the runner's own stable build is used instead, and the override is
+          # recorded in the report next to the binary's digest.
+          RUSTUP_TOOLCHAIN=stable cargo build --locked --release -p xray-cli \
+            --manifest-path "$RUNNER_TEMP/src/xray-rust/Cargo.toml"
+          install -D -m 0755 "$RUNNER_TEMP/src/xray-rust/target/release/xray-rust" \
+            "$RUNNER_TEMP/bin/xray-rust"
+          "$RUNNER_TEMP/bin/xray-rust" config check --help > /dev/null
+
+      - name: probe every connection type against every core
+        working-directory: docs/benchmarks/harness
+        run: |
+          set -euo pipefail
+          extra="--probe-only --runs 1 --out $RUNNER_TEMP/support --print-report"
+          if [[ -x "$RUNNER_TEMP/bin/xray-rust" ]]; then
+            extra="$extra --bin-xray-rust $RUNNER_TEMP/bin/xray-rust"
+          else
+            # The build above is allowed to fail; the core is then dropped and the
+            # report records why. Every other core is still measured, which is the
+            # point of the graceful path.
+            extra="$extra --no-build"
+            export BENCH_CORES="zray,xray,singbox"
+          fi
+          export OUT="$RUNNER_TEMP/args"
+          export BENCH_EXTRA="$extra"
+          export BENCH_CORES="${BENCH_CORES:-zray,xray,singbox,xray-rust}"
+          # Absolute: this step runs from docs/benchmarks/harness, so a path
+          # relative to the repository root does not resolve from here.
+          bash "$GITHUB_WORKSPACE/.github/scripts/bench-args.sh"
+          mapfile -t bench_args < "$OUT"
+          python3 bench.py "${bench_args[@]}" 2>&1 | tee "$RUNNER_TEMP/support.log"
+          exit "${PIPESTATUS[0]}"
+
+      # `always()`, and not advisory: when the run before it failed there may be a
+      # half-written directory, and "cannot read it" is the honest outcome here.
+      # Swallowing the exit status reported every one of these as green while the
+      # command itself had exited 2 because it ran from the workspace root, where
+      # validate_results.py does not exist.
+      - name: validate the probe run
+        if: always()
+        working-directory: docs/benchmarks/harness
+        run: |
+          set -o pipefail
+          test -f "$RUNNER_TEMP/support/results.json"
+          python3 validate_results.py "$RUNNER_TEMP/support"
+
+      - name: add the report to the job summary
+        run: cat "$RUNNER_TEMP/support/report.md" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: upload the support artefacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-support
+          path: ${{ runner.temp }}/support
+          retention-days: 30
+          # `warn`, not `error`: this step runs `always`, and a probe that failed
+          # before writing would otherwise be reported as a broken upload, which
+          # buries the real failure two steps earlier.
+          if-no-files-found: warn
+
+  # ---------------------------------------------------------------------------
+  # A pull request, measured against the commit it is based on.
+  #
+  # The `measure` job compares four *projects*. This one compares two builds of
+  # the same project, which is the only comparison that answers "did this change
+  # move the number": a five-line diff to a buffer copy cannot move a
+  # core-versus-core ratio in either direction, so a regression hides inside the
+  # difference between two projects and the job reports nothing.
+  # ---------------------------------------------------------------------------
+  pr:
+    name: this change, against its base
+    if: ${{ github.event_name == 'pull_request' }}
+    needs: capability
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The full history: the base ref has to be resolvable, and the merge base
+          # is what the comparison uses.
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: install the chart dependency
+        run: python3 -m pip install --disable-pip-version-check -r docs/benchmarks/harness/requirements.txt
+
+      - name: work out which commit to compare against
+        id: base
+        run: |
+          set -euo pipefail
+          # The merge base is what a reviewer is looking at: the point the branch
+          # diverged, so the diff under review is exactly the difference between
+          # the two binaries.
+          base="$(git merge-base "origin/${{ github.base_ref }}" HEAD)"
+          echo "merge-base: $base"
+          echo "head:       $(git rev-parse HEAD)"
+          echo "changed:"
+          git diff --stat "$base"..HEAD
+          {
+            echo "## Base"
+            echo
+            echo "- base: \`$base\` (merge base with \`${{ github.base_ref }}\`)"
+            echo "- head: \`$(git rev-parse HEAD)\`"
+            echo
+            echo '```'
+            git diff --stat "$base"..HEAD
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "value=$base" >> "$GITHUB_OUTPUT"
+
+      - name: the harness's own checks
+        working-directory: docs/benchmarks/harness
+        run: python3 test_harness.py
+
+      - name: build the load generator
+        working-directory: docs/benchmarks/harness/loadgen
+        run: cargo build --release
+
+      - name: build Zray at the head
+        run: cargo build --release -p zray-cli
+
+      # Its own target directory. Sharing one between two checkouts reuses
+      # same-package fingerprints when source timestamps precede a previous
+      # build, and then the "base" is the candidate.
+      - name: build Zray at the base
+        run: |
+          set -euo pipefail
+          git worktree add --detach "$RUNNER_TEMP/base/src" "${{ steps.base.outputs.value }}"
+          cargo build --release -p zray-cli \
+            --manifest-path "$RUNNER_TEMP/base/src/Cargo.toml" \
+            --target-dir "$RUNNER_TEMP/base/target"
+          # `-D`, not `-m`: install does not create the destination directory, and
+          # a step that forgets to fails only after the whole build.
+          install -D -m 0755 "$RUNNER_TEMP/base/target/release/zray" "$RUNNER_TEMP/bin/zray-base"
+          "$RUNNER_TEMP/bin/zray-base" version
+
+      - name: build xray-rust from its pinned tag
+        if: ${{ github.event.inputs.build_xray_rust != 'false' }}
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/src" "$RUNNER_TEMP/bin"
+          git clone --depth 1 --branch v0.7.0 \
+            https://github.com/aimalygin/xray-rust.git "$RUNNER_TEMP/src/xray-rust"
+          # The pinned toolchain in that project is a second toolchain download.
+          # The runner's own stable build is used instead, and the override is
+          # recorded next to the binary's digest in the report.
+          RUSTUP_TOOLCHAIN=stable cargo build --locked --release -p xray-cli \
+            --manifest-path "$RUNNER_TEMP/src/xray-rust/Cargo.toml"
+          install -D -m 0755 "$RUNNER_TEMP/src/xray-rust/target/release/xray-rust" "$RUNNER_TEMP/bin/xray-rust"
+
+      - name: assemble the command
+        run: |
+          set -euo pipefail
+          if [[ -x "$RUNNER_TEMP/bin/xray-rust" ]]; then
+            export BENCH_CORES="zray-base,zray,xray,singbox,xray-rust"
+            export BENCH_EXTRA="--bin-zray-base $RUNNER_TEMP/bin/zray-base --bin-xray-rust $RUNNER_TEMP/bin/xray-rust --out $RUNNER_TEMP/pr --print-report"
+          else
+            export BENCH_CORES="zray-base,zray,xray,singbox"
+            export BENCH_EXTRA="--bin-zray-base $RUNNER_TEMP/bin/zray-base --out $RUNNER_TEMP/pr --print-report"
+            echo "::notice::xray-rust was not built; the run covers $BENCH_CORES"
+          fi
+          export OUT="$RUNNER_TEMP/args"
+          export BENCH_SUITE="${{ inputs.suite || 'standard' }}"
+          export BENCH_RUNS="${{ inputs.runs || '3' }}"
+          export BENCH_BYTES="${{ inputs.bytes || '512M' }}"
+          export BENCH_ITERATIONS="${{ inputs.iterations || '1000' }}"
+          export BENCH_BASE_REF="${{ steps.base.outputs.value }}"
+          # A pull request has no `inputs`, so this gate was only ever reachable
+          # from workflow_dispatch -- the one case where the base build is not
+          # the point. Without a default the PR job built a base, compared
+          # against it, reported the comparison, and then gated nothing, so a
+          # regression could merge having been measured.
+          export BENCH_GATE="${{ inputs.gate_regression || '5' }}"
+          bash .github/scripts/bench-args.sh | tee "$RUNNER_TEMP/command"
+          {
+            echo "## Command"
+            echo
+            echo '```sh'
+            echo "cd docs/benchmarks/harness && $(cat "$RUNNER_TEMP/command")"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: run
+        working-directory: docs/benchmarks/harness
+        run: |
+          set -o pipefail
+          mapfile -t bench_args < "$RUNNER_TEMP/args"
+          python3 bench.py "${bench_args[@]}" 2>&1 | tee "$RUNNER_TEMP/pr.log"
+          exit "${PIPESTATUS[0]}"
+
+      - name: validate
+        if: always()
+        working-directory: docs/benchmarks/harness
+        # Gating, not advisory: this is the check that the numbers a pull request
+        # will be judged on are numbers the report actually derived.
+        run: python3 validate_results.py "$RUNNER_TEMP/pr"
+
+      - name: the report
+        if: always()
+        run: |
+          if [[ -f "$RUNNER_TEMP/pr/gate.md" ]]; then
+            { echo; echo "## Gate"; echo; cat "$RUNNER_TEMP/pr/gate.md"; } >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [[ -f "$RUNNER_TEMP/pr/report.md" ]]; then
+            { echo; echo "## This change"; echo; cat "$RUNNER_TEMP/pr/report.md"; } >> "$GITHUB_STEP_SUMMARY"
+          else
+            { echo; echo "## This change"; echo; echo "the run produced no report."; } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: upload
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr-benchmark-${{ github.run_id }}
+          path: ${{ runner.temp }}/pr
+          retention-days: 90
+          if-no-files-found: warn
+
+  # ---------------------------------------------------------------------------
+  # The measurement itself.
+  # ---------------------------------------------------------------------------
+  measure:
+    name: ${{ inputs.suite || 'standard' }} suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+
+        with:
+          # The full history, and only when a base ref was asked for. This
+          # job accepts `--base-ref`, including the `@main` and `@merged-prs`
+          # sentinels, and a shallow checkout holds only the tip commit: every
+          # base that is not the tip failed to resolve, and the run produced
+          # a report with no comparison in it and no explanation.
+          fetch-depth: ${{ inputs.base_ref != '' && 0 || 1 }}
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: install the chart dependency
+        run: python3 -m pip install --disable-pip-version-check -r docs/benchmarks/harness/requirements.txt
+
+      - name: record the machine this run will use
+        run: |
+          {
+            echo "## Runner"
+            echo
+            echo "- runner: \`${{ runner.name }}\` (${{ runner.os }})"
+            echo "- hardware threads: $(nproc)"
+            echo "- memory: $(awk '/MemTotal/ {printf "%.1f GiB", $2/1048576}' /proc/meminfo)"
+            echo "- cpu: $(grep -m1 'model name' /proc/cpuinfo | cut -d: -f2- | xargs)"
+            echo "- load average at start: $(cat /proc/loadavg)"
+            echo
+            echo "A shared runner is a shared runner. The report prints every comparison"
+            echo "next to the baseline's own repeat-to-repeat spread, so the size of the"
+            echo "effect and the size of the noise can be read together."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: write the configurations supplied with this run
+        if: ${{ inputs.user_configs != '' }}
+        env:
+          CONFIGS: ${{ inputs.user_configs }}
+        run: python3 docs/benchmarks/harness/split_configs.py "$RUNNER_TEMP/user-configs"
+
+      - name: build the load generator
+        working-directory: docs/benchmarks/harness/loadgen
+        run: cargo build --release
+
+      - name: build Zray
+        run: cargo build --release -p zray-cli
+
+      - name: build xray-rust from its pinned tag
+        if: ${{ github.event.inputs.build_xray_rust != 'false' }}
+        working-directory: docs/benchmarks/harness
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/src" "$RUNNER_TEMP/bin"
+          git clone --depth 1 --branch v0.7.0 \
+            https://github.com/aimalygin/xray-rust.git "$RUNNER_TEMP/src/xray-rust"
+          RUSTUP_TOOLCHAIN=stable cargo build --locked --release -p xray-cli \
+            --manifest-path "$RUNNER_TEMP/src/xray-rust/Cargo.toml"
+          cp "$RUNNER_TEMP/src/xray-rust/target/release/xray-rust" "$RUNNER_TEMP/bin/xray-rust"
+          chmod +x "$RUNNER_TEMP/bin/xray-rust"
+
+      - name: assemble the benchmark command
+        run: |
+          set -euo pipefail
+          cores="${{ inputs.cores || 'zray,xray,singbox,xray-rust' }}"
+          extra=""
+          if [[ -x "$RUNNER_TEMP/bin/xray-rust" ]]; then
+            extra="--bin-xray-rust $RUNNER_TEMP/bin/xray-rust"
+          else
+            cores="${cores//xray-rust/}"
+            extra="--no-build"
+            echo "::notice::xray-rust was not built; the run covers $cores"
+          fi
+          export OUT="$RUNNER_TEMP/bench-args"
+          export BENCH_CORES="$cores"
+          export BENCH_EXTRA="$extra --out $RUNNER_TEMP/bench --print-report"
+          export BENCH_SUITE="${{ inputs.suite || 'standard' }}"
+          export BENCH_SERVER="${{ inputs.server_core || 'xray' }}"
+          export BENCH_RUNS="${{ inputs.runs || '3' }}"
+          export BENCH_BYTES="${{ inputs.bytes || '512M' }}"
+          export BENCH_ITERATIONS="${{ inputs.iterations || '1000' }}"
+          export BENCH_ONLY="${{ inputs.only }}"
+          export BENCH_EXCLUDE="${{ inputs.exclude }}"
+          export BENCH_URLS="${{ inputs.user_config_urls }}"
+          export BENCH_USER_TARGET="${{ inputs.user_target }}"
+          export BENCH_BASE_REF="${{ inputs.base_ref }}"
+          export BENCH_REPO="${{ inputs.repo }}"
+          # Only when a sentinel asks for it: `gh` authenticates from the
+          # environment in Actions, and this token is scoped to this repository.
+          if [[ "${{ inputs.base_ref }}" == @* ]]; then
+            export GH_TOKEN="${{ github.token }}"
+          fi
+          export BENCH_GATE="${{ inputs.gate_regression }}"
+          [[ -d "$RUNNER_TEMP/user-configs" ]] && export BENCH_USER_DIR="$RUNNER_TEMP/user-configs"
+          bash .github/scripts/bench-args.sh | tee "$RUNNER_TEMP/command"
+          {
+            echo "## Command"
+            echo
+            echo '```sh'
+            echo "cd docs/benchmarks/harness && $(cat "$RUNNER_TEMP/command")"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: run the benchmark
+        working-directory: docs/benchmarks/harness
+        run: |
+          set -o pipefail
+          mapfile -t bench_args < "$RUNNER_TEMP/bench-args"
+          python3 bench.py "${bench_args[@]}" 2>&1 | tee "$RUNNER_TEMP/bench.log"
+          exit "${PIPESTATUS[0]}"
+
+      - name: validate the run
+        if: always()
+        working-directory: docs/benchmarks/harness
+        run: python3 validate_results.py "$RUNNER_TEMP/bench"
+
+      - name: add the report to the job summary
+        if: always()
+        run: |
+          if [[ -f "$RUNNER_TEMP/bench/report.md" ]]; then
+            { echo; echo "## Report"; echo; cat "$RUNNER_TEMP/bench/report.md"; } >> "$GITHUB_STEP_SUMMARY"
+          else
+            { echo; echo "## Report"; echo; echo "The run produced no report."; } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: count the cell outcomes
+        if: always()
+        env:
+          STRICT: ${{ inputs.strict }}
+        run: |
+          set -euo pipefail
+          python3 - "$RUNNER_TEMP/bench" "${STRICT:-false}" <<'PY'
+          import collections, json, pathlib, sys
+          directory, strict = pathlib.Path(sys.argv[1]), sys.argv[2] == "true"
+          results = directory / "results.json"
+          if not results.exists():
+              print("no results.json; the run did not reach the reporting stage")
+              raise SystemExit(1)
+          cells = json.loads(results.read_text())["cells"]
+          tally = collections.Counter(c["status"] for c in cells)
+          print("cell outcomes:", dict(tally))
+          for status in ("unsupported_confirmed", "unsupported", "error", "timeout", "skipped"):
+              rows = [c for c in cells if c["status"] == status]
+              for c in rows[:25]:
+                  print(f"  {status}: {c['scenario']} / {c['core']}: {(c.get('reason') or '')[:150]}")
+          bad = [c for c in cells if c["status"] != "measured"]
+          if not any(c["status"] == "measured" for c in cells):
+              raise SystemExit("no cell produced a measurement")
+          if strict and bad:
+              raise SystemExit(f"strict mode: {len(bad)} cell(s) were not measured")
+          PY
+
+      - name: upload the run
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/bench
+          retention-days: 90
+          if-no-files-found: warn
+
+      - name: upload the logs and the generated configurations
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-logs-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/bench/run/logs
+            ${{ runner.temp }}/bench/run/configs
+            ${{ runner.temp }}/bench.log
+          retention-days: 30
+          if-no-files-found: warn
+
+  # ---------------------------------------------------------------------------
+  # The report on the pull request, so the numbers are reviewable where the
+  # change is being argued about.
+  # ---------------------------------------------------------------------------
+  comment:
+    name: comment on the pull request
+    needs: [capability, pr, measure]
+    if: >-
+      always() && github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      (inputs.comment == true || inputs.comment == '')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: benchmark-${{ github.run_id }}-${{ github.run_attempt }}
+          path: run
+
+      - name: comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+            const dir = 'run';
+            const results = path.join(dir, 'results.json');
+            if (!fs.existsSync(results)) {
+              core.warning('the run produced no results.json; nothing to comment');
+              return;
+            }
+            const report = fs.readFileSync(path.join(dir, 'report.md'), 'utf8');
+            const gate = fs.existsSync(path.join(dir, 'gate.md'))
+              ? fs.readFileSync(path.join(dir, 'gate.md'), 'utf8')
+              : '';
+            // The change's own table comes first and stays outside the
+            // <details>, because that is the part somebody reads and the rest is
+            // the part somebody can open.
+            const ownSection = /^## This change[\s\S]*?(?=\n## )/m.exec(report);
+            const own = ownSection ? ownSection[0] : '';
+            const manifest = fs.existsSync(path.join(dir, 'manifest.json'))
+              ? JSON.parse(fs.readFileSync(path.join(dir, 'manifest.json'), 'utf8'))
+              : {};
+            const binaries = (manifest.binaries || [])
+              .map(b => `- ${b.label} \`${b.version}\` (${b.origin}, sha256 ${b.binary_sha256.slice(0, 16)})`)
+              .join('\n');
+            const missing = (manifest.unavailable || [])
+              .map(u => `- **${u.core} was not measured**: ${u.reason}`)
+              .join('\n');
+            const marker = '<!-- benchmark-report -->';
+            const body = [
+              marker,
+              '## Benchmark',
+              '',
+              'Every core is a child process on this runner, against one server, from one',
+              'generated configuration per link. Each row shows the median with the min..max',
+              'of its repeats, and each comparison shows a bootstrap interval over repeats',
+              'paired by index. The report also prints the baseline core measured against',
+              'itself, which is the size of the difference this run can resolve.',
+              '',
+              'Binaries:',
+              binaries,
+              missing ? `\nNot measured:\n${missing}` : '',
+              '',
+              gate,
+              own,
+              '<details><summary>Full report</summary>',
+              '',
+              report,
+              '',
+              '</details>',
+              '',
+              `Artefact: \`benchmark-${{ github.run_id }}-${{ github.run_attempt }}\` on this run.`,
+              marker,
+            ].filter(Boolean).join('\n');
+            const { owner, repo } = context.repo;
+            const { data: comments } = await github.rest.issues.listComments({
+              owner, repo, issue_number: context.issue.number, per_page: 100,
+            });
+            const existing = comments.find(c => c.body && c.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner, repo, comment_id: existing.id, body,
+              });
+              core.info('updated the existing benchmark comment');
+            } else {
+              await github.rest.issues.createComment({
+                owner, repo, issue_number: context.issue.number, body,
+              });
+              core.info('posted a benchmark comment');
+            }

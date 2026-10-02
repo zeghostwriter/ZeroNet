@@ -1,0 +1,3 @@
+# The harness itself is stdlib-only. This is the one dependency, and it is only
+# needed for the charts; a run without it produces every number and no images.
+matplotlib>=3.7
