@@ -411,11 +411,70 @@ pub fn subscription_body(links: &[String]) -> String {
     base64::engine::general_purpose::STANDARD.encode(links.join("\n"))
 }
 
+/// Write an export file that only the current user can read.
+///
+/// A share link carries a proxy UUID or password, and a subscription body is
+/// base64 — both are bearer credentials for the account behind the node. The
+/// export directory is created next to wherever the program was launched, so
+/// `std::fs::write` would leave them `0644` in a `0755` directory: readable
+/// by every other account on the machine, and by any backup agent or cloud
+/// sync watching that directory.
+pub fn write_private_file(path: &std::path::Path, data: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    // Remove first so a re-export replaces the old file, and so a symlink
+    // planted at the path is not written through.
+    let _ = std::fs::remove_file(path);
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
+    }
+    opts.open(path)?.write_all(data)
+}
+
+/// Create a directory that only the current user can enter.
+pub fn create_private_dir(path: &std::path::Path) -> std::io::Result<()> {
+    let mut builder = std::fs::DirBuilder::new();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        builder.mode(0o700);
+    }
+    builder.recursive(true).create(path)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     const AMNEZIA_LINK: &str = "vless://245abd35-7efa-4bc8-85d4-a04f3798329f@155.117.13.26:443?encryption=none&flow=xtls-rprx-vision&security=reality&sni=www.googletagmanager.com&fp=chrome&pbk=F6PK1mARGsyeoVDKws76F0tNoIC1wd9sEG20c7yF2wY&sid=7963d08380d47375&type=tcp&headerType=none#AmneziaVPN";
+
+    /// A share link is a bearer credential, and the export directory is made
+    /// next to the working directory the program was launched from — often
+    /// shared, synced, or `/tmp`.
+    #[cfg(unix)]
+    #[test]
+    fn exported_files_are_not_readable_by_other_users() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("zeronet-export-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        create_private_dir(&dir).unwrap();
+        write_private_file(&dir.join("links.txt"), AMNEZIA_LINK.as_bytes()).unwrap();
+        // A second export replaces the file rather than failing on it.
+        write_private_file(&dir.join("links.txt"), b"vless://second").unwrap();
+
+        let mode =
+            |path: &std::path::Path| std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(&dir), 0o700);
+        assert_eq!(mode(&dir.join("links.txt")), 0o600);
+        assert_eq!(
+            std::fs::read_to_string(dir.join("links.txt")).unwrap(),
+            "vless://second"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     fn imported_profile(link: &str) -> String {
         serde_json::json!({

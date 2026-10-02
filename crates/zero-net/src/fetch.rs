@@ -21,6 +21,15 @@ use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::time::timeout;
 
+/// What this module calls itself on the wire.
+///
+/// The whole point of the evasion layer is that nothing here is distinctive,
+/// so a `zray-core/<version>` banner — the one place the software named itself
+/// and published its exact version to every subscription host, CDN and asset
+/// mirror — contradicted it. A generic string costs nothing and is what the
+/// probes here already send.
+pub(crate) const USER_AGENT: &str = "Mozilla/5.0";
+
 /// Bounds applied to one fetch, redirects included.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FetchLimits {
@@ -210,10 +219,9 @@ fn request_bytes(target: &Target, validators: &Validators, options: &FetchOption
         "identity"
     };
     let mut request = format!(
-        "GET {} HTTP/1.1\r\nHost: {}\r\nUser-Agent: zray-core/{}\r\nAccept: */*\r\nAccept-Encoding: {encoding}\r\nConnection: close\r\n",
+        "GET {} HTTP/1.1\r\nHost: {}\r\nUser-Agent: {USER_AGENT}\r\nAccept: */*\r\nAccept-Encoding: {encoding}\r\nConnection: close\r\n",
         target.request_target,
         host_header(target),
-        env!("CARGO_PKG_VERSION"),
     );
     if let Some(etag) = validators.etag.as_deref() {
         request.push_str(&format!("If-None-Match: {etag}\r\n"));
@@ -345,10 +353,7 @@ fn body_request(
     let agent = headers
         .iter()
         .find(|(k, _)| k.eq_ignore_ascii_case("user-agent"))
-        .map_or_else(
-            || format!("zray-core/{}", env!("CARGO_PKG_VERSION")),
-            |(_, v)| (*v).to_string(),
-        );
+        .map_or(USER_AGENT, |(_, v)| *v);
     let mut head = format!(
         "{method} {} HTTP/1.1\r\nHost: {}\r\nUser-Agent: {agent}\r\nAccept: */*\r\nAccept-Encoding: identity\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n",
         target.request_target,
@@ -677,17 +682,53 @@ mod tests {
     use tokio::net::TcpListener;
 
     async fn serve(response: &'static [u8]) -> String {
+        serve_capturing(response).await.0
+    }
+
+    /// Serve `response` once, and hand back the request text it saw.
+    async fn serve_capturing(
+        response: &'static [u8],
+    ) -> (String, tokio::sync::oneshot::Receiver<String>) {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
+        let (seen, request_text) = tokio::sync::oneshot::channel();
         tokio::spawn(async move {
-            while let Ok((mut stream, _)) = listener.accept().await {
-                let mut request = [0u8; 2048];
-                let _ = stream.read(&mut request).await;
-                let _ = stream.write_all(response).await;
-                let _ = stream.shutdown().await;
-            }
+            // One request is all the tests make; a second would have no
+            // receiver, and the ones that only want a body never read it.
+            let (mut stream, _) = match listener.accept().await {
+                Ok(accepted) => accepted,
+                Err(_) => return,
+            };
+            let mut request = Vec::new();
+            let mut buf = [0u8; 2048];
+            let n = stream.read(&mut buf).await.unwrap_or(0);
+            request.extend_from_slice(&buf[..n]);
+            let _ = seen.send(String::from_utf8_lossy(&request).into_owned());
+            let _ = stream.write_all(response).await;
+            let _ = stream.shutdown().await;
         });
-        format!("http://{address}/asset")
+        (format!("http://{address}/asset"), request_text)
+    }
+
+    /// The banner every asset, subscription and update request carries.
+    ///
+    /// The software is built to be unremarkable on the wire; a string naming
+    /// it and its version — to the ISP, and to every CDN and asset host —
+    /// defeats that. Asserted here so a future change cannot put it back.
+    #[tokio::test]
+    async fn no_request_names_the_client_or_its_version() {
+        let (url, seen) = serve_capturing(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok").await;
+        fetch(&url, &FetchLimits::default(), &Validators::default())
+            .await
+            .unwrap();
+        let request = seen.await.unwrap();
+        let agent = request
+            .lines()
+            .find_map(|line| line.strip_prefix("User-Agent: "))
+            .unwrap_or_else(|| panic!("no User-Agent in {request:?}"));
+        assert_eq!(agent, USER_AGENT);
+        assert!(!request.contains("zray"), "{request}");
+        assert!(!request.contains(env!("CARGO_PKG_VERSION")), "{request}");
     }
 
     #[tokio::test]

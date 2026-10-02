@@ -125,6 +125,13 @@ async fn handle_connection(
         .find(|header| header.name.eq_ignore_ascii_case("authorization"))
         .and_then(|header| std::str::from_utf8(header.value).ok())
         .map(str::to_owned);
+    // Copied out of the borrow of `data` below, which the rest of the handler
+    // needs mutably while it reads the body.
+    let origin = request
+        .headers
+        .iter()
+        .find(|header| header.name.eq_ignore_ascii_case("origin"))
+        .map(|header| header.value.len());
     let content_length = request
         .headers
         .iter()
@@ -157,6 +164,16 @@ async fn handle_connection(
         }
     } else if !peer.ip().is_loopback() {
         return write_response(&mut stream, 403, "forbidden", b"").await;
+    }
+
+    // Cross-site requests. `POST /reload` installs a whole replacement
+    // configuration, so a page open in the user's browser must not be able to
+    // trigger it: without this, any site could send a form post to
+    // `127.0.0.1` and rewrite the proxy. Every state-changing verb is checked
+    // rather than just `/reload`, so the rule cannot be forgotten when an
+    // endpoint is added.
+    if !matches!(method.as_str(), "GET" | "HEAD" | "OPTIONS") && origin.is_some() {
+        return write_response(&mut stream, 403, "cross-origin request refused", b"").await;
     }
 
     match (method.as_str(), path.as_str()) {
@@ -272,6 +289,91 @@ mod tests {
             bearer_token: None,
         };
         assert!(config.validate().is_ok());
+    }
+
+    /// A page in the user's browser must not be able to drive the API.
+    ///
+    /// `POST /reload` installs a whole replacement configuration, and with
+    /// only a loopback check a form post from any site reached it: a JSON
+    /// body sent as `text/plain` is not preflighted, so the browser issued
+    /// the request and the API parsed it happily.
+    #[tokio::test]
+    async fn a_cross_origin_post_is_refused() {
+        use tokio::io::AsyncWriteExt;
+
+        let generation = zero_config::RuntimeGeneration::compile(
+            zero_config::parse_config_array(
+                r#"{"inbounds": [], "outbounds": [{"tag": "direct", "protocol": "freedom"}]}"#,
+            )
+            .expect("a config the engine accepts")
+            .remove(0)
+            .1,
+            zero_core::GenerationId(1),
+        )
+        .expect("compiles");
+        let server = std::sync::Arc::new(crate::Server::new(crate::ServerConfig {
+            config: std::sync::Arc::clone(&generation.config),
+            generation: generation.id,
+        }));
+        let config = ManagementConfig {
+            listen: "127.0.0.1:0".parse().unwrap(),
+            bearer_token: None,
+        };
+
+        // One request per call, served by the real handler, so the check is
+        // exercised where a browser's request would land.
+        let post = |origin: Option<&str>| {
+            let mut request = String::from(
+                "POST /reload HTTP/1.1\r\nHost: localhost\r\nContent-Type: text/plain\r\n\
+Content-Length: 2\r\n",
+            );
+            if let Some(origin) = origin {
+                request.push_str(&format!("Origin: {origin}\r\n"));
+            }
+            request.push_str("\r\n{}");
+            let server = std::sync::Arc::clone(&server);
+            let config = config.clone();
+            async move {
+                let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+                let address = listener.local_addr().unwrap();
+                let serving = {
+                    let server = std::sync::Arc::clone(&server);
+                    let config = config.clone();
+                    async move {
+                        let (accepted, peer) = listener.accept().await.unwrap();
+                        handle_connection(accepted, peer, config, server).await
+                    }
+                };
+                let client = async {
+                    let mut stream = tokio::net::TcpStream::connect(address).await.unwrap();
+                    stream.write_all(request.as_bytes()).await.unwrap();
+                    let mut reply = Vec::new();
+                    tokio::io::AsyncReadExt::read_to_end(&mut stream, &mut reply)
+                        .await
+                        .unwrap();
+                    String::from_utf8_lossy(&reply).into_owned()
+                };
+                let (reply, served) = tokio::join!(client, serving);
+                // The handler reports a refusal as an error after it has
+                // answered, so that is not a failure of the test.
+                let _ = served;
+                reply
+            }
+        };
+
+        let crossed = post(Some("https://evil.example")).await;
+        assert!(
+            crossed.starts_with("HTTP/1.1 403"),
+            "a browser could still rewrite the config: {crossed}"
+        );
+
+        // Same request without the header — a local tool, not a page — is
+        // untouched, so nothing that legitimately drives the API breaks.
+        let direct = post(None).await;
+        assert!(
+            !direct.starts_with("HTTP/1.1 403"),
+            "a local client was refused: {direct}"
+        );
     }
 
     #[test]

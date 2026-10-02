@@ -84,6 +84,29 @@ impl Default for DaemonStats {
     }
 }
 
+/// The username and password a LAN client has to present.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LanCredential {
+    pub user: String,
+    pub pass: String,
+}
+
+/// A password the user never has to invent, which the caller persists so it
+/// survives a restart.
+///
+/// 24 base64 characters is 144 bits from the OS CSPRNG — well within what
+/// SOCKS5 and HTTP Basic allow (RFC 1929 caps a field at 255 bytes), and far
+/// past anything worth guessing on a home network.
+pub fn new_lan_credential() -> LanCredential {
+    use base64::Engine as _;
+    // 18 bytes encodes to exactly 24 characters, no padding.
+    let bytes: [u8; 18] = rand::random();
+    LanCredential {
+        user: "zeronet".into(),
+        pass: base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes),
+    }
+}
+
 /// Runtime knobs that the engine config is built from.
 ///
 /// These used to be hard-coded to 10808/10809/1500 inside the config builder,
@@ -100,6 +123,10 @@ pub struct EngineOptions {
     pub tun_strict_route: bool,
     /// Bind the local inbounds to every interface rather than loopback.
     pub allow_lan: bool,
+    /// Password required on the SOCKS and HTTP inbounds while `allow_lan` is
+    /// on. `None` while the inbounds are loopback-only, so the default
+    /// install stays as usable as before.
+    pub lan_credential: Option<LanCredential>,
     /// Offer UDP associate on the SOCKS inbound.
     pub udp_enabled: bool,
     pub sniffing_enabled: bool,
@@ -153,6 +180,7 @@ impl Default for EngineOptions {
             tun_auto_route: true,
             tun_strict_route: false,
             allow_lan: false,
+            lan_credential: None,
             udp_enabled: true,
             sniffing_enabled: true,
             sniffing_route_only: false,
@@ -970,24 +998,24 @@ fn apply_engine_options(config: &mut serde_json::Value, options: &EngineOptions)
                 .unwrap_or_default()
                 .to_string();
             match protocol.as_str() {
-                "socks" => {
-                    inbound["port"] = serde_json::json!(options.socks_port);
+                "socks" | "http" => {
+                    if protocol == "socks" {
+                        inbound["port"] = serde_json::json!(options.socks_port);
+                    } else {
+                        inbound["port"] = serde_json::json!(options.http_port);
+                    }
                     inbound["listen"] = serde_json::json!(options.listen_address());
-                    inbound
-                        .as_object_mut()
-                        .and_then(|o| {
-                            o.entry("settings")
-                                .or_insert_with(|| serde_json::json!({}))
-                                .as_object_mut()
-                        })
-                        .map(|settings| {
-                            settings.insert("udp".into(), serde_json::json!(options.udp_enabled))
-                        });
-                    apply_sniffing(inbound, options);
-                }
-                "http" => {
-                    inbound["port"] = serde_json::json!(options.http_port);
-                    inbound["listen"] = serde_json::json!(options.listen_address());
+                    let settings = inbound.as_object_mut().and_then(|o| {
+                        o.entry("settings")
+                            .or_insert_with(|| serde_json::json!({}))
+                            .as_object_mut()
+                    });
+                    if let Some(settings) = settings {
+                        if protocol == "socks" {
+                            settings.insert("udp".into(), serde_json::json!(options.udp_enabled));
+                        }
+                        apply_lan_auth(settings, options);
+                    }
                     apply_sniffing(inbound, options);
                 }
                 "tun" => apply_sniffing(inbound, options),
@@ -1057,6 +1085,46 @@ fn apply_engine_options(config: &mut serde_json::Value, options: &EngineOptions)
     // ---- dns and observatory
     apply_custom_dns(map, options);
     apply_clean_ip(map, options);
+}
+
+/// Require a password on the local inbounds when they are not loopback-only.
+///
+/// Binding to `0.0.0.0` without a credential hands every host on the
+/// network a working exit node through the user's own proxy account, with no
+/// setting on the page saying so. The credential is generated once and
+/// persisted by the caller, so it is stable across restarts — a rotating one
+/// would lock the user out of their own phone.
+fn apply_lan_auth(
+    settings: &mut serde_json::Map<String, serde_json::Value>,
+    options: &EngineOptions,
+) {
+    let Some(credential) = options.lan_credential.as_ref() else {
+        return;
+    };
+    if options.allow_lan {
+        settings.insert("auth".into(), serde_json::json!("password"));
+        settings.insert(
+            "accounts".into(),
+            serde_json::json!([{"user": credential.user, "pass": credential.pass}]),
+        );
+        return;
+    }
+    // Switching LAN off must take the password with it: a loopback socket
+    // that now demands credentials the user never configured breaks their own
+    // browser. Only the account stamped above is removed, so accounts the
+    // user wrote into their own config by hand are left alone.
+    let ours = settings
+        .get("accounts")
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(|accounts| {
+            accounts.len() == 1
+                && accounts[0]["user"] == credential.user
+                && accounts[0]["pass"] == credential.pass
+        });
+    if ours {
+        settings.remove("accounts");
+        settings.remove("auth");
+    }
 }
 
 /// Inbound sniffing, spelled the way the parser reads it.
@@ -1907,6 +1975,7 @@ mod tests {
             tun_auto_route: true,
             tun_strict_route: true,
             allow_lan: true,
+            lan_credential: Some(new_lan_credential()),
             udp_enabled: false,
             sniffing_enabled: true,
             sniffing_route_only: true,
@@ -2539,6 +2608,140 @@ mod tests {
         let json = prepare_runnable_config_with(LINK, &opts).unwrap();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(inbound_named(&v, "socks")["listen"], "127.0.0.1");
+    }
+
+    /// `allow_lan` binds the SOCKS and HTTP inbounds to `0.0.0.0`. Without a
+    /// credential that hands every host on the network a working exit node
+    /// through the user's own account, and the only hint is one line in a
+    /// settings page.
+    #[test]
+    fn lan_access_requires_a_password_on_both_local_inbounds() {
+        let opts = EngineOptions {
+            allow_lan: true,
+            lan_credential: Some(new_lan_credential()),
+            ..EngineOptions::default()
+        };
+        let json = prepare_runnable_config_with(LINK, &opts).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+        for protocol in ["socks", "http"] {
+            let inbound = inbound_named(&v, protocol);
+            assert_eq!(inbound["listen"], "0.0.0.0");
+            assert_eq!(
+                inbound["settings"]["auth"], "password",
+                "the {protocol} inbound is open to the LAN"
+            );
+            let accounts = inbound["settings"]["accounts"]
+                .as_array()
+                .unwrap_or_else(|| panic!("{protocol} has no accounts"));
+            assert_eq!(accounts.len(), 1);
+            assert!(accounts[0]["user"].as_str().is_some_and(|u| !u.is_empty()));
+            assert!(accounts[0]["pass"].as_str().is_some_and(|p| !p.is_empty()));
+        }
+        // The engine has to accept what we just built.
+        assert_eq!(validate_profile(LINK, &opts), Ok(()));
+    }
+
+    /// The default install is loopback-only, so it must stay as frictionless
+    /// as it was: no accounts to configure anywhere.
+    #[test]
+    fn a_loopback_only_proxy_still_needs_no_password() {
+        let opts = EngineOptions::default();
+        assert!(opts.lan_credential.is_none());
+        let json = prepare_runnable_config_with(LINK, &opts).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        for protocol in ["socks", "http"] {
+            let settings = &inbound_named(&v, protocol)["settings"];
+            assert!(settings.get("auth").is_none(), "{protocol}: {settings}");
+            assert!(settings.get("accounts").is_none(), "{protocol}: {settings}");
+        }
+    }
+
+    /// Switching LAN off again must not leave a password behind asking for
+    /// credentials on a socket only this machine can reach.
+    #[test]
+    fn turning_lan_access_off_drops_the_accounts_again() {
+        // The credential is persisted, so it is the same one on the second
+        // pass — which is exactly the case that has to be recognised.
+        let credential = new_lan_credential();
+        let lan = EngineOptions {
+            allow_lan: true,
+            lan_credential: Some(credential.clone()),
+            ..EngineOptions::default()
+        };
+        let json = prepare_runnable_config_with(LINK, &lan).unwrap();
+
+        let loopback = prepare_runnable_config_with(
+            &json,
+            &EngineOptions {
+                allow_lan: false,
+                lan_credential: Some(credential),
+                ..lan
+            },
+        )
+        .unwrap();
+        let v: serde_json::Value = serde_json::from_str(&loopback).unwrap();
+        for protocol in ["socks", "http"] {
+            let settings = &inbound_named(&v, protocol)["settings"];
+            assert_eq!(inbound_named(&v, protocol)["listen"], "127.0.0.1");
+            assert!(
+                settings.get("accounts").is_none(),
+                "{protocol} still asks for a password it no longer needs: {settings}"
+            );
+        }
+    }
+
+    /// A password the user wrote into their own config is not ours to remove.
+    #[test]
+    fn hand_written_inbound_accounts_survive_a_settings_change() {
+        let with_own_accounts = serde_json::json!({
+            "inbounds": [
+                {"tag": "socks-in", "listen": "127.0.0.1", "port": 10808, "protocol": "socks",
+                 "settings": {"auth": "password", "accounts": [{"user": "mine", "pass": "mine"}]}},
+                {"tag": "http-in", "listen": "127.0.0.1", "port": 10809, "protocol": "http"}
+            ],
+            "outbounds": [{
+                "tag": "proxy", "protocol": "vless",
+                "settings": {"vnext": [{
+                    "address": "1.2.3.4", "port": 443,
+                    "users": [{"id": "245abd35-7efa-4bc8-85d4-a04f3798329f", "encryption": "none"}]
+                }]},
+                "streamSettings": {"network": "tcp", "security": "tls",
+                                   "tlsSettings": {"serverName": "example.com"}}
+            }]
+        })
+        .to_string();
+        let json = prepare_runnable_config_with(
+            &with_own_accounts,
+            &EngineOptions {
+                allow_lan: false,
+                lan_credential: Some(new_lan_credential()),
+                ..EngineOptions::default()
+            },
+        )
+        .unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let settings = &inbound_named(&v, "socks")["settings"];
+        assert_eq!(settings["auth"], "password");
+        assert_eq!(settings["accounts"][0]["user"], "mine");
+    }
+
+    #[test]
+    fn a_generated_credential_fits_both_protocols_and_differs_every_time() {
+        let a = new_lan_credential();
+        let b = new_lan_credential();
+        assert_ne!(a.pass, b.pass, "two credentials must not be equal");
+        assert_eq!(a.user, "zeronet");
+        // SOCKS5 RFC 1929 and HTTP Basic both cap a field at 255 bytes.
+        assert!(a.pass.len() <= 255 && a.user.len() <= 255);
+        // URL-safe and unpadded, so it survives being typed into a phone.
+        assert!(
+            a.pass
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_'),
+            "{}",
+            a.pass
+        );
     }
 
     #[test]
