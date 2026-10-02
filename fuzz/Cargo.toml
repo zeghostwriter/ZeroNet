@@ -12,12 +12,24 @@ cargo-fuzz = true
 # into ordinary `cargo build` of the runtime.
 [workspace]
 
+# Repeated verbatim from the root manifest, which does not reach here: `fuzz`
+# is its own workspace. Without this the crate resolves stock `rustls`, which
+# `zero-security` does not compile against, so the fuzzers would not build at
+# all -- let alone build the code that ships.
+[patch.crates-io]
+rustls = { git = "https://github.com/aimalygin/shaped-rustls", rev = "3a131beaef0183b0cb61e5a9070a703b6be39ed3" }
+netstack-smoltcp = { path = "../vendor/netstack-smoltcp" }
+
 [dependencies]
 libfuzzer-sys = "0.4"
 serde_json = "1"
+bytes = "1"
 zero-config = { path = "../crates/zero-config" }
 zero-core = { path = "../crates/zero-core" }
 zero-protocol = { path = "../crates/zero-protocol" }
+zero-security = { path = "../crates/zero-security" }
+zero-transport = { path = "../crates/zero-transport" }
+zero-tun = { path = "../crates/zero-tun" }
 
 [[bin]]
 name = "parse_config_array"
@@ -43,6 +55,34 @@ bench = false
 [[bin]]
 name = "shadowsocks2022_header"
 path = "fuzz_targets/shadowsocks2022_header.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "tls13_record_header"
+path = "fuzz_targets/tls13_record_header.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "tun_ip_packet"
+path = "fuzz_targets/tun_ip_packet.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ws_frame_decode"
+path = "fuzz_targets/ws_frame_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "xhttp_padding"
+path = "fuzz_targets/xhttp_padding.rs"
 test = false
 doc = false
 bench = false

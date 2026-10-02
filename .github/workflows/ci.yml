@@ -76,6 +76,24 @@ jobs:
       - name: lockfile is current
         run: cargo metadata --locked --format-version 1 > /dev/null
 
+  # `fuzz` is a workspace of its own, so `cargo check --workspace` never looks
+  # at it. Builds the targets; running them is a maintainer's job, per
+  # fuzz/README.md.
+  fuzz-targets:
+    name: fuzz targets build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      # Not `--locked`. A lockfile is resolved per platform, so one written on
+      # a single machine is missing the crates every other platform needs, and
+      # pinning it fails the build everywhere except where it was written. The
+      # git dependency is pinned by branch, so re-resolving stays deterministic
+      # about the part that actually matters.
+      - name: check the fuzz targets build
+        run: cargo check --manifest-path fuzz/Cargo.toml --all-targets
+
   cross:
     name: cross-platform check
     strategy:
