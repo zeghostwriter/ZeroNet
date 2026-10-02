@@ -18,6 +18,10 @@ members = [
     "crates/zero-scanner",
     "crates/zero-discovery",
     "crates/zeronet-tui",
+    # Allocation counts for the framed read paths. A workspace member so it
+    # resolves the same dependency versions as the code it measures, and so its
+    # release profile is the shipped one.
+    "bench/hotpath",
 ]
 
 [workspace.package]

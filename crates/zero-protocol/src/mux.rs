@@ -5,6 +5,10 @@
 //! deliberately independent from pooling: callers may use one worker for one
 //! logical stream first, and add a session manager without changing these
 //! bytes.
+//!
+//! Neither read nor write goes through a scratch buffer: a payload is read
+//! into its own spare capacity, and a chunk is read straight into the frame
+//! that will carry it. `bench/hotpath` counts what that saves.
 
 use std::collections::HashMap;
 use std::io;
@@ -363,8 +367,31 @@ pub async fn read_frame<R: AsyncRead + Unpin>(reader: &mut R) -> io::Result<Fram
     let mut frame = decode_metadata(&metadata[..metadata_len])?;
     if frame.option & OPTION_DATA != 0 {
         let payload_len = reader.read_u16().await? as usize;
-        let mut payload = vec![0u8; payload_len];
-        reader.read_exact(&mut payload).await?;
+        // `vec![0u8; payload_len]` zeroes up to 64 KiB that the read then
+        // overwrites, on every frame. Filling the spare capacity instead skips
+        // that. The loop keeps `read_exact` semantics, since one read may
+        // under-fill, and each pass is capped at the announced length so a
+        // read cannot run into the next frame's bytes.
+        let mut payload = Vec::with_capacity(payload_len);
+        let mut filled = 0;
+        while filled < payload_len {
+            // `spare_capacity_mut` is at least `payload_len - filled` long
+            // because `capacity >= payload_len` and the length is `filled`.
+            let spare = &mut payload.spare_capacity_mut()[..payload_len - filled];
+            let mut read = tokio::io::ReadBuf::uninit(spare);
+            reader.read_buf(&mut read).await?;
+            let n = read.filled().len();
+            if n == 0 {
+                return Err(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "mux payload ended early",
+                ));
+            }
+            filled += n;
+            // SAFETY: the read above initialized exactly `n` bytes past the old
+            // length, and `filled <= payload_len <= capacity`.
+            unsafe { payload.set_len(filled) };
+        }
         frame.payload = payload;
     }
     Ok(frame)
@@ -647,10 +674,13 @@ impl ClientPool {
         let state = self.state.clone();
         tokio::spawn(async move {
             let mut first = true;
-            let mut buf = vec![0u8; 16 * 1024];
+            // Read straight into the frame's buffer. `Frame::keep(..,
+            // buf[..n].to_vec())` paid an allocation *and* a full copy for a
+            // frame the carrier writer encodes and drops immediately.
             let result = async {
                 loop {
-                    let n = local_read.read(&mut buf).await?;
+                    let mut payload = Vec::with_capacity(16 * 1024);
+                    let n = local_read.read_buf(&mut payload).await?;
                     if n == 0 {
                         state
                             .frames
@@ -663,9 +693,9 @@ impl ClientPool {
                     }
                     let frame = if first {
                         first = false;
-                        Frame::new(session_id, destination.clone(), buf[..n].to_vec())
+                        Frame::new(session_id, destination.clone(), payload)
                     } else {
-                        Frame::keep(session_id, buf[..n].to_vec())
+                        Frame::keep(session_id, payload)
                     };
                     state.frames.send(frame).await.map_err(|_| {
                         io::Error::new(io::ErrorKind::BrokenPipe, "mux writer closed")
@@ -1051,14 +1081,16 @@ where
             Ok::<(), io::Error>(())
         };
         let downlink = async {
-            let mut buffer = vec![0u8; 16 * 1024];
             loop {
-                let size = match remote_read.read(&mut buffer).await {
+                // Read straight into the frame's buffer rather than into a
+                // scratch buffer copied out with `buffer[..size].to_vec()`.
+                let mut payload = Vec::with_capacity(16 * 1024);
+                match remote_read.read_buf(&mut payload).await {
                     Ok(0) | Err(_) => break,
-                    Ok(size) => size,
-                };
+                    Ok(_) => {}
+                }
                 if frame_tx
-                    .send(Frame::keep(session_id, buffer[..size].to_vec()))
+                    .send(Frame::keep(session_id, payload))
                     .await
                     .is_err()
                 {
