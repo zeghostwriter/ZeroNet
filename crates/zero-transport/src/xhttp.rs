@@ -368,16 +368,25 @@ pub async fn accept_packet_up(
             .ok_or_else(|| "XHTTP packet-up GET has no valid session path".to_string())?;
         let (app, worker) = tokio::io::duplex(64 * 1024);
         let packet_rx = hub.open(session.clone()).await?;
-        stream
-            .write_all(
-                b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nContent-Type: application/octet-stream\r\nConnection: keep-alive\r\n\r\n",
-            )
-            .await
-            .map_err(|error| format!("XHTTP packet download response: {error}"))?;
-        stream
-            .flush()
-            .await
-            .map_err(|error| format!("XHTTP packet download flush: {error}"))?;
+        // Only the task below removes the session, so a response that never
+        // lands has to drop it here.
+        let response = async {
+            stream
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nContent-Type: application/octet-stream\r\nConnection: keep-alive\r\n\r\n",
+                )
+                .await
+                .map_err(|error| format!("XHTTP packet download response: {error}"))?;
+            stream
+                .flush()
+                .await
+                .map_err(|error| format!("XHTTP packet download flush: {error}"))
+        }
+        .await;
+        if let Err(error) = response {
+            hub.sessions.lock().await.remove(&session);
+            return Err(error);
+        }
         let hub = Arc::clone(hub);
         tokio::spawn(async move {
             run_packet_server_exchange(packet_rx, worker, stream).await;
@@ -1832,15 +1841,23 @@ pub async fn accept_packet_up_h3(
             return Err("XHTTP HTTP/3 packet GET must not have a request body".into());
         }
         let packet_rx = hub.open(session.clone()).await?;
-        let response = http::Response::builder()
-            .status(http::StatusCode::OK)
-            .header("content-type", "application/octet-stream")
-            .body(())
-            .map_err(|error| format!("XHTTP HTTP/3 packet download response: {error}"))?;
-        stream
-            .send_response(response)
-            .await
-            .map_err(|error| format!("XHTTP HTTP/3 packet download response: {error}"))?;
+        // As in the HTTP/1.1 leg above.
+        let response = async {
+            let response = http::Response::builder()
+                .status(http::StatusCode::OK)
+                .header("content-type", "application/octet-stream")
+                .body(())
+                .map_err(|error| format!("XHTTP HTTP/3 packet download response: {error}"))?;
+            stream
+                .send_response(response)
+                .await
+                .map_err(|error| format!("XHTTP HTTP/3 packet download response: {error}"))
+        }
+        .await;
+        if let Err(error) = response {
+            hub.sessions.lock().await.remove(&session);
+            return Err(error);
+        }
         let (mut send, mut recv) = stream.split();
         let (app, worker) = tokio::io::duplex(128 * 1024);
         let hub = Arc::clone(hub);
@@ -2793,6 +2810,32 @@ mod tests {
             .deliver("session", 1, b"duplicate".to_vec())
             .await
             .is_err());
+    }
+
+    #[tokio::test]
+    async fn a_peer_that_hangs_up_mid_handshake_registers_no_session() {
+        // The session id comes off the request target and nothing reaps the
+        // map, so a failed handshake must not leave one resident.
+        let (mut client, server) = tokio::io::duplex(16 * 1024);
+        let config = WsConfig::new("/packet", "edge.example");
+        let hub = Arc::new(PacketHub::new());
+        let server_config = config.clone();
+        let server_hub = Arc::clone(&hub);
+        let server_task = tokio::spawn(async move {
+            accept_packet_up(zero_core::boxed(server), &server_config, &server_hub).await
+        });
+
+        client
+            .write_all(b"GET /packet/abandoned HTTP/1.1\r\nHost: edge.example\r\n\r\n")
+            .await
+            .unwrap();
+        client.flush().await.unwrap();
+        drop(client);
+        assert!(server_task.await.unwrap().is_err());
+        assert!(
+            hub.sessions.lock().await.is_empty(),
+            "a failed download handshake must not leave a session behind"
+        );
     }
 
     #[tokio::test]

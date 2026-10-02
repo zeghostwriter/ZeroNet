@@ -142,6 +142,14 @@ impl FrameCipher {
         nonce
     }
 
+    /// Refuses to wrap: a repeated nonce under a fixed key breaks the AEAD.
+    fn advance(counter: &mut u16) -> io::Result<()> {
+        *counter = counter
+            .checked_add(1)
+            .ok_or_else(|| invalid("VMess AEAD nonce counter exhausted"))?;
+        Ok(())
+    }
+
     fn overhead(&self) -> usize {
         match self {
             Self::None { .. } => 0,
@@ -156,6 +164,7 @@ impl FrameCipher {
         match self {
             Self::None { counter } => {
                 *counter = counter.wrapping_add(1);
+                Ok(())
             }
             Self::Aes {
                 cipher,
@@ -171,7 +180,7 @@ impl FrameCipher {
                     )
                     .map_err(|_| invalid("VMess data encryption failed"))?;
                 out.extend_from_slice(&tag);
-                *counter = counter.wrapping_add(1);
+                Self::advance(counter)
             }
             Self::Chacha {
                 cipher,
@@ -187,10 +196,9 @@ impl FrameCipher {
                     )
                     .map_err(|_| invalid("VMess data encryption failed"))?;
                 out.extend_from_slice(&tag);
-                *counter = counter.wrapping_add(1);
+                Self::advance(counter)
             }
         }
-        Ok(())
     }
 
     /// Authenticate and decrypt `chunk` in place, returning the plaintext
@@ -221,7 +229,7 @@ impl FrameCipher {
                         tag.into(),
                     )
                     .map_err(|_| invalid("VMess data authentication failed"))?;
-                *counter = counter.wrapping_add(1);
+                Self::advance(counter)?;
                 Ok(split)
             }
             Self::Chacha {
@@ -244,7 +252,7 @@ impl FrameCipher {
                         tag.into(),
                     )
                     .map_err(|_| invalid("VMess data authentication failed"))?;
-                *counter = counter.wrapping_add(1);
+                Self::advance(counter)?;
                 Ok(split)
             }
         }
@@ -1463,5 +1471,40 @@ mod tests {
         assert_eq!(kdf(&key, &[b"one"]), kdf(&key, &[b"one"]));
         assert_ne!(kdf(&key, &[b"one"]), kdf(&key, &[b"two"]));
         assert_ne!(crc32(b"hello"), 0);
+    }
+
+    #[test]
+    fn an_exhausted_frame_counter_refuses_to_reuse_a_nonce() {
+        for cipher in [Cipher::Aes128Gcm, Cipher::Chacha20Poly1305] {
+            let mut sender = FrameCipher::new(cipher, &[7u8; 16], &[9u8; 16]);
+            let mut receiver = FrameCipher::new(cipher, &[7u8; 16], &[9u8; 16]);
+            // Wind both to the last counter the 16-bit field names.
+            for _ in 0..u16::MAX - 1 {
+                FrameCipher::advance(counter_of(&mut sender)).unwrap();
+                FrameCipher::advance(counter_of(&mut receiver)).unwrap();
+            }
+
+            // The last frame the counter can name still round-trips.
+            let mut frame = Vec::new();
+            sender.seal_into(b"last frame", &mut frame).unwrap();
+            let opened = receiver.open_in_place(&mut frame).unwrap();
+            assert_eq!(&frame[..opened], b"last frame");
+
+            // The one after it would reuse a nonce, so neither end accepts it.
+            let mut reused = Vec::new();
+            let error = sender
+                .seal_into(b"reused", &mut reused)
+                .expect_err("a wrapped counter must not seal");
+            assert_eq!(error.to_string(), "VMess AEAD nonce counter exhausted");
+            receiver.open_in_place(&mut reused).unwrap_err();
+        }
+
+        fn counter_of(cipher: &mut FrameCipher) -> &mut u16 {
+            match cipher {
+                FrameCipher::None { counter }
+                | FrameCipher::Aes { counter, .. }
+                | FrameCipher::Chacha { counter, .. } => counter,
+            }
+        }
     }
 }
