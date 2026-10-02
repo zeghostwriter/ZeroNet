@@ -91,6 +91,9 @@ cipher = "0.4"
 ctr = "0.9"
 aes-gcm = "0.10"
 chacha20poly1305 = "0.10"
+poly1305 = "0.8"
+# Only the tests compare this module against the crate it replaces.
+chacha20 = "0.9.1"
 x25519-dalek = { version = "2", features = ["static_secrets"] }
 ml-kem = { version = "0.3.2", features = ["getrandom"] }
 ml-dsa = "0.1.1"
