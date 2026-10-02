@@ -264,7 +264,7 @@ fn build_ipv4_packet(
     packet[4..6].copy_from_slice(&rand::random::<u16>().to_be_bytes());
     packet[6..8].copy_from_slice(&0x4000u16.to_be_bytes());
     packet[8] = 64;
-    packet[9] = libc::IPPROTO_TCP as u8;
+    packet[9] = IPPROTO_TCP;
     let IpAddr::V4(local_ip) = local.ip() else {
         unreachable!()
     };
@@ -292,33 +292,102 @@ fn build_ipv4_packet(
     Ok(packet)
 }
 
-#[cfg(target_os = "linux")]
+// Pure arithmetic, so it is built wherever the tests run and only *used* by
+// the Linux sender; gating it to Linux too would leave the summation untested
+// off that one platform.
+//
+// `IPPROTO_TCP` is spelled out rather than taken from `libc`, which defines it
+// only under `cfg(unix)`: `libc::IPPROTO_TCP` here is what makes `cargo test`
+// and `cargo clippy --all-targets` fail to compile on `x86_64-pc-windows-msvc`
+// now that this function exists off Linux. CI cannot see that, because the
+// Windows job runs `cargo check` with no `--all-targets` and so never sets
+// `cfg(test)`. 6 is the IANA-assigned number for TCP and is the same integer
+// on every platform.
+#[cfg(any(target_os = "linux", test))]
+const IPPROTO_TCP: u8 = 6;
+
+#[cfg(any(target_os = "linux", test))]
 fn tcp_checksum(
     source: std::net::Ipv4Addr,
     destination: std::net::Ipv4Addr,
     header: &[u8],
     payload: &[u8],
 ) -> u16 {
-    let mut pseudo = Vec::with_capacity(12 + header.len() + payload.len());
-    pseudo.extend_from_slice(&source.octets());
-    pseudo.extend_from_slice(&destination.octets());
-    pseudo.extend_from_slice(&[0, libc::IPPROTO_TCP as u8]);
-    pseudo.extend_from_slice(&((header.len() + payload.len()) as u16).to_be_bytes());
-    pseudo.extend_from_slice(header);
-    pseudo.extend_from_slice(payload);
-    internet_checksum(&pseudo)
+    // Summed in place rather than concatenated in front of a copy of the
+    // ClientHello: twelve bytes of pseudo-header and a whole number of 16-bit
+    // words of TCP header, so every join is a word boundary of the
+    // concatenation and the partial sums add up to the whole. Only the payload
+    // can end on an odd byte, and there the padded tail applies either way.
+    let mut sum = checksum_add(0, &source.octets());
+    sum = checksum_add(sum, &destination.octets());
+    sum = checksum_add(sum, &[0, IPPROTO_TCP]);
+    sum = checksum_add(sum, &((header.len() + payload.len()) as u16).to_be_bytes());
+    sum = checksum_add(sum, header);
+    checksum_finish(checksum_add(sum, payload))
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 fn internet_checksum(bytes: &[u8]) -> u16 {
-    let mut sum = 0u32;
-    for chunk in bytes.chunks(2) {
-        sum += u16::from_be_bytes([chunk[0], *chunk.get(1).unwrap_or(&0)]) as u32;
-        while sum > u16::MAX as u32 {
-            sum = (sum & u16::MAX as u32) + (sum >> 16);
-        }
+    checksum_finish(checksum_add(0, bytes))
+}
+
+/// Add `bytes` to a running one's-complement sum of 16-bit big-endian words,
+/// accumulated in the machine's own byte order and rotated back once by
+/// [`checksum_finish`].
+///
+/// Folding a carry is reduction modulo 2^16 - 1, and in that modulus 2^16 == 1,
+/// so 2^32 - 1 = (2^16 - 1)(2^16 + 1) means a 32-bit word read straight out of
+/// the buffer already carries the residue of the two 16-bit words inside it:
+/// one load and one add per four bytes, over eight accumulators.
+///
+/// Byte order falls out of the same argument. Swapping a word's halves is
+/// multiplication by 2^8, which is its own inverse mod 2^16 - 1 and distributes
+/// over a sum, so the native-order total is the native-order image of the sum
+/// asked for and one swap on the 16-bit residue settles it: `rev` per word
+/// becomes `rev` per packet.
+///
+/// Zero is the one value a residue class cannot decide, but a sum of
+/// non-negative words is zero only if every byte was, and a swap preserves both
+/// 0x0000 and 0xffff. Four bytes contribute at most 2^32, so 64 bits cannot
+/// wrap for any segment that exists.
+#[cfg(any(target_os = "linux", test))]
+fn checksum_add(mut sum: u64, bytes: &[u8]) -> u64 {
+    let (groups, rest) = bytes.as_chunks::<32>();
+    let (mut a, mut b, mut c, mut d) = (0u64, 0u64, 0u64, 0u64);
+    let (mut e, mut f, mut g, mut h) = (0u64, 0u64, 0u64, 0u64);
+    for word in groups {
+        a += u32::from_le_bytes([word[0], word[1], word[2], word[3]]) as u64;
+        b += u32::from_le_bytes([word[4], word[5], word[6], word[7]]) as u64;
+        c += u32::from_le_bytes([word[8], word[9], word[10], word[11]]) as u64;
+        d += u32::from_le_bytes([word[12], word[13], word[14], word[15]]) as u64;
+        e += u32::from_le_bytes([word[16], word[17], word[18], word[19]]) as u64;
+        f += u32::from_le_bytes([word[20], word[21], word[22], word[23]]) as u64;
+        g += u32::from_le_bytes([word[24], word[25], word[26], word[27]]) as u64;
+        h += u32::from_le_bytes([word[28], word[29], word[30], word[31]]) as u64;
     }
-    !(sum as u16)
+    sum += ((a + b) + (c + d)) + ((e + f) + (g + h));
+    let (words, tail) = rest.as_chunks::<4>();
+    for word in words {
+        sum += u32::from_le_bytes(*word) as u64;
+    }
+    let (pairs, odd) = tail.as_chunks::<2>();
+    for pair in pairs {
+        sum += u16::from_le_bytes(*pair) as u64;
+    }
+    if let [last] = odd {
+        // A trailing odd byte is the high half of a zero-padded word, worth
+        // `last << 8` big-endian and therefore `last` in this order.
+        sum += *last as u64;
+    }
+    sum
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn checksum_finish(mut sum: u64) -> u16 {
+    while sum > u16::MAX as u64 {
+        sum = (sum & u16::MAX as u64) + (sum >> 16);
+    }
+    !((sum as u16).swap_bytes())
 }
 
 fn template_bytes() -> &'static [u8] {
@@ -349,5 +418,112 @@ mod tests {
         assert!(build_fake_client_hello("").is_err());
         assert!(build_fake_client_hello(&"a".repeat(220)).is_err());
         assert!(build_fake_client_hello("bad\nname").is_err());
+    }
+}
+
+#[cfg(test)]
+mod checksum_equivalence {
+    use super::{internet_checksum, tcp_checksum, IPPROTO_TCP};
+
+    /// What shipped: a buffer holding the pseudo-header and copies of the
+    /// header and payload, summed with the carry folded after every word.
+    fn reference_internet_checksum(bytes: &[u8]) -> u16 {
+        let mut sum = 0u32;
+        for chunk in bytes.chunks(2) {
+            sum += u16::from_be_bytes([chunk[0], *chunk.get(1).unwrap_or(&0)]) as u32;
+            while sum > u16::MAX as u32 {
+                sum = (sum & u16::MAX as u32) + (sum >> 16);
+            }
+        }
+        !(sum as u16)
+    }
+
+    fn reference_tcp_checksum(
+        source: std::net::Ipv4Addr,
+        destination: std::net::Ipv4Addr,
+        header: &[u8],
+        payload: &[u8],
+    ) -> u16 {
+        let mut pseudo = Vec::with_capacity(12 + header.len() + payload.len());
+        pseudo.extend_from_slice(&source.octets());
+        pseudo.extend_from_slice(&destination.octets());
+        pseudo.extend_from_slice(&[0, IPPROTO_TCP]);
+        pseudo.extend_from_slice(&((header.len() + payload.len()) as u16).to_be_bytes());
+        pseudo.extend_from_slice(header);
+        pseudo.extend_from_slice(payload);
+        reference_internet_checksum(&pseudo)
+    }
+
+    #[test]
+    fn the_sum_matches_the_per_word_fold_at_every_length() {
+        for length in 0..=300usize {
+            for mode in 0..5u8 {
+                let bytes: Vec<u8> = (0..length)
+                    .map(|index| match mode {
+                        0 => 0xff,
+                        1 => 0x00,
+                        2 => index as u8,
+                        3 => (index * 37 + 11) as u8,
+                        _ => 0x80,
+                    })
+                    .collect();
+                assert_eq!(
+                    internet_checksum(&bytes),
+                    reference_internet_checksum(&bytes),
+                    "length {length} mode {mode}"
+                );
+            }
+        }
+        for length in [1000usize, 1472, 8127, 65_535] {
+            for fill in [0u8, 0xff, 0x5a] {
+                let bytes = vec![fill; length];
+                assert_eq!(
+                    internet_checksum(&bytes),
+                    reference_internet_checksum(&bytes),
+                    "{length}/{fill:#04x}"
+                );
+            }
+        }
+    }
+
+    /// The split sum is only the concatenation's sum while every boundary is a
+    /// word boundary, so this walks payloads of both parities over the TCP
+    /// header shapes a socket can produce, with addresses that carry the
+    /// pseudo-header sum out of the low word.
+    #[test]
+    fn the_tcp_checksum_matches_the_buffered_pseudo_header() {
+        let sources = [
+            std::net::Ipv4Addr::new(192, 168, 1, 1),
+            std::net::Ipv4Addr::new(255, 255, 255, 255),
+            std::net::Ipv4Addr::new(0, 0, 0, 0),
+        ];
+        let destinations = [
+            std::net::Ipv4Addr::new(203, 0, 113, 6),
+            std::net::Ipv4Addr::new(255, 255, 255, 255),
+        ];
+        for source in sources {
+            for destination in destinations {
+                for header_len in [20usize, 24, 40] {
+                    for payload_len in 0..=40usize {
+                        let header: Vec<u8> =
+                            (0..header_len).map(|index| (index * 7 + 3) as u8).collect();
+                        let payload: Vec<u8> = (0..payload_len)
+                            .map(|index| (index * 13 + 5) as u8)
+                            .collect();
+                        assert_eq!(
+                            tcp_checksum(source, destination, &header, &payload),
+                            reference_tcp_checksum(source, destination, &header, &payload),
+                            "{source} -> {destination} {header_len}/{payload_len}"
+                        );
+                        let filled = vec![0xffu8; payload_len];
+                        assert_eq!(
+                            tcp_checksum(source, destination, &header, &filled),
+                            reference_tcp_checksum(source, destination, &header, &filled),
+                            "filled {header_len}/{payload_len}"
+                        );
+                    }
+                }
+            }
+        }
     }
 }
