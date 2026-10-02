@@ -2413,6 +2413,76 @@ const CHUNK_PAYLOAD: usize = 16 * 1024;
 /// Room in front of the payload for the hex size line (16 digits + CRLF).
 const CHUNK_HEAD_ROOM: usize = 18;
 
+#[cfg(test)]
+mod chunk_head_tests {
+    use super::{chunk_head, CHUNK_HEAD_ROOM, CHUNK_PAYLOAD};
+
+    /// Reproduce the one production caller: it copies the last `len` bytes of
+    /// `out` to the right edge of a `CHUNK_HEAD_ROOM` head. Asserting the
+    /// function against itself is what let an offset-for-length mix-up
+    /// through, since a test that read `out[len..]` agreed with a `len` that
+    /// was really an offset.
+    fn emitted_by_caller(n: usize) -> Vec<u8> {
+        let mut head = [0u8; 6];
+        let len = chunk_head(n, &mut head);
+        assert!(
+            len <= CHUNK_HEAD_ROOM,
+            "n {n}: length {len} exceeds the head room"
+        );
+        assert!(len <= head.len(), "n {n}: length {len} exceeds the buffer");
+        let start = CHUNK_HEAD_ROOM - len;
+        let mut frame = [0u8; CHUNK_HEAD_ROOM];
+        frame[start..CHUNK_HEAD_ROOM].copy_from_slice(&head[head.len() - len..]);
+        // The head is left-padded, so the line is the rightmost `len` bytes.
+        frame[start..].to_vec()
+    }
+
+    /// The bytes must be exactly what `format!("{n:X}\r\n")` produces, for
+    /// every chunk size the uploader can produce.
+    #[test]
+    fn writes_exactly_what_format_would() {
+        for n in 1..=CHUNK_PAYLOAD {
+            let want = format!("{n:X}\r\n");
+            assert_eq!(
+                emitted_by_caller(n),
+                want.as_bytes(),
+                "n {n} (want {want:?})"
+            );
+        }
+    }
+
+    /// One to four hex digits all occur, so every alignment is covered. The
+    /// bug lived in the two-and-three-digit cases.
+    #[test]
+    fn every_hex_width_is_exercised() {
+        let widths: std::collections::BTreeSet<usize> = (1..=CHUNK_PAYLOAD)
+            .map(|n| format!("{n:X}").len())
+            .collect();
+        assert_eq!(widths, [1, 2, 3, 4].into_iter().collect());
+    }
+}
+
+/// Write the chunked-encoding size line for `n` bytes into `out` (six bytes,
+/// right-aligned) and return its length: the bytes `format!("{n:X}\r\n")`
+/// produces, without a `String` and the formatting machinery behind it. `n` is
+/// non-zero and at most [`CHUNK_PAYLOAD`], so the line is at most four hex
+/// digits plus CRLF.
+fn chunk_head(n: usize, out: &mut [u8; 6]) -> usize {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    debug_assert!(n > 0 && n <= CHUNK_PAYLOAD);
+    // `n != 0`, so 1..=4.
+    let digits = ((usize::BITS - n.leading_zeros()) as usize).div_ceil(4);
+    let start = out.len() - (digits + 2);
+    for j in 0..digits {
+        out[start + j] = HEX[(n >> (4 * (digits - 1 - j))) & 0xf];
+    }
+    out[out.len() - 2] = b'\r';
+    out[out.len() - 1] = b'\n';
+    // The caller sizes its copy from this, so it is the length of the line
+    // and not the offset it starts at — the two agree only for one digit.
+    digits + 2
+}
+
 /// Decode an HTTP/1.1 chunked body from `net` into `app`, up to and including
 /// the terminating zero-size chunk.
 ///
@@ -2491,9 +2561,11 @@ where
                 .await
                 .map_err(|error| format!("XHTTP {what} flush: {error}"));
         }
-        let head = format!("{n:X}\r\n");
-        let start = CHUNK_HEAD_ROOM - head.len();
-        frame[start..CHUNK_HEAD_ROOM].copy_from_slice(head.as_bytes());
+        // Once per 16 KiB chunk of every XHTTP upload and download.
+        let mut head = [0u8; 6];
+        let head_len = chunk_head(n, &mut head);
+        let start = CHUNK_HEAD_ROOM - head_len;
+        frame[start..CHUNK_HEAD_ROOM].copy_from_slice(&head[6 - head_len..]);
         let end = CHUNK_HEAD_ROOM + n;
         frame[end..end + 2].copy_from_slice(b"\r\n");
         net.write_all(&frame[start..end + 2])

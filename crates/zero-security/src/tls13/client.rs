@@ -621,6 +621,15 @@ fn read_u24(buf: &[u8], at: usize) -> Result<usize, Failure> {
 /// plaintext until the socket drains: four full records.
 const OUTGOING_HIGH_WATER: usize = 4 * (MAX_PLAINTEXT + 5 + 1 + 16);
 
+/// Plaintext of the record at the head of `wire`, as offsets into it.
+/// `frame_len == 0` means no record is pending.
+#[derive(Debug, Clone, Copy, Default)]
+struct PlainFrame {
+    pos: usize,
+    end: usize,
+    frame_len: usize,
+}
+
 /// A completed TLS 1.3 connection: decrypts inbound records, encrypts
 /// outbound ones, and tolerates everything a REALITY server emits around
 /// the data plane.
@@ -633,8 +642,9 @@ pub struct Tls13Stream<S> {
     write_secret: Vec<u8>,
     /// Raw bytes off the socket, not yet reassembled into records.
     wire: BytesMut,
-    /// Decrypted application bytes awaiting delivery.
-    plaintext: BytesMut,
+    /// A record is decrypted in place inside `wire`, so its plaintext is
+    /// already in place; `wire` holds the record until it has all been taken.
+    plain: PlainFrame,
     /// Sealed records awaiting transmission.
     outgoing: BytesMut,
     eof: bool,
@@ -665,7 +675,7 @@ impl<S> Tls13Stream<S> {
             read_secret: server_app,
             write_secret: client_app,
             wire: BytesMut::with_capacity(16 * 1024),
-            plaintext: BytesMut::new(),
+            plain: PlainFrame::default(),
             outgoing: BytesMut::new(),
             eof: false,
             close_sent: false,
@@ -735,8 +745,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Tls13Stream<S> {
                     ));
                 }
                 CONTENT_APPDATA => {
-                    // Decrypt inside the wire buffer: no per-record allocation,
-                    // and the only copy is the one into `plaintext`.
+                    // Decrypt inside the wire buffer: no allocation, no copy.
                     let (inner_type, pt_len) = self
                         .read
                         .open_in_place(&header, &mut self.wire[5..5 + len])?;
@@ -754,7 +763,11 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Tls13Stream<S> {
                                 }
                             } else {
                                 self.empty_records = 0;
-                                self.plaintext.extend_from_slice(&self.wire[payload_range]);
+                                self.plain = PlainFrame {
+                                    pos: payload_range.start,
+                                    end: payload_range.end,
+                                    frame_len: 5 + len,
+                                };
                             }
                         }
                         CONTENT_ALERT => {
@@ -772,7 +785,10 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Tls13Stream<S> {
                         }
                         _ => unreachable!("open validated the inner type"),
                     }
-                    self.wire.advance(5 + len);
+                    if self.plain.frame_len == 0 {
+                        // Nothing to hand out, so the record can go now.
+                        self.wire.advance(5 + len);
+                    }
 
                     // Return after one authenticated plaintext record. Vision
                     // may need to inspect that record and authorize a direct
@@ -780,7 +796,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Tls13Stream<S> {
                     // buffered in `wire` are parsed. Draining the whole wire
                     // buffer here races that protocol-level state change and
                     // can mistake raw inner TLS for a failed outer record.
-                    if !self.plaintext.is_empty() {
+                    if self.plain.frame_len != 0 {
                         return Ok(true);
                     }
                 }
@@ -904,10 +920,17 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for Tls13Stream<S> {
         let this = self.get_mut();
 
         loop {
-            if !this.plaintext.is_empty() {
-                let n = this.plaintext.len().min(buf.remaining());
-                let data = this.plaintext.split_to(n);
-                buf.put_slice(&data);
+            if this.plain.frame_len != 0 {
+                let left = this.plain.end - this.plain.pos;
+                let n = left.min(buf.remaining());
+                buf.put_slice(&this.wire[this.plain.pos..this.plain.pos + n]);
+                this.plain.pos += n;
+                if this.plain.pos == this.plain.end {
+                    // Fully delivered: the header, ciphertext and tag can go.
+                    let frame_len = this.plain.frame_len;
+                    this.plain = PlainFrame::default();
+                    this.wire.advance(frame_len);
+                }
                 return Poll::Ready(Ok(()));
             }
             if this.eof {
@@ -930,7 +953,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for Tls13Stream<S> {
                     // the same socket read. `pump_records` has already
                     // queued that plaintext before reporting EOF; drain it
                     // before exposing the clean end of stream.
-                    if !this.plaintext.is_empty() {
+                    if this.plain.frame_len != 0 {
                         continue;
                     }
                     return Poll::Ready(Ok(()));
@@ -942,7 +965,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for Tls13Stream<S> {
                     )))
                 }
             }
-            if !this.plaintext.is_empty() || this.eof {
+            if this.plain.frame_len != 0 || this.eof {
                 continue; // something to deliver or EOF was reached
             }
 
