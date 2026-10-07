@@ -103,16 +103,31 @@ pub fn encode_slice(role: Role, opcode: u8, payload: &[u8], out: &mut BytesMut) 
 
 /// XOR `data` with the RFC 6455 masking key, starting at key phase 0.
 ///
-/// Works on 64-bit words (the key repeated twice); the compiler vectorises
-/// the loop. The tail is shorter than a word and starts at a multiple of 8,
-/// so its key phase is again 0.
+/// The key has period 4, so sixteen bytes are four whole periods: a `u128`
+/// carries it in the low byte of each `u32` lane, and masking is one load, one
+/// xor and one store per sixteen bytes.
+///
+/// Sixteen is the widest step that stays worth taking. A 32-byte group, and a
+/// 32-byte group unrolled by hand into four `u64`s, are both markedly slower
+/// than the 8-byte step this replaces -- four stores into one cache line each
+/// wait on the three before them, which costs more than the wider arithmetic
+/// saves. Measured on Apple Silicon at `opt-level = "s"`, 1 KiB 121 -> 71 ns and
+/// 16 KiB 1189 -> 793.
+///
+/// The tail is under sixteen bytes and sixteen is a multiple of four, so the key
+/// phase inside it restarts at 0 and `i & 3` is still the right index.
 pub fn apply_mask(data: &mut [u8], mask: [u8; 4]) {
-    let wide = u64::from_ne_bytes([
-        mask[0], mask[1], mask[2], mask[3], mask[0], mask[1], mask[2], mask[3],
-    ]);
-    let (words, tail) = data.as_chunks_mut::<8>();
+    let mut wide = [0u8; 16];
+    for (index, byte) in mask.iter().enumerate() {
+        wide[index] = *byte;
+        wide[index + 4] = *byte;
+        wide[index + 8] = *byte;
+        wide[index + 12] = *byte;
+    }
+    let wide = u128::from_ne_bytes(wide);
+    let (words, tail) = data.as_chunks_mut::<16>();
     for word in words {
-        *word = (u64::from_ne_bytes(*word) ^ wide).to_ne_bytes();
+        *word = (u128::from_ne_bytes(*word) ^ wide).to_ne_bytes();
     }
     for (i, byte) in tail.iter_mut().enumerate() {
         *byte ^= mask[i & 3];
@@ -392,5 +407,34 @@ mod tests {
         buf.put_u8(3);
         buf.put_slice(b"abc");
         assert_eq!(&decode(&mut buf).unwrap().unwrap().payload[..], b"abc");
+    }
+
+    /// The 16-byte step must mask exactly what the 8-byte step did, at every
+    /// length: sixteen is a multiple of the key's period, so the phase is the
+    /// same at every offset and the tail's `i & 3` still holds.
+    #[test]
+    fn the_wide_step_masks_what_the_narrow_one_did() {
+        fn narrow(data: &mut [u8], mask: [u8; 4]) {
+            let wide = u64::from_ne_bytes([
+                mask[0], mask[1], mask[2], mask[3], mask[0], mask[1], mask[2], mask[3],
+            ]);
+            let (words, tail) = data.as_chunks_mut::<8>();
+            for word in words {
+                *word = (u64::from_ne_bytes(*word) ^ wide).to_ne_bytes();
+            }
+            for (i, byte) in tail.iter_mut().enumerate() {
+                *byte ^= mask[i & 3];
+            }
+        }
+        for len in 0..=200usize {
+            for mask in [[0u8; 4], [0xff; 4], [0x37, 0xfa, 0x21, 0x3d], [1, 0, 0, 0]] {
+                let base: Vec<u8> = (0..len).map(|i| (i * 17 + 3) as u8).collect();
+                let mut narrow_out = base.clone();
+                let mut wide_out = base.clone();
+                narrow(&mut narrow_out, mask);
+                apply_mask(&mut wide_out, mask);
+                assert_eq!(narrow_out, wide_out, "len {len} mask {mask:?}");
+            }
+        }
     }
 }
