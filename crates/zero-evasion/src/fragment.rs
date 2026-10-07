@@ -37,6 +37,10 @@ pub struct FragmentPolicy {
     pub interval_max_ms: i64,
     pub max_split_min: i64,
     pub max_split_max: i64,
+    /// Zero-length TLS records written in front of the ClientHello
+    /// ([`Packets::TlsHello`] only). Xray spells this as leading `0` entries
+    /// in the fragment mask's `lengths`.
+    pub empty_records: u8,
 }
 
 impl Default for FragmentPolicy {
@@ -52,11 +56,32 @@ impl Default for FragmentPolicy {
             interval_max_ms: 1,
             max_split_min: 0,
             max_split_max: 0,
+            empty_records: 0,
         }
     }
 }
 
 impl FragmentPolicy {
+    /// One empty TLS record and then the ClientHello whole, in one write: the
+    /// shape `zero_config::FragmentConfig::empty_record` describes, for the
+    /// connections that are not built from a configuration (the WARP API).
+    ///
+    /// Not for the MASQUE tunnel: measured the same day, a tunnel dialled
+    /// this way authenticated and then carried nothing (0 of 2, against 2 of
+    /// 2 without it), so a handshake that completes is not proof it helps.
+    pub fn empty_record() -> Self {
+        Self {
+            packets: Packets::TlsHello,
+            length_min: 16_384,
+            length_max: 16_384,
+            interval_min_ms: 0,
+            interval_max_ms: 0,
+            max_split_min: 0,
+            max_split_max: 0,
+            empty_records: 1,
+        }
+    }
+
     /// When the interval is zero Xray coalesces the re-framed records into a
     /// single write, which still defeats record-boundary matching but costs no
     /// extra latency or syscalls.
@@ -104,9 +129,17 @@ pub fn plan_tls_hello(buf: &[u8], policy: &FragmentPolicy) -> Option<Vec<Chunk>>
     let mut combined: Vec<u8> = Vec::new();
     let mut from = 0usize;
     let mut split_num: i64 = 0;
+    // The empty records come first and count as pieces, as they do in Xray
+    // (each is a `lengths` entry of 0 there).
+    let mut empty_left = policy.empty_records;
 
     loop {
-        let mut to = from.saturating_add(fragment_len(policy));
+        let mut to = if empty_left > 0 {
+            empty_left -= 1;
+            from
+        } else {
+            from.saturating_add(fragment_len(policy))
+        };
         split_num += 1;
         if to > data.len() || (max_split > 0 && split_num >= max_split) {
             to = data.len();
@@ -347,6 +380,47 @@ impl<S: AsyncRead + Unpin> AsyncRead for FragmentStream<S> {
 mod tests {
     use super::*;
     use tokio::io::AsyncWriteExt;
+
+    /// The shape measured to get through: one write holding an empty record
+    /// and then the untouched ClientHello record.
+    #[test]
+    fn an_empty_record_goes_in_front_of_the_hello_in_the_same_write() {
+        let hello = tls_record(517);
+        let policy = FragmentPolicy {
+            packets: Packets::TlsHello,
+            length_min: 16_384,
+            length_max: 16_384,
+            interval_min_ms: 0,
+            interval_max_ms: 0,
+            empty_records: 1,
+            ..Default::default()
+        };
+        let chunks = plan_tls_hello(&hello, &policy).unwrap();
+        assert_eq!(chunks.len(), 1, "both records must share one write");
+        let mut expected = vec![0x16, 0x03, 0x01, 0x00, 0x00];
+        expected.extend_from_slice(&hello);
+        assert_eq!(chunks[0].bytes, expected);
+
+        // With pieces after it, the empty record still comes first and the
+        // pieces still add up to the hello.
+        let pieces = FragmentPolicy {
+            length_min: 100,
+            length_max: 100,
+            empty_records: 2,
+            ..policy
+        };
+        let bytes = &plan_tls_hello(&hello, &pieces).unwrap()[0].bytes;
+        assert_eq!(&bytes[..10], [0x16, 3, 1, 0, 0, 0x16, 3, 1, 0, 0]);
+        let mut body = Vec::new();
+        let mut at = 10;
+        while at < bytes.len() {
+            let len = usize::from(bytes[at + 3]) << 8 | usize::from(bytes[at + 4]);
+            assert!(len > 0 && len <= 100);
+            body.extend_from_slice(&bytes[at + 5..at + 5 + len]);
+            at += 5 + len;
+        }
+        assert_eq!(body, hello[5..]);
+    }
 
     /// Build a synthetic TLS handshake record of `payload` bytes.
     fn tls_record(payload_len: usize) -> Vec<u8> {

@@ -3925,6 +3925,7 @@ dependencies = [
  "zero-config",
  "zero-core",
  "zero-dns",
+ "zero-evasion",
  "zero-net",
  "zero-router",
  "zero-runtime",

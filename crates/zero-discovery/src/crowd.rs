@@ -145,6 +145,7 @@ pub const METHODS: &[&str] = &[
     "tls:plain",
     "tls:fragment",
     "cdn:plain",
+    "cdn:empty",
     "cdn:fragment",
     "cdn:ech",
     "sanction:bertina",

@@ -2129,7 +2129,16 @@ fn parse_ech_config(settings: Option<&Value>, path: &str) -> R<Option<EchConfig>
         ));
     }
 
-    let Some(encoded) = encoded.and_then(Value::as_str) else {
+    // Xray also takes a DNS query here in place of the list itself, such as
+    // `cloudflare-ech.com+udp://1.1.1.1` or `https://1.1.1.1/dns-query`: look
+    // the list up instead of carrying it. That is the same request as leaving
+    // the list out, and it is answered the same way, by this core's own
+    // resolver rather than the server the string names, so the lookup follows
+    // the DNS settings and cannot leak around them.
+    let encoded = encoded
+        .and_then(Value::as_str)
+        .filter(|value| !value.contains("://"));
+    let Some(encoded) = encoded else {
         // Xray also permits discovery from the HTTPS/SVCB record of the
         // configured public name. The runtime fills this bounded marker from
         // its managed resolver before constructing Rustls.
@@ -2715,14 +2724,50 @@ fn parse_fragment(s: Option<&Value>, path: &str) -> R<FragmentConfig> {
     // Xray has used both `interval` and `delay` for this field.
     let delay_str = get("delay").or_else(|| get("interval")).unwrap_or("1");
 
+    // Xray also takes a list, one entry per piece: `"lengths": ["0", "100-200"]`.
+    // What that list is used for in practice is the leading zeros, each an
+    // empty TLS record in front of the ClientHello, so that is what is kept:
+    // the zeros are counted and the last entry sizes every piece after them
+    // (Xray repeats the last entry too, once the list runs out).
+    let list = |key: &str| -> R<Vec<&str>> {
+        match s.and_then(|s| s.get(key)) {
+            None => Ok(Vec::new()),
+            Some(Value::Array(items)) => items
+                .iter()
+                .map(|item| {
+                    item.as_str()
+                        .ok_or_else(|| format!("{path}: {key} must be a list of strings"))
+                })
+                .collect(),
+            Some(_) => Err(format!("{path}: {key} must be a list of strings")),
+        }
+    };
+    let lengths = list("lengths")?;
+    let empty_records = lengths
+        .iter()
+        .take_while(|entry| RangeU32::parse(entry) == Some(RangeU32::new(0, 0)))
+        .count();
+    let length = match lengths.last() {
+        Some(last) => RangeU32::parse(last).filter(|range| range.min > 0),
+        None => RangeU32::parse(get("length").unwrap_or("100-200")),
+    }
+    .ok_or_else(|| format!("{path}: bad length (the last one cannot be 0)"))?;
+    if empty_records > 0 && packets != FragmentPackets::TlsHello {
+        return Err(format!(
+            "{path}: a zero in lengths is an empty TLS record, which needs packets \"tlshello\""
+        ));
+    }
+    let delay_str = list("delays")?.last().copied().unwrap_or(delay_str);
+
     Ok(FragmentConfig {
         packets,
-        length: RangeU32::parse(get("length").unwrap_or("100-200"))
-            .ok_or_else(|| format!("{path}: bad length"))?,
+        length,
         delay: RangeDuration::parse_millis(delay_str)
             .ok_or_else(|| format!("{path}: bad delay"))?,
         max_split: RangeU32::parse(get("maxSplit").unwrap_or("0"))
             .ok_or_else(|| format!("{path}: bad maxSplit"))?,
+        empty_records: u8::try_from(empty_records)
+            .map_err(|_| format!("{path}: too many empty records"))?,
     })
 }
 
@@ -3660,6 +3705,27 @@ mod tests {
         assert_eq!(settings.xhttp_mode, XhttpMode::StreamUp);
     }
 
+    /// Xray's `lengths` list: leading zeros are empty records, the last
+    /// entry sizes the pieces.
+    #[test]
+    fn a_fragment_mask_can_ask_for_empty_records_before_the_hello() {
+        let mask = |settings: Value| parse_fragment(Some(&settings), "o");
+        let parsed = mask(serde_json::json!({
+            "packets": "tlshello", "lengths": ["0", "100-200"], "delays": ["0"]
+        }))
+        .unwrap();
+        assert_eq!(parsed.empty_records, 1);
+        assert_eq!(parsed.length, RangeU32::new(100, 200));
+        assert_eq!(parsed.delay, RangeDuration::millis(0, 0));
+        // The plain single range still works and asks for none.
+        let plain = mask(serde_json::json!({"packets": "tlshello", "length": "50"})).unwrap();
+        assert_eq!((plain.empty_records, plain.length.min), (0, 50));
+        // The last entry has to move bytes, and an empty record needs TLS framing.
+        assert!(mask(serde_json::json!({"packets": "tlshello", "lengths": ["0"]})).is_err());
+        assert!(mask(serde_json::json!({"packets": "1-1", "lengths": ["0", "40"]})).is_err());
+        assert!(mask(serde_json::json!({"packets": "tlshello", "lengths": "0"})).is_err());
+    }
+
     #[test]
     fn legacy_freedom_fragment_and_noise_are_compiled() {
         let value = serde_json::json!({
@@ -4079,6 +4145,18 @@ mod tests {
         };
         let ech = tls.ech.as_ref().expect("ECH marker");
         assert!(ech.config_list.is_empty());
+
+        // Xray's "look it up" spelling asks for the same thing.
+        let mut queried = value.clone();
+        queried["outbounds"][0]["streamSettings"]["tlsSettings"] = serde_json::json!({
+            "serverName": "proxy.example",
+            "echConfigList": "cloudflare-ech.com+udp://1.1.1.1"
+        });
+        let (config, _) = parse_config(&queried).unwrap();
+        let Security::Tls(tls) = &config.outbounds[0].stream.security else {
+            panic!("expected certificate TLS")
+        };
+        assert!(tls.ech.as_ref().expect("ECH marker").config_list.is_empty());
     }
 
     #[test]

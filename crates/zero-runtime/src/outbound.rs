@@ -239,6 +239,16 @@ fn socket_options(stream: &StreamSettings) -> SocketOptions {
     }
 }
 
+/// `tcp` as a boxed stream, behind the outbound's fragment mask when it has
+/// one. Only then: the wrapper counts writes to find the first, so a plain
+/// connection is spared it.
+fn fragmented(tcp: TcpStream, stream: &StreamSettings) -> BoxStream {
+    match fragment_policy(stream) {
+        Some(policy) => boxed(FragmentStream::new(tcp, policy)),
+        None => boxed(tcp),
+    }
+}
+
 fn fragment_policy(stream: &StreamSettings) -> Option<FragmentPolicy> {
     let f = stream.evasion.tcp_fragment.as_ref()?;
     Some(FragmentPolicy {
@@ -255,6 +265,7 @@ fn fragment_policy(stream: &StreamSettings) -> Option<FragmentPolicy> {
         interval_max_ms: f.delay.max.as_millis() as i64,
         max_split_min: f.max_split.min as i64,
         max_split_max: f.max_split.max as i64,
+        empty_records: f.empty_records,
     })
 }
 
@@ -809,11 +820,7 @@ async fn protect_socket(
             }
         }
     }
-    let base: BoxStream = match fragment_policy(stream) {
-        Some(policy) => boxed(FragmentStream::new(tcp, policy)),
-        None => boxed(tcp),
-    };
-    secure(outbound, base, fallback_host).await
+    secure(outbound, fragmented(tcp, stream), fallback_host).await
 }
 
 /// TLS or REALITY over an already open byte stream: a TCP socket, or a
@@ -1895,7 +1902,7 @@ pub async fn connect_direct(
         return dial_via_env_proxy(proxy, destination, stream).await;
     }
     let dialed = dial_tcp(&addrs, &race_policy(stream), &socket_options(stream)).await?;
-    Ok(boxed(dialed.stream))
+    Ok(fragmented(dialed.stream, stream))
 }
 
 /// Direct connection using the compiled, leak-aware DNS resolver.
@@ -1926,7 +1933,7 @@ pub async fn connect_direct_with_resolver(
         return dial_via_env_proxy(proxy, destination, stream).await;
     }
     let dialed = dial_tcp(&addrs, &race_policy(stream), &socket_options(stream)).await?;
-    Ok(boxed(dialed.stream))
+    Ok(fragmented(dialed.stream, stream))
 }
 
 async fn dial_via_env_proxy(
@@ -2096,6 +2103,7 @@ mod tests {
                     length: RangeU32::new(100, 200),
                     delay: RangeDuration::millis(1, 1),
                     max_split: RangeU32::new(0, 0),
+                    empty_records: 0,
                 }),
                 udp_noise: vec![],
                 keepalive: None,
@@ -2108,6 +2116,31 @@ mod tests {
         assert_eq!(p.length_min, 100);
         assert_eq!(p.length_max, 200);
         assert_eq!(p.interval_min_ms, 1);
+    }
+
+    /// A direct (`freedom`) connection shapes its first write like any other
+    /// outbound: the mask is on the stream settings, not on a protocol.
+    #[tokio::test]
+    async fn a_direct_connection_applies_its_fragment_mask() {
+        use tokio::io::AsyncReadExt;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let mut settings = StreamSettings::default();
+        settings.evasion.tcp_fragment = Some(zero_config::FragmentConfig::empty_record());
+        let resolver = zero_dns::Resolver::new(zero_config::dns::DnsSettings::default());
+        let destination = Destination::tcp(Address::Ip(std::net::Ipv4Addr::LOCALHOST.into()), port);
+        let mut stream = connect_direct_with_resolver(&destination, &settings, &resolver)
+            .await
+            .unwrap();
+        // A ClientHello-shaped record, as a browser behind the proxy sends it.
+        let hello = [&[0x16, 3, 1, 0, 4][..], b"helo"].concat();
+        stream.write_all(&hello).await.unwrap();
+        stream.flush().await.unwrap();
+        let (mut accepted, _) = listener.accept().await.unwrap();
+        let mut seen = [0u8; 14];
+        accepted.read_exact(&mut seen).await.unwrap();
+        assert_eq!(seen[..5], [0x16, 3, 1, 0, 0], "the empty record leads");
+        assert_eq!(seen[5..], hello[..]);
     }
 
     #[test]

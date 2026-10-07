@@ -422,6 +422,34 @@ pub struct FragmentConfig {
     pub delay: RangeDuration,
     /// Upper bound on fragment count; `0` means unlimited.
     pub max_split: RangeU32,
+    /// Zero-length TLS records put in front of the ClientHello. Only
+    /// [`FragmentPackets::TlsHello`] can do this; see [`Self::empty_record`].
+    pub empty_records: u8,
+}
+
+impl FragmentConfig {
+    /// One empty TLS record, then the ClientHello whole, in a single write.
+    ///
+    /// A filter that reads the server name out of the first record of a
+    /// connection finds a record with nothing in it and lets the rest go.
+    /// Measured 2026-10-07 from Tehran (Zi-Tel) against Cloudflare's edge:
+    /// names that are dropped as is (`api.cloudflareclient.com`,
+    /// `*.pages.dev`) completed the handshake 2 of 2 this way, while TCP
+    /// segments of 40 bytes and plain record re-framing got 0 of 2. It costs
+    /// five bytes and no delay. Cloudflare accepts the empty record; not
+    /// every server does, so it is something to try, not to assume.
+    pub fn empty_record() -> Self {
+        Self {
+            packets: FragmentPackets::TlsHello,
+            // Larger than any ClientHello, so the hello stays one record.
+            length: RangeU32::new(16_384, 16_384),
+            // No delay keeps both records in one write, which is what works:
+            // the empty record sent on its own got 0 of 2.
+            delay: RangeDuration::millis(0, 0),
+            max_split: RangeU32::new(0, 0),
+            empty_records: 1,
+        }
+    }
 }
 
 impl Default for FragmentConfig {
@@ -436,6 +464,7 @@ impl Default for FragmentConfig {
             length: RangeU32::new(40, 80),
             delay: RangeDuration::millis(1, 1),
             max_split: RangeU32::new(0, 0),
+            empty_records: 0,
         }
     }
 }

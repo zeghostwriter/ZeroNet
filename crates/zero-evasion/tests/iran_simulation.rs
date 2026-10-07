@@ -360,6 +360,7 @@ fn splitting_policy() -> FragmentPolicy {
         interval_max_ms: 1,
         max_split_min: 0,
         max_split_max: 0,
+        empty_records: 0,
     }
 }
 

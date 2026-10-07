@@ -186,17 +186,7 @@ async fn call(
 ) -> Result<Value, String> {
     let url = format!("{}{path}", api.base);
     let sent = match api.proxy {
-        None => {
-            send_with_headers(
-                method,
-                &url,
-                "application/json; charset=UTF-8",
-                &headers(api, bearer),
-                body.as_bytes(),
-                &limits(api),
-            )
-            .await
-        }
+        None => send_direct(method, &url, api, bearer, body).await,
         Some(proxy) => send_through(proxy, method, &url, api, bearer, body).await,
     };
     let response = sent.map_err(|error| match error {
@@ -274,12 +264,92 @@ async fn send_through(
     if !head.starts_with(b"HTTP/1.1 200") && !head.starts_with(b"HTTP/1.0 200") {
         return Err(failure("it refused the connection".into()));
     }
+    send_tls(stream, host, method, url, api, bearer, body).await
+}
+
+/// One API call straight from this device.
+///
+/// The service's name is filtered in Iran: a ClientHello that names it is
+/// dropped. So the hello goes out behind one empty TLS record
+/// (`FragmentPolicy::empty_record`), which Cloudflare's edge accepts and
+/// which got the handshake through on 6 of 6 addresses where the plain one
+/// got 0 of 6 (Tehran, 2026-10-07). The relay's `workers.dev` name is
+/// throttled the same way and is served by the same edge, so it takes the
+/// same path.
+async fn send_direct(
+    method: &str,
+    url: &str,
+    api: &Api,
+    bearer: Option<&str>,
+    body: &str,
+) -> Result<Vec<u8>, FetchError> {
+    let parsed = url::Url::parse(url).map_err(|error| FetchError::Url(error.to_string()))?;
+    if parsed.scheme() != "https" {
+        // Nothing to hide a name in; only tests point this at plain HTTP.
+        return send_with_headers(
+            method,
+            url,
+            "application/json; charset=UTF-8",
+            &headers(api, bearer),
+            body.as_bytes(),
+            &limits(api),
+        )
+        .await;
+    }
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| FetchError::Url("no host".into()))?
+        .to_string();
+    let unreachable = |source: std::io::Error| FetchError::Connect {
+        host: host.clone(),
+        source,
+    };
+    let dial = async {
+        let addresses: Vec<std::net::SocketAddr> =
+            tokio::net::lookup_host((host.as_str(), parsed.port().unwrap_or(443)))
+                .await?
+                .collect();
+        // Raced, on sockets the host has exempted from its own tunnel.
+        zero_net::dial_tcp(
+            &addresses,
+            &zero_net::RacePolicy::default(),
+            &zero_net::SocketOptions::default(),
+        )
+        .await
+        .map_err(|failure| std::io::Error::other(failure.to_string()))
+    };
+    let tcp = tokio::time::timeout(api.timeout, dial)
+        .await
+        .map_err(|_| FetchError::Timeout(api.timeout))?
+        .map_err(unreachable)?
+        .stream;
+    let stream =
+        zero_evasion::FragmentStream::new(tcp, zero_evasion::FragmentPolicy::empty_record());
+    send_tls(stream, host, method, url, api, bearer, body).await
+}
+
+/// TLS to `host` over `stream`, then the one request.
+async fn send_tls<S>(
+    stream: S,
+    host: String,
+    method: &str,
+    url: &str,
+    api: &Api,
+    bearer: Option<&str>,
+    body: &str,
+) -> Result<Vec<u8>, FetchError>
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
     let name = rustls_pki_types::ServerName::try_from(host.clone())
         .map_err(|error| FetchError::Url(error.to_string()))?;
-    let tls = tokio_rustls::TlsConnector::from(tls_config())
-        .connect(name, stream)
-        .await
-        .map_err(|source| FetchError::Tls { host, source })?;
+    let tls = tokio::time::timeout(
+        api.timeout,
+        tokio_rustls::TlsConnector::from(tls_config()).connect(name, stream),
+    )
+    .await
+    .map_err(|_| FetchError::Timeout(api.timeout))?
+    .map_err(|source| FetchError::Tls { host, source })?;
     zero_net::fetch::send_over(
         tls,
         method,

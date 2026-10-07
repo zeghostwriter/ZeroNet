@@ -42,19 +42,25 @@ pub const TUN_ADDRESS_V6: &str = "fdfe:dcba:9876::1/126";
 /// The observatory's probe for balancer ranking.
 pub const BALANCER_PROBE_URL: &str = "https://www.gstatic.com/generate_204";
 
-/// ClientHello chunk sizes of the fragmented variants `evasion = "auto"`
-/// adds after each link's plain one. 40-80 got 10 of 10 through a throttled
-/// Cloudflare edge from Tehran on 2026-09-28; 100-200 3 of 3, with slower
-/// runs. BPB's sweep of twenty lengths is not needed once the split is plain
-/// TCP segments, and every variant is one more outbound to probe.
-const AUTO_FRAGMENT_LENGTHS: [&str; 2] = ["40-80", "100-200"];
+/// The shaped variants `evasion = "auto"` adds after each link's plain one:
+/// [`EMPTY_RECORD`], then TCP segments of 40-80 bytes.
+///
+/// Which one gets through depends on the day. From Tehran, segments of 40-80
+/// got 10 of 10 through a throttled Cloudflare edge on 2026-09-28; on
+/// 2026-10-07 they got 0 of 2 and the empty record got 2 of 2. Both stay, the
+/// balancer's probes keep whichever works, and every variant is one more
+/// outbound to probe, so there are two and not a sweep.
+const AUTO_FRAGMENT_LENGTHS: [&str; 2] = [EMPTY_RECORD, "40-80"];
+/// Stands in for a length: one empty TLS record in front of the ClientHello,
+/// in the same write (`zero_config::FragmentConfig::empty_record`).
+const EMPTY_RECORD: &str = "empty";
 
 /// How much the builder layers ClientHello fragmentation onto TLS links.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Evasion {
     /// No fragmentation; the link dials as described.
     Off,
-    /// Each fragmentable link as is, then fragmented at each of
+    /// Each fragmentable link as is, then shaped each way in
     /// `AUTO_FRAGMENT_LENGTHS`, behind the balancer: the plain connection is
     /// used while it works, and a fragmented one takes over when it does not.
     /// When other users on this network reported fragmenting working better
@@ -330,11 +336,20 @@ pub fn build_config_with_assets(
         // and the optional SNI decoy; `None` when neither applies.
         let evasion_block = |length: Option<&str>| -> Option<Value> {
             let mut block = serde_json::Map::new();
-            if let Some(length) = length {
-                block.insert(
-                    "fragment".into(),
-                    json!({"packets": fragment_packets, "length": length, "interval": "1-1"}),
-                );
+            match length {
+                Some(EMPTY_RECORD) => {
+                    block.insert(
+                        "fragment".into(),
+                        json!({"packets": "tlshello", "lengths": ["0", "16384"], "delays": ["0"]}),
+                    );
+                }
+                Some(length) => {
+                    block.insert(
+                        "fragment".into(),
+                        json!({"packets": fragment_packets, "length": length, "interval": "1-1"}),
+                    );
+                }
+                None => {}
             }
             if let Some(spoof) = &spoof {
                 block.insert("sniSpoof".into(), spoof.clone());
@@ -909,7 +924,7 @@ mod tests {
     }
 
     /// The fragment lengths of the proxy outbounds in `config`, in order;
-    /// `None` for a plain one.
+    /// `None` for a plain one and `"empty"` for the empty-record one.
     fn variant_lengths(config: &Value) -> Vec<Option<String>> {
         config["outbounds"]
             .as_array()
@@ -921,9 +936,11 @@ mod tests {
                     .is_some_and(|t| t == "proxy" || t.starts_with("proxy-"))
             })
             .map(|o| {
-                o["evasion"]["fragment"]["length"]
-                    .as_str()
-                    .map(str::to_string)
+                let fragment = &o["evasion"]["fragment"];
+                if fragment["lengths"][0] == "0" {
+                    return Some(EMPTY_RECORD.to_string());
+                }
+                fragment["length"].as_str().map(str::to_string)
             })
             .collect()
     }
@@ -933,7 +950,7 @@ mod tests {
         let config = build_config(&json!({"links": [WS_TLS], "evasion": "auto"})).unwrap();
         assert_eq!(
             variant_lengths(&config),
-            [None, Some("40-80".into()), Some("100-200".into())]
+            [None, Some("empty".into()), Some("40-80".into())]
         );
         let compiled = compile(&config);
         // One link still gets the balancer that chooses among its variants.
@@ -944,16 +961,19 @@ mod tests {
                 .len(),
             3
         );
-        // Only the fragmented variants split the ClientHello, as TCP segments.
+        // The shaped variants: an empty record ahead of the hello, then the
+        // hello as TCP segments.
         let fragments: Vec<_> = compiled
             .outbounds
             .iter()
             .filter_map(|o| o.stream.evasion.tcp_fragment.as_ref())
             .collect();
         assert_eq!(fragments.len(), 2);
-        assert!(fragments
-            .iter()
-            .all(|f| f.packets == zero_config::FragmentPackets::Range { from: 1, to: 1 }));
+        assert_eq!(*fragments[0], zero_config::FragmentConfig::empty_record());
+        assert_eq!(
+            fragments[1].packets,
+            zero_config::FragmentPackets::Range { from: 1, to: 1 }
+        );
     }
 
     #[test]
@@ -964,7 +984,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             variant_lengths(&config),
-            [Some("40-80".into()), Some("100-200".into()), None]
+            [Some("empty".into()), Some("40-80".into()), None]
         );
         compile(&config);
     }
@@ -991,8 +1011,9 @@ mod tests {
             .iter()
             .filter_map(|o| o["evasion"]["fragment"]["packets"].as_str())
             .collect();
-        assert_eq!(modes.len(), AUTO_FRAGMENT_LENGTHS.len());
-        assert!(modes.iter().all(|m| *m == "1-1"));
+        // The empty-record variant is always `tlshello`: an empty record is
+        // TLS framing, whatever the split variants are set to.
+        assert_eq!(modes, ["tlshello", "1-1"]);
         compile(&config);
 
         // A nonsense packets value is rejected by name.
