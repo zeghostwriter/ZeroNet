@@ -423,25 +423,77 @@ fn internet_checksum(bytes: &[u8]) -> u16 {
     checksum_finish(checksum_add(0, bytes))
 }
 
-/// Add `bytes` to a running one's-complement sum. Words are accumulated in a
-/// `u64`, which cannot overflow for any input shorter than 2^48 bytes, and
-/// folded once at the end instead of after every word.
+/// Add `bytes` to a running one's-complement sum of 16-bit big-endian words,
+/// accumulated in the machine's own byte order and rotated back by
+/// [`checksum_finish`].
+///
+/// Three exact shortcuts. Folding a carry back into the value is reduction
+/// modulo 2^16 - 1, which is associative and commutative, so the words can be
+/// accumulated in a `u64` and folded once at the end rather than after every
+/// add. And because 2^16 == 1 (mod 2^16 - 1) every even power of two is too --
+/// 2^32 - 1 = (2^16 - 1)(2^16 + 1) -- a 32-bit word read straight out of the
+/// buffer is congruent, whole, to the two 16-bit words inside it, so the loop
+/// costs one load and one add per four bytes with no shifts and no masks, over
+/// eight independent accumulators that keep the adds from serializing.
+///
+/// The third is what keeps the byte order out of the loop: swapping the two
+/// bytes of a word is multiplication by 2^8 mod (2^16 - 1), and 2^8 is its own
+/// inverse there because 2^8 * 2^8 = 2^16 == 1. A constant multiple commutes
+/// with a sum, so
+///
+/// ```text
+/// swap(w0 + w1 + ...) == swap(w0) + swap(w1) + ...   (mod 2^16 - 1)
+/// ```
+///
+/// either way round: read the buffer as native-order words, which is a plain
+/// load here, and pay for the swap once on the 16-bit residue. The identity is
+/// about the numbers, not the machine, so a big-endian target gets the same
+/// result and merely pays the swap inside the loop again.
+///
+/// What a residue class cannot decide is whether the sum was zero or 65535,
+/// which fold differently; a sum of non-negative words is zero only when every
+/// byte that fed it was, and a swap fixes both 0x0000 and 0xffff, so the
+/// representative carries over. Overflow is out of reach for anything a device
+/// can hand back: four bytes add at most 2^32, so a 64-bit register holds any
+/// buffer below 2^34.
 fn checksum_add(mut sum: u64, bytes: &[u8]) -> u64 {
-    let (words, remainder) = bytes.as_chunks::<2>();
-    for word in words {
-        sum += u16::from_be_bytes(*word) as u64;
+    let (groups, rest) = bytes.as_chunks::<32>();
+    let (mut a, mut b, mut c, mut d) = (0u64, 0u64, 0u64, 0u64);
+    let (mut e, mut f, mut g, mut h) = (0u64, 0u64, 0u64, 0u64);
+    for word in groups {
+        a += u32::from_le_bytes([word[0], word[1], word[2], word[3]]) as u64;
+        b += u32::from_le_bytes([word[4], word[5], word[6], word[7]]) as u64;
+        c += u32::from_le_bytes([word[8], word[9], word[10], word[11]]) as u64;
+        d += u32::from_le_bytes([word[12], word[13], word[14], word[15]]) as u64;
+        e += u32::from_le_bytes([word[16], word[17], word[18], word[19]]) as u64;
+        f += u32::from_le_bytes([word[20], word[21], word[22], word[23]]) as u64;
+        g += u32::from_le_bytes([word[24], word[25], word[26], word[27]]) as u64;
+        h += u32::from_le_bytes([word[28], word[29], word[30], word[31]]) as u64;
     }
-    if let [last] = remainder {
-        sum += u16::from_be_bytes([*last, 0]) as u64;
+    sum += ((a + b) + (c + d)) + ((e + f) + (g + h));
+    let (words, tail) = rest.as_chunks::<4>();
+    for word in words {
+        sum += u32::from_le_bytes(*word) as u64;
+    }
+    let (pairs, odd) = tail.as_chunks::<2>();
+    for pair in pairs {
+        sum += u16::from_le_bytes(*pair) as u64;
+    }
+    if let [last] = odd {
+        // A trailing odd byte is the high half of a word padded with a zero low
+        // half: worth `last << 8` big-endian, so worth `last` in this order.
+        sum += *last as u64;
     }
     sum
 }
 
+/// Fold an accumulated native-order sum to a residue, rotate it back to
+/// big-endian word order, and complement it.
 fn checksum_finish(mut sum: u64) -> u16 {
     while sum > u16::MAX as u64 {
         sum = (sum & u16::MAX as u64) + (sum >> 16);
     }
-    !(sum as u16)
+    !((sum as u16).swap_bytes())
 }
 
 #[derive(Debug, Clone)]
@@ -1295,7 +1347,10 @@ impl TunDevice {
         let header_len = self.header_len;
         let mut header = [0u8; 4];
         if header_len > 0 {
-            header[..header_len].copy_from_slice(&address_family_header(packet, header_len)?);
+            // `address_family_prefix`, not `address_family_bytes`: the
+            // destination is `header_len` bytes and that is not always four.
+            let family = address_family_prefix(packet, header_len)?;
+            header[..header_len].copy_from_slice(&family[..header_len]);
         }
         loop {
             let mut guard = self.io.writable().await.map_err(TunError::Io)?;
@@ -1393,8 +1448,36 @@ impl TunDevice {
 /// Darwin's `utun` framing: the four-byte address family, in host byte order
 /// on read and network byte order on write, per `if_utun`.
 pub fn address_family_header(packet: &[u8], header_len: usize) -> Result<Vec<u8>, TunError> {
+    let prefix = address_family_prefix(packet, header_len)?;
+    Ok(prefix[..header_len.min(4)].to_vec())
+}
+
+/// The same bytes, truncated to `header_len` and zero-padded back to four.
+///
+/// `send` copies exactly `header_len` bytes, so a fixed-width result has to be
+/// narrowed to what the device asked for before it is copied: a `header_len` of
+/// one, two or three would otherwise be a length mismatch and a panic on every
+/// outbound packet. Those lengths are not unreachable — `from_raw_fd` refuses
+/// only more than four, and the exported `zray_set_tun_descriptor` refuses only a
+/// negative one, so the Android and iOS descriptor handover can pass any of
+/// them. Behaviour for one to three is the same truncation the heap form above
+/// has always done: the leading bytes of the network-order family.
+pub fn address_family_prefix(packet: &[u8], header_len: usize) -> Result<[u8; 4], TunError> {
+    let family = address_family_bytes(packet, header_len)?;
+    let mut prefix = [0u8; 4];
+    let taken = header_len.min(4);
+    prefix[..taken].copy_from_slice(&family[..taken]);
+    Ok(prefix)
+}
+
+/// The same framing with nothing on the heap. `send` wants these bytes beside
+/// it on the stack to hand to `writev`, so going through a vector costs an
+/// allocation, a copy and a free on every packet of a value that is one shift
+/// and one store. Only the first `header_len` bytes mean anything, and
+/// `header_len` is at most four by the device's own framing.
+pub fn address_family_bytes(packet: &[u8], header_len: usize) -> Result<[u8; 4], TunError> {
     if header_len == 0 {
-        return Ok(Vec::new());
+        return Ok([0; 4]);
     }
     let version = packet.first().map(|byte| byte >> 4);
     let family: u32 = match version {
@@ -1402,9 +1485,7 @@ pub fn address_family_header(packet: &[u8], header_len: usize) -> Result<Vec<u8>
         Some(6) => 30, // AF_INET6 on Darwin
         _ => return Err(TunError::MalformedPacket("packet is neither IPv4 nor IPv6")),
     };
-    let mut header = family.to_be_bytes().to_vec();
-    header.truncate(header_len);
-    Ok(header)
+    Ok(family.to_be_bytes())
 }
 
 fn validate_network_config(config: &TunNetworkConfig) -> Result<(), TunError> {
@@ -1771,6 +1852,56 @@ mod tests {
         assert!(address_family_header(&[0x45], 0).unwrap().is_empty());
         // Anything that is not IP has no address family to declare.
         assert!(address_family_header(&[0x00], 4).is_err());
+    }
+
+    /// The stack form `send` writes must agree with the vector form the public
+    /// function returns, and both must be the documented network-order value,
+    /// so neither can drift from the other or from the kernel's expectation.
+    #[test]
+    fn the_stacked_framing_bytes_agree_with_the_vector_header() {
+        // AF_INET is 2 and Darwin's AF_INET6 is 30, in network byte order.
+        assert_eq!(
+            address_family_bytes(&[0x45, 0, 0, 0], 4).unwrap(),
+            [0, 0, 0, 2]
+        );
+        assert_eq!(
+            address_family_bytes(&[0x60, 0, 0, 0], 4).unwrap(),
+            [0, 0, 0, 30]
+        );
+        for packet in [&[0x45u8, 0, 0, 0][..], &[0x60, 0, 0, 0], &[0x46, 9, 9, 9]] {
+            for header_len in 0..=4usize {
+                let stacked = address_family_bytes(packet, header_len).unwrap();
+                assert_eq!(
+                    &stacked[..header_len.min(4)],
+                    address_family_header(packet, header_len)
+                        .unwrap()
+                        .as_slice(),
+                    "packet {packet:02x?} header_len {header_len}"
+                );
+            }
+        }
+        assert!(address_family_bytes(&[0x00, 0, 0, 0], 4).is_err());
+    }
+
+    /// Every `header_len` the descriptor handover accepts, not only the two the
+    /// desktop code produces. `send` copies `header_len` bytes out of a
+    /// four-byte value, so one to three is where a fixed-width result and a
+    /// narrower destination disagree; the prefix is what keeps them in step.
+    #[test]
+    fn the_stacked_framing_prefix_is_exactly_as_wide_as_the_copy_that_reads_it() {
+        for packet in [&[0x45u8, 0, 0, 0][..], &[0x60, 0, 0, 0], &[0x46, 9, 9, 9]] {
+            let family = address_family_bytes(packet, 4).unwrap();
+            for header_len in 0..=4usize {
+                let prefix = address_family_prefix(packet, header_len).unwrap();
+                // What `send` copies: a `header_len`-byte slice of a four-byte
+                // array. The point is that this can be taken at all.
+                let copied = &prefix[..header_len];
+                assert_eq!(copied.len(), header_len);
+                assert_eq!(copied, &family[..header_len.min(4)]);
+                assert_eq!(prefix[header_len.min(4)..], [0u8; 4][header_len.min(4)..]);
+            }
+        }
+        assert!(address_family_prefix(&[0x00, 0, 0, 0], 4).is_err());
     }
 
     #[cfg(unix)]
@@ -2299,5 +2430,129 @@ mod tests {
             .expect("the bridge task did not panic");
         assert!(outcome.is_ok(), "end of file is not an error: {outcome:?}");
         runner.abort();
+    }
+}
+
+#[cfg(test)]
+mod checksum_equivalence {
+    use super::{
+        checksum_add, checksum_finish, internet_checksum, udp_checksum_v4, udp_checksum_v6,
+    };
+    use std::net::{Ipv4Addr, Ipv6Addr};
+
+    /// The textbook algorithm, folding the carry after every word.
+    fn textbook(bytes: &[u8]) -> u16 {
+        let mut sum = 0u32;
+        for chunk in bytes.chunks(2) {
+            sum += u16::from_be_bytes([chunk[0], *chunk.get(1).unwrap_or(&0)]) as u32;
+            while sum > u16::MAX as u32 {
+                sum = (sum & u16::MAX as u32) + (sum >> 16);
+            }
+        }
+        !(sum as u16)
+    }
+
+    /// Every length, four fill patterns, plus the sizes a real datagram reaches.
+    fn datagrams() -> Vec<Vec<u8>> {
+        let mut out = Vec::new();
+        for length in 0..=300usize {
+            for mode in 0..4u8 {
+                out.push(
+                    (0..length)
+                        .map(|i| match mode {
+                            0 => 0xff,
+                            1 => 0,
+                            2 => i as u8,
+                            _ => (i * 7 + 3) as u8,
+                        })
+                        .collect(),
+                );
+            }
+        }
+        for length in [1000usize, 1252, 8127, 65_507] {
+            for byte in [0u8, 0xff] {
+                out.push(vec![byte; length]);
+            }
+            out.push((0..length).map(|i| i as u8).collect());
+        }
+        out.push((0..=255u8).collect::<Vec<u8>>());
+        out
+    }
+
+    /// The packed accumulator, at every length, is the per-word fold.
+    #[test]
+    fn the_packed_accumulator_is_the_textbook_fold() {
+        for bytes in datagrams() {
+            assert_eq!(internet_checksum(&bytes), textbook(&bytes), "{bytes:02x?}");
+        }
+    }
+
+    /// Summing the parts in place equals summing the concatenation. Every
+    /// pseudo-header join is a whole 16-bit words, so only a payload can end on
+    /// an odd byte, and there the padded tail applies either way.
+    #[test]
+    fn the_in_place_udp_checksum_is_the_concatenated_one() {
+        let v4 = (Ipv4Addr::new(10, 0, 0, 2), Ipv4Addr::new(1, 1, 1, 1));
+        let v6 = (
+            Ipv6Addr::new(0xfd00, 0, 0, 0, 0, 0, 0, 2),
+            Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1),
+        );
+        for udp in datagrams() {
+            let mut pseudo = Vec::new();
+            pseudo.extend_from_slice(&v4.0.octets());
+            pseudo.extend_from_slice(&v4.1.octets());
+            pseudo.extend_from_slice(&[0, 17, (udp.len() >> 8) as u8, udp.len() as u8]);
+            pseudo.extend_from_slice(&udp);
+            let mut sum = textbook(&pseudo);
+            assert_eq!(
+                udp_checksum_v4(v4.0, v4.1, &udp),
+                if sum == 0 { 0xffff } else { sum },
+                "v4 {udp:02x?}"
+            );
+
+            pseudo.clear();
+            pseudo.extend_from_slice(&v6.0.octets());
+            pseudo.extend_from_slice(&v6.1.octets());
+            pseudo.extend_from_slice(&(udp.len() as u32).to_be_bytes());
+            pseudo.extend_from_slice(&[0, 0, 0, 17]);
+            pseudo.extend_from_slice(&udp);
+            sum = textbook(&pseudo);
+            assert_eq!(
+                udp_checksum_v6(v6.0, v6.1, &udp),
+                if sum == 0 { 0xffff } else { sum },
+                "v6 {udp:02x?}"
+            );
+        }
+    }
+
+    /// The residue cannot tell zero from 65535 and those fold differently, so
+    /// the boundary is checked directly: 0xffff words sum to a multiple of
+    /// 65535 every two, which is exactly where the representative matters.
+    #[test]
+    fn sums_that_land_on_the_residue_boundary_agree() {
+        for pairs in 1..=10usize {
+            let mut bytes = Vec::new();
+            for _ in 0..(pairs * 2) {
+                bytes.extend_from_slice(&0xffffu16.to_be_bytes());
+            }
+            assert_eq!(internet_checksum(&bytes), textbook(&bytes), "{pairs} pairs");
+        }
+        for len in 0..=8usize {
+            let bytes = vec![0xffu8; len];
+            assert_eq!(internet_checksum(&bytes), textbook(&bytes), "{len} bytes");
+        }
+    }
+
+    /// `checksum_finish` rotates the residue by one swap while the loop reads
+    /// native-order words, so the two must agree at every length.
+    #[test]
+    fn the_native_order_form_is_the_textbook_fold_too() {
+        for bytes in datagrams() {
+            assert_eq!(
+                checksum_finish(checksum_add(0, &bytes)),
+                textbook(&bytes),
+                "{bytes:02x?}"
+            );
+        }
     }
 }

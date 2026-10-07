@@ -2,6 +2,8 @@
 //! QPACK (RFC 9204 §4.1.2). Only decoding is needed here: the requests the
 //! MASQUE client sends are written out without Huffman coding.
 
+use std::sync::OnceLock;
+
 /// `(bit length, code)` for each octet value, and the end-of-string symbol
 /// last. Codes are right-aligned.
 const TABLE: [(u8, u32); 257] = [
@@ -264,37 +266,101 @@ const TABLE: [(u8, u32); 257] = [
     (30, 0x3fffffff),
 ];
 
+/// One node of the prefix-code trie: which child follows a `0` or `1` bit, and
+/// the symbol that terminates here (if any). `NONE` child means no codeword has
+/// that prefix; `NOT_LEAF` means this node is interior, not a code.
+struct Node {
+    child: [u32; 2],
+    symbol: u16,
+}
+
+const NONE: u32 = u32::MAX;
+const NOT_LEAF: u16 = u16::MAX;
+
+/// The whole decode trie, flat in one `Vec` so a step is an indexed load. Built
+/// once from `TABLE` (the RFC's own code assignment), so the walk and the
+/// textbook scan can only ever agree: they read the same edges.
+struct Trie {
+    nodes: Vec<Node>,
+}
+
+/// Fold `TABLE` into a binary trie. Each codeword is laid down most-significant
+/// bit first; a prefix code guarantees no code is a prefix of another, so a
+/// codeword always ends on a fresh interior node and no terminal ever grows a
+/// child.
+fn build_trie() -> Trie {
+    let mut nodes = vec![Node {
+        child: [NONE, NONE],
+        symbol: NOT_LEAF,
+    }];
+    for (symbol, &(len, value)) in TABLE.iter().enumerate() {
+        let mut cur = 0usize;
+        for k in (0..len as u32).rev() {
+            let bit = ((value >> k) & 1) as usize;
+            let next = nodes[cur].child[bit];
+            cur = if next == NONE {
+                let idx = nodes.len() as u32;
+                nodes.push(Node {
+                    child: [NONE, NONE],
+                    symbol: NOT_LEAF,
+                });
+                nodes[cur].child[bit] = idx;
+                idx as usize
+            } else {
+                next as usize
+            };
+        }
+        debug_assert_eq!(nodes[cur].symbol, NOT_LEAF, "codeword is a prefix");
+        nodes[cur].symbol = symbol as u16;
+    }
+    Trie { nodes }
+}
+
+static TRIE: OnceLock<Trie> = OnceLock::new();
+
 /// Decode a Huffman-coded string. `None` for anything RFC 7541 §5.2 says is a
 /// decoding error: the end-of-string symbol inside the data, or padding that
 /// is longer than seven bits or is not all ones.
+///
+/// The code is a prefix code, so the moment the bits since the last emitted
+/// symbol trace a complete codeword, that symbol is determined and no later bits
+/// can change it — exactly where the textbook "scan the table for a matching
+/// `(length, value)`" fires. One indexed step per bit replaces a 257-entry scan
+/// per bit, for identical output.
+///
+/// Both error paths fold onto the walk. A bit with no child is a prefix no
+/// codeword extends, which the scan would also never match; and the padding
+/// check needs only the leftover bit count and whether they were all ones, since
+/// a leftover segment's code is `(1 << bits) - 1` precisely then.
 pub fn decode(input: &[u8]) -> Option<Vec<u8>> {
+    let trie = TRIE.get_or_init(build_trie);
     let mut out = Vec::with_capacity(input.len() * 2);
-    let mut code: u32 = 0;
-    let mut bits: u8 = 0;
-    for byte in input {
+    let mut cur = 0usize;
+    let mut depth = 0u32;
+    let mut all_ones = true;
+    for &byte in input {
         for shift in (0..8).rev() {
-            code = (code << 1) | u32::from((byte >> shift) & 1);
-            bits += 1;
-            if bits > 30 {
+            let bit = ((byte >> shift) & 1) as usize;
+            let next = trie.nodes[cur].child[bit];
+            if next == NONE {
                 return None;
             }
-            // Codes of one length are contiguous, but the table is small and
-            // this only ever reads a few header values.
-            if let Some(symbol) = TABLE
-                .iter()
-                .position(|&(len, value)| len == bits && value == code)
-            {
+            cur = next as usize;
+            depth += 1;
+            all_ones &= bit == 1;
+            let symbol = trie.nodes[cur].symbol;
+            if symbol != NOT_LEAF {
                 if symbol == 256 {
                     return None;
                 }
                 out.push(symbol as u8);
-                code = 0;
-                bits = 0;
+                cur = 0;
+                depth = 0;
+                all_ones = true;
             }
         }
     }
-    // What is left is padding: at most seven bits, all ones.
-    if bits > 7 || code != (1u32 << bits) - 1 {
+    if depth > 7 || !all_ones {
         return None;
     }
     Some(out)
@@ -303,6 +369,127 @@ pub fn decode(input: &[u8]) -> Option<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A verbatim copy of the shipped pre-trie decoder — the linear per-bit
+    /// table scan. Kept only so every test can assert the trie agrees with it
+    /// byte for byte, including on the inputs it rejects.
+    fn decode_scan(input: &[u8]) -> Option<Vec<u8>> {
+        let mut out = Vec::with_capacity(input.len() * 2);
+        let mut code: u32 = 0;
+        let mut bits: u8 = 0;
+        for byte in input {
+            for shift in (0..8).rev() {
+                code = (code << 1) | u32::from((byte >> shift) & 1);
+                bits += 1;
+                if bits > 30 {
+                    return None;
+                }
+                if let Some(symbol) = TABLE
+                    .iter()
+                    .position(|&(len, value)| len == bits && value == code)
+                {
+                    if symbol == 256 {
+                        return None;
+                    }
+                    out.push(symbol as u8);
+                    code = 0;
+                    bits = 0;
+                }
+            }
+        }
+        if bits > 7 || code != (1u32 << bits) - 1 {
+            return None;
+        }
+        Some(out)
+    }
+
+    /// Huffman-encode `data` with `TABLE`, padding the tail with ones to the
+    /// byte boundary exactly as the RFC's end-of-string prefix allows.
+    fn encode_bytes(data: &[u8]) -> Vec<u8> {
+        let mut bits: Vec<u8> = Vec::new();
+        for &b in data {
+            let (len, code) = TABLE[b as usize];
+            for k in (0..len as u32).rev() {
+                bits.push(((code >> k) & 1) as u8);
+            }
+        }
+        // Pad the tail with ones up to the next byte boundary (the RFC lets a
+        // encoded string end with the all-ones end-of-string prefix).
+        let pad = (8 - bits.len() % 8) % 8;
+        bits.resize(bits.len() + pad, 1);
+        let mut out = vec![0u8; bits.len() / 8];
+        for (i, &bit) in bits.iter().enumerate() {
+            out[i / 8] |= bit << (7 - (i % 8));
+        }
+        out
+    }
+
+    fn xorshift(mut s: u64) -> impl FnMut() -> u64 {
+        move || {
+            s ^= s << 13;
+            s ^= s >> 7;
+            s ^= s << 17;
+            s
+        }
+    }
+
+    /// Every one- and two-byte input, 65 792 of them: the trie must match the
+    /// scan on all, both in the bytes it emits and in the inputs it rejects.
+    #[test]
+    fn trie_matches_the_scan_on_every_short_input() {
+        for a in 0u16..=255 {
+            let one = [a as u8];
+            assert_eq!(decode(&one), decode_scan(&one), "input {one:?}");
+            for b in 0u16..=255 {
+                let two = [a as u8, b as u8];
+                assert_eq!(decode(&two), decode_scan(&two), "input {two:?}");
+            }
+        }
+    }
+
+    /// Round-trip: every single symbol decodes back to itself, and random
+    /// multi-symbol payloads decode back exactly — the trie equals the scan and
+    /// both equal the original bytes.
+    #[test]
+    fn trie_decodes_every_valid_encoding_like_the_scan() {
+        for symbol in 0u16..=255 {
+            let data = [symbol as u8];
+            let coded = encode_bytes(&data);
+            assert_eq!(decode(&coded).as_deref(), Some(&data[..]));
+            assert_eq!(decode(&coded), decode_scan(&coded));
+        }
+        let mut rnd = xorshift(0x9e37_79b9_7f4a_7c15);
+        for _ in 0..200_000 {
+            let n = (rnd() % 48) as usize;
+            let data: Vec<u8> = (0..n).map(|_| (rnd() % 256) as u8).collect();
+            let coded = encode_bytes(&data);
+            assert_eq!(decode(&coded), decode_scan(&coded));
+            assert_eq!(decode(&coded).as_deref(), Some(&data[..]));
+        }
+    }
+
+    /// Random arbitrary bytes are mostly invalid, which is where the two error
+    /// paths (dead-end prefix vs the thirty-bit cutoff, and the padding rule)
+    /// could in principle disagree. They never do.
+    #[test]
+    fn trie_matches_the_scan_on_random_arbitrary_bytes() {
+        let mut rnd = xorshift(0x1234_5678_9abc_def0);
+        for _ in 0..400_000 {
+            let n = (rnd() % 40) as usize;
+            let input: Vec<u8> = (0..n).map(|_| (rnd() % 256) as u8).collect();
+            assert_eq!(decode(&input), decode_scan(&input), "input {input:?}");
+        }
+        // All-ones and near-all-ones streams stress the padding/EOS boundary.
+        for len in 0..=40usize {
+            let ones = vec![0xffu8; len];
+            assert_eq!(decode(&ones), decode_scan(&ones), "ones len {len}");
+            let mut mixed = ones.clone();
+            if let Some(last) = mixed.last_mut() {
+                *last = 0x7f;
+            }
+            assert_eq!(decode(&mixed), decode_scan(&mixed));
+        }
+    }
 
     /// RFC 7541 C.4.1: "www.example.com".
     #[test]
