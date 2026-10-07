@@ -1364,6 +1364,7 @@ pub(crate) fn parse_amnezia_wireguard(settings: Option<&Value>, path: &str) -> R
         route: WarpRoute::WireGuard,
         masque: None,
         exits: Vec::new(),
+        hybrid: HybridMode::WarpFirst,
         prefer_exit: false,
         reserved,
         address,
@@ -1483,35 +1484,48 @@ pub(crate) fn parse_warp(settings: Option<&Value>, path: &str) -> R<OutboundProt
                 route,
                 masque: None,
                 exits: Vec::new(),
+                hybrid: HybridMode::WarpFirst,
                 prefer_exit: false,
             }
         }
     };
     config.route = route;
     config.masque = masque;
-    (config.exits, config.prefer_exit) = parse_exits(object, path)?;
+    (config.exits, config.hybrid, config.prefer_exit) = parse_exits(object, path)?;
     Ok(OutboundProtocol::AmneziaWireguard(config))
 }
 
-/// The `exits` of a `warp` outbound and its `mode`.
+/// The `exits` of a `warp` outbound and the order they go in.
 ///
 /// ```json
-/// {"mode": "reverse", "exits": ["vless://…", "trojan://…"]}
+/// {"mode": "server-first", "exits": ["vless://…", "trojan://…"]}
 /// ```
 ///
-/// `hybrid` (the default) uses the tunnel alone and falls back to an exit
-/// when that fails; `reverse` goes through an exit first and falls back to
-/// the tunnel alone. Every exit must be a server that can follow a tunnel.
-fn parse_exits(object: &serde_json::Map<String, Value>, path: &str) -> R<(Vec<Arc<str>>, bool)> {
-    let prefer_exit = match object.get("mode").and_then(Value::as_str) {
-        None | Some("hybrid") => false,
-        Some("reverse") => true,
+/// `server-first` (the UI's "hybrid") dials a listed server and reaches
+/// Cloudflare's tunnel through it; `warp-first` (the UI's "reverse hybrid")
+/// brings the tunnel up directly and dials a listed server from inside it,
+/// with `preferExit` deciding whether the server or the tunnel alone carries
+/// traffic first. A missing `mode` is `warp-first`.
+///
+/// Builds before these names wrote `hybrid` for the tunnel first and
+/// `reverse` for a server first inside the tunnel; both keep that meaning, so
+/// an account saved by an older build keeps its path.
+fn parse_exits(
+    object: &serde_json::Map<String, Value>,
+    path: &str,
+) -> R<(Vec<Arc<str>>, HybridMode, bool)> {
+    let (hybrid, legacy_prefer) = match object.get("mode").and_then(Value::as_str) {
+        None | Some("warp-first") | Some("hybrid") => (HybridMode::WarpFirst, false),
+        Some("reverse") => (HybridMode::WarpFirst, true),
+        Some("server-first") => (HybridMode::ServerFirst, false),
         Some(other) => {
             return Err(format!(
-                "{path}.settings.mode must be hybrid or reverse, not {other:?}"
+                "{path}.settings.mode must be server-first or warp-first, not {other:?}"
             ))
         }
     };
+    let prefer_exit = hybrid == HybridMode::WarpFirst
+        && (legacy_prefer || object.get("preferExit").and_then(Value::as_bool) == Some(true));
     let mut exits = Vec::new();
     for (index, link) in object
         .get("exits")
@@ -1535,10 +1549,10 @@ fn parse_exits(object: &serde_json::Map<String, Value>, path: &str) -> R<(Vec<Ar
     }
     if prefer_exit && exits.is_empty() {
         return Err(format!(
-            "{path}.settings.mode reverse needs at least one exit"
+            "{path}.settings.preferExit needs at least one exit"
         ));
     }
-    Ok((exits, prefer_exit))
+    Ok((exits, hybrid, prefer_exit))
 }
 
 /// Base64 of a key that may come as a PEM block or with URL-safe letters.
@@ -3822,22 +3836,52 @@ mod tests {
     }
 
     #[test]
-    fn a_warp_outbound_can_name_exits_and_which_path_goes_first() {
+    fn a_warp_outbound_can_name_exits_and_which_order_they_go_in() {
         let mut settings = warp_account();
         settings["exits"] = serde_json::json!([
             "trojan://secret@203.0.113.9:8443?security=tls&sni=t.example.com#one",
-            "vless://00000000-0000-0000-0000-000000000001@203.0.113.10:443?security=tls&sni=v.example.com&type=ws&path=%2Fp#two"
+            "vless://00000000-0000-0000-0000-000000000001@203.0.113.10:443?security=tls&sni=v.example.com#two"
         ]);
         let warp = warp_outbound(settings.clone()).unwrap();
         assert_eq!(warp.exits.len(), 2);
-        assert!(!warp.prefer_exit, "the tunnel alone goes first by default");
+        assert_eq!(
+            (warp.hybrid, warp.prefer_exit),
+            (HybridMode::WarpFirst, false)
+        );
+        settings["mode"] = "server-first".into();
+        let warp = warp_outbound(settings.clone()).unwrap();
+        assert_eq!(
+            (warp.hybrid, warp.prefer_exit),
+            (HybridMode::ServerFirst, false)
+        );
+        // preferExit only means something inside the tunnel-first order.
+        settings["preferExit"] = true.into();
+        assert!(!warp_outbound(settings.clone()).unwrap().prefer_exit);
+        settings["mode"] = "warp-first".into();
+        let warp = warp_outbound(settings.clone()).unwrap();
+        assert_eq!(
+            (warp.hybrid, warp.prefer_exit),
+            (HybridMode::WarpFirst, true)
+        );
+        // What older builds wrote keeps its meaning.
+        settings.as_object_mut().unwrap().remove("preferExit");
+        settings["mode"] = "hybrid".into();
+        let warp = warp_outbound(settings.clone()).unwrap();
+        assert_eq!(
+            (warp.hybrid, warp.prefer_exit),
+            (HybridMode::WarpFirst, false)
+        );
         settings["mode"] = "reverse".into();
-        assert!(warp_outbound(settings.clone()).unwrap().prefer_exit);
+        let warp = warp_outbound(settings.clone()).unwrap();
+        assert_eq!(
+            (warp.hybrid, warp.prefer_exit),
+            (HybridMode::WarpFirst, true)
+        );
         // An exit that cannot follow a tunnel (QUIC needs its own socket).
         let mut quic = settings.clone();
         quic["exits"] = serde_json::json!(["hy2://pw@203.0.113.9:443?sni=h.example.com#q"]);
         assert!(warp_outbound(quic).unwrap_err().contains("cannot follow"));
-        // Nonsense, and reverse with nothing to reverse to.
+        // Nonsense, and preferring an exit with none to prefer.
         let mut bad = settings.clone();
         bad["exits"] = serde_json::json!(["not a link"]);
         assert!(warp_outbound(bad).is_err());
@@ -3849,6 +3893,14 @@ mod tests {
         let mut unknown = warp_account();
         unknown["mode"] = "sideways".into();
         assert!(warp_outbound(unknown).is_err());
+        // The order is kept with no servers listed yet, so a search later
+        // looks for the right kind.
+        let mut empty = warp_account();
+        empty["mode"] = "server-first".into();
+        assert_eq!(
+            warp_outbound(empty).unwrap().hybrid,
+            HybridMode::ServerFirst
+        );
     }
 
     #[test]

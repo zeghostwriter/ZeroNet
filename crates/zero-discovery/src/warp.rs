@@ -34,6 +34,9 @@ pub const DIRECT_BASE: &str = "https://api.cloudflareclient.com/v0a4005";
 const USER_AGENT: &str = "insomnia/13.0.2";
 /// The port WARP's WireGuard endpoint listens on.
 const WIREGUARD_PORT: u16 = 2408;
+/// How long the bootstrap gives a direct attempt before it decides the
+/// service is out of reach from here and a server has to be borrowed.
+pub const DIRECT_PROBE: Duration = Duration::from_secs(6);
 /// AmneziaWG junk: a few short packets before the first real one, which some
 /// filters that drop a bare WireGuard handshake let through.
 const JUNK: (u16, u16, u16) = (4, 40, 70);
@@ -80,6 +83,17 @@ impl Api {
             timeout: Duration::from_secs(20),
             proxy: None,
         }
+    }
+
+    /// The same API with a shorter deadline.
+    ///
+    /// The bootstrap asks "can Cloudflare be reached from here at all?" before
+    /// it decides to borrow a server for the trip. A filtered address accepts
+    /// the connection and then says nothing, so without a short deadline that
+    /// question would cost the full registration timeout every time.
+    pub fn with_timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = timeout;
+        self
     }
 }
 
@@ -190,6 +204,18 @@ async fn call(
             "Cloudflare is limiting new WARP accounts right now; try again in a minute".to_string()
         }
         FetchError::Status(code) => format!("the WARP service answered {code}"),
+        // These all mean the exchange went wrong *after* the service was
+        // reached. Calling them unreachable would send the caller off to
+        // borrow a server for the trip, and the tunnel would not change the
+        // answer, so they are reported as what they are.
+        FetchError::Url(what) => format!("the WARP address is not usable: {what}"),
+        FetchError::Protocol(what) => format!("the WARP service sent something odd: {what}"),
+        FetchError::TooManyRedirects => "the WARP service redirected too many times".to_string(),
+        FetchError::Truncated { .. } => "the WARP service's reply was cut short".to_string(),
+        FetchError::TooLarge { .. } => "the WARP service's reply was too big".to_string(),
+        // What is left is a failure to get there at all: no socket, no TLS,
+        // no answer in time. That, and only that, is what a borrowed server
+        // can fix, so it is the only thing under the marker below.
         other => format!("could not reach the WARP service: {other}"),
     })?;
     serde_json::from_slice(&response).map_err(|_| "the WARP service sent something odd".to_string())
@@ -206,7 +232,15 @@ async fn send_through(
     body: &str,
 ) -> Result<Vec<u8>, FetchError> {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    let failure = |what: String| FetchError::Protocol(what);
+    // Anything that stops the tunnel carrying the request is reported as a
+    // failure to reach the service *through* it, which is what it is: the
+    // server on the other end is not carrying traffic, so a different one is
+    // worth trying. Reporting these as a malformed reply instead would tell
+    // the caller the service answered, which it never did.
+    let failure = |what: String| FetchError::Connect {
+        host: "the local proxy".into(),
+        source: std::io::Error::other(what),
+    };
     let parsed = url::Url::parse(url).map_err(|error| FetchError::Url(error.to_string()))?;
     let host = parsed
         .host_str()
@@ -216,7 +250,7 @@ async fn send_through(
     let mut stream = tokio::time::timeout(api.timeout, tokio::net::TcpStream::connect(proxy))
         .await
         .map_err(|_| FetchError::Timeout(api.timeout))?
-        .map_err(|error| failure(format!("the local proxy is not answering: {error}")))?;
+        .map_err(|error| failure(error.to_string()))?;
     stream
         .write_all(
             format!("CONNECT {host}:{port} HTTP/1.1\r\nHost: {host}:{port}\r\n\r\n").as_bytes(),
@@ -233,12 +267,12 @@ async fn send_through(
                 .map_err(|error| failure(error.to_string()))?
                 == 0
         {
-            return Err(failure("the local proxy closed the connection".into()));
+            return Err(failure("it closed the connection".into()));
         }
         head.push(byte[0]);
     }
     if !head.starts_with(b"HTTP/1.1 200") && !head.starts_with(b"HTTP/1.0 200") {
-        return Err(failure("the local proxy refused the connection".into()));
+        return Err(failure("it refused the connection".into()));
     }
     let name = rustls_pki_types::ServerName::try_from(host.clone())
         .map_err(|error| FetchError::Url(error.to_string()))?;
@@ -495,17 +529,27 @@ impl Account {
     }
 }
 
-/// Find servers that carry a request when dialled *through* the account's
-/// tunnel, from the public feeds, best first: up to `want` of them, trying at
-/// most `sample`, within `budget`.
+/// Find servers worth listing on a WARP account for `order`, from the public
+/// feeds, best first: up to `want` of them, trying at most `sample`, within
+/// `budget`.
 ///
-/// A server the local network blocks outright can still be reached from
-/// Cloudflare's network, so this finds working servers where a direct test
-/// finds none. Feeds are read tier by tier, and only until there are enough
-/// candidates to sample, so it downloads no more than it needs. Servers that
-/// cannot follow a tunnel, and unencrypted ones, are skipped.
+/// The two orders need different servers. [`HybridMode::WarpFirst`] dials a
+/// server from inside the tunnel, so candidates are tested *through* it — a
+/// server the local network blocks outright can still be reached from
+/// Cloudflare's network, which finds working servers where a direct test
+/// finds none. [`HybridMode::ServerFirst`] dials the server first and reaches
+/// Cloudflare through it, so candidates are tested directly from here, and no
+/// tunnel is needed for the search at all.
+///
+/// Feeds are read tier by tier, and only until there are enough candidates to
+/// sample. Servers that cannot carry a stream onward, and unencrypted ones,
+/// are skipped.
+///
+/// [`HybridMode::WarpFirst`]: zero_config::HybridMode::WarpFirst
+/// [`HybridMode::ServerFirst`]: zero_config::HybridMode::ServerFirst
 pub async fn gather_exits(
     link: &str,
+    order: zero_config::HybridMode,
     want: usize,
     sample: usize,
     budget: Duration,
@@ -518,16 +562,23 @@ pub async fn gather_exits(
     let zero_config::OutboundProtocol::AmneziaWireguard(warp) = &parsed.outbound.protocol else {
         return Err("that is not a warp:// link".into());
     };
-    let wireguard_peer = warp
-        .wireguard_usable()
-        .then(|| {
-            warp.address
-                .as_ip()
-                .map(|ip| std::net::SocketAddr::new(ip, warp.port))
-        })
-        .flatten();
-    let tunnel = zero_runtime::warp::tunnel(warp, wireguard_peer).await?;
-    progress(&format!("Connected to WARP ({}).", tunnel.route().name()));
+    // Through the tunnel for the tunnel-first order, straight out otherwise.
+    let tunnel = if order == zero_config::HybridMode::WarpFirst {
+        let wireguard_peer = warp
+            .wireguard_usable()
+            .then(|| {
+                warp.address
+                    .as_ip()
+                    .map(|ip| std::net::SocketAddr::new(ip, warp.port))
+            })
+            .flatten();
+        let tunnel = zero_runtime::warp::tunnel(warp, wireguard_peer).await?;
+        progress(&format!("Connected to WARP ({}).", tunnel.route().name()));
+        Some(tunnel)
+    } else {
+        None
+    };
+    let resolver = zero_dns::Resolver::new(zero_config::dns::DnsSettings::default());
 
     let mut candidates: Vec<crate::link::Candidate> = Vec::new();
     let mut seen = std::collections::HashSet::new();
@@ -561,8 +612,13 @@ pub async fn gather_exits(
     candidates.shuffle(&mut rand::thread_rng());
     candidates.truncate(sample);
     progress(&format!(
-        "Trying {} servers through the tunnel…",
-        candidates.len()
+        "Trying {} servers {}…",
+        candidates.len(),
+        if tunnel.is_some() {
+            "through the tunnel"
+        } else {
+            "directly"
+        }
     ));
 
     let mut pending = FuturesUnordered::new();
@@ -571,14 +627,17 @@ pub async fn gather_exits(
     loop {
         while pending.len() < 8 {
             let Some(candidate) = queue.next() else { break };
-            let tunnel = &tunnel;
+            let (tunnel, resolver) = (&tunnel, &resolver);
             pending.push(async move {
-                let took = zero_runtime::warp::test_exit(
-                    tunnel,
-                    &candidate.outbound,
-                    Duration::from_secs(10),
-                )
-                .await;
+                let limit = Duration::from_secs(10);
+                let took = match tunnel {
+                    Some(tunnel) => {
+                        zero_runtime::warp::test_exit(tunnel, &candidate.outbound, limit).await
+                    }
+                    None => {
+                        zero_runtime::warp::test_carrier(&candidate.outbound, resolver, limit).await
+                    }
+                };
                 (candidate, took)
             });
         }
@@ -600,6 +659,70 @@ pub async fn gather_exits(
     }
     good.sort_by_key(|(took, _)| *took);
     Ok(good.into_iter().map(|(_, link)| link).collect())
+}
+
+/// The orders a search tries for a request's `order`, first to last.
+///
+/// `auto` is reverse hybrid first and hybrid second. Reverse goes first
+/// because its search tests servers from inside Cloudflare's network, which
+/// reaches servers the local network blocks; hybrid is the one left when
+/// Cloudflare's tunnel cannot be brought up from here at all. Anything
+/// unknown, and nothing, is hybrid alone, as it was before `auto` existed.
+pub fn search_orders(order: Option<&str>) -> &'static [zero_config::HybridMode] {
+    use zero_config::HybridMode::{ServerFirst, WarpFirst};
+    match order {
+        Some("auto") => &[WarpFirst, ServerFirst],
+        Some("warp-first") => &[WarpFirst],
+        _ => &[ServerFirst],
+    }
+}
+
+/// The share of the time left that an order gets when another one waits
+/// behind it. A search that fails early (the tunnel does not come up) hands
+/// everything it did not use to the next order.
+const TURN_SHARE: f32 = 0.6;
+
+/// Run [`gather_exits`] for each of `orders` in turn and stop at the first
+/// that finds a server. Returns that order with its servers, so the account
+/// is written with the order its servers were actually tested in.
+///
+/// `budget` covers all the turns together. When no order finds anything the
+/// answer is the first order and no servers. `orders` must not be empty.
+pub async fn gather_exits_in_turn(
+    link: &str,
+    orders: &[zero_config::HybridMode],
+    want: usize,
+    sample: usize,
+    budget: Duration,
+    progress: impl Fn(&str),
+) -> (zero_config::HybridMode, Vec<String>) {
+    let deadline = tokio::time::Instant::now() + budget;
+    for (index, &order) in orders.iter().enumerate() {
+        let left = deadline.saturating_duration_since(tokio::time::Instant::now());
+        let last = index + 1 == orders.len();
+        let turn = if last { left } else { left.mul_f32(TURN_SHARE) };
+        let exits = gather_exits(link, order, want, sample, turn, &progress)
+            .await
+            .unwrap_or_default();
+        if !exits.is_empty() {
+            return (order, exits);
+        }
+        if !last {
+            progress("No server worked that way, trying the other order…");
+        }
+    }
+    (orders[0], Vec::new())
+}
+
+/// Register an account through `api` and return its `warp://` link.
+///
+/// This is the one place a device is registered, so `register_anywhere` and
+/// the bootstrap's direct-then-tunnel attempts all make the same account the
+/// same way. `progress` hears the two lines the person sees.
+pub async fn register_with(api: &Api, progress: &impl Fn(&str)) -> Result<String, String> {
+    let account = register(api).await?;
+    progress("Account created. Keys made on this device.");
+    Ok(account.link("auto"))
 }
 
 /// Register an account by whichever way of reaching the service works from
@@ -626,19 +749,29 @@ pub async fn register_anywhere(
     progress("Asking Cloudflare for an account…");
     let mut last = String::from("no way to reach the WARP service");
     for api in ways {
-        match register(&api).await {
-            Ok(account) => {
-                progress("Account created. Keys made on this device.");
-                return Ok(account.link("auto"));
-            }
+        match register_with(&api, progress).await {
+            Ok(link) => return Ok(link),
             Err(error) => last = error,
         }
     }
-    Err(if last.starts_with("could not reach") {
+    Err(if is_unreachable(&last) {
         format!("{last}. Connect to a working server first, then try again.")
     } else {
         last
     })
+}
+
+/// Whether a registration failure means the service could not be reached from
+/// here, rather than answering and refusing.
+///
+/// The bootstrap turns on this: only an unreachable service is worth a second
+/// try through a borrowed server. A rate limit, an HTTP error, or a malformed
+/// reply all prove the service *was* reached, so a tunnel would change
+/// nothing and the failure is reported as it is.
+///
+/// The strings it reads are the ones [`call`] builds.
+pub fn is_unreachable(error: &str) -> bool {
+    error.starts_with("could not reach the WARP service")
 }
 
 /// What a host asks a WARP job for.
@@ -651,6 +784,17 @@ pub struct WarpRequest {
     /// Try the service directly, too. On unless a host says otherwise.
     #[serde(default = "yes")]
     pub direct: bool,
+    /// The bootstrap's first look: try the service directly, with a short
+    /// deadline, and nothing else. The reply says whether it was reachable at
+    /// all, which is what decides between making the account now and
+    /// borrowing a server for the trip.
+    #[serde(default)]
+    pub quick: bool,
+    /// The order the account is written with and its servers searched for:
+    /// `server-first` (hybrid, the default), `warp-first` (reverse hybrid),
+    /// or `auto`, which searches both ways (see [`search_orders`]).
+    #[serde(default)]
+    pub order: Option<String>,
     /// How many servers to look for, how many to try, and for how long.
     #[serde(default = "default_want")]
     pub want: usize,
@@ -693,26 +837,35 @@ pub async fn warp_job(
             .proxy
             .as_deref()
             .and_then(|proxy| proxy.parse::<std::net::SocketAddr>().ok());
-        let link = register_anywhere(tunnel, None, request.direct, &progress).await?;
+        // A quick look goes straight out with a short deadline, and nothing
+        // else: it is the question "is Cloudflare reachable from here?", and
+        // a relay or a fallback would answer a different one.
+        let link = if request.quick {
+            progress("Asking Cloudflare for an account…");
+            register_with(&Api::direct().with_timeout(DIRECT_PROBE), &progress).await?
+        } else {
+            register_anywhere(tunnel, None, request.direct, &progress).await?
+        };
         // The account is useful without servers, so finding none is not a
         // failure.
-        let exits = gather_exits(
+        let (order, exits) = gather_exits_in_turn(
             &link,
+            search_orders(request.order.as_deref()),
             request.want.clamp(1, 20),
             request.sample.clamp(1, 400),
             Duration::from_millis(request.budget_ms.clamp(1_000, 300_000)),
             &progress,
         )
-        .await
-        .unwrap_or_default();
+        .await;
         let link = if exits.is_empty() {
             link
         } else {
-            link_with_exits(&link, &exits, false).unwrap_or(link)
+            link_with_exits(&link, &exits, order, false).unwrap_or(link)
         };
         let route = summarize(&link).map_or("auto", |summary| summary.route);
         Ok::<_, String>(json!({
             "t": "done", "ok": true, "link": link, "exits": exits.len(),
+            "order": order.as_str(),
             "route": route, "fingerprint": fingerprint(&link),
         }))
     };
@@ -723,12 +876,17 @@ pub async fn warp_job(
                 EndReason::Enough
             }
             Err(error) => {
-                sink.emit(json!({"t": "done", "ok": false, "error": error}));
+                // `unreachable` is what tells a host to bring a server up and
+                // try again through it, rather than reporting the failure.
+                let unreachable = is_unreachable(&error);
+                sink.emit(json!({
+                    "t": "done", "ok": false, "error": error, "unreachable": unreachable,
+                }));
                 EndReason::Exhausted
             }
         },
         () = cancel.cancelled() => {
-            sink.emit(json!({"t": "done", "ok": false, "error": "cancelled"}));
+            sink.emit(json!({"t": "done", "ok": false, "error": "cancelled", "unreachable": false}));
             EndReason::Cancelled
         }
     }
@@ -763,39 +921,59 @@ fn close_link(settings: &Value, remark: &str) -> Result<String, String> {
     Ok(rebuilt)
 }
 
-/// `link` (a `warp://` link) with `exits` and the path order set: the same
-/// account, keys and routes, plus the servers to dial through the tunnel.
-pub fn link_with_exits(link: &str, exits: &[String], reverse: bool) -> Result<String, String> {
+/// `link` (a `warp://` link) with `exits` and the order they go in: the same
+/// account, keys and routes, plus the servers it may take part in.
+///
+/// Both the order and the sub-choice are written every time, so a link that is
+/// saved and read back says the same thing it did when it was written.
+pub fn link_with_exits(
+    link: &str,
+    exits: &[String],
+    hybrid: zero_config::HybridMode,
+    prefer_exit: bool,
+) -> Result<String, String> {
     let (mut settings, remark) = open_link(link)?;
     if let Some(object) = settings.as_object_mut() {
         object.insert("exits".into(), json!(exits));
-        object.insert(
-            "mode".into(),
-            json!(if reverse { "reverse" } else { "hybrid" }),
-        );
+        write_order(object, hybrid, prefer_exit);
     }
     close_link(&settings, &remark)
 }
 
-/// `link` with only the path order changed: `reverse` sends traffic through
-/// an exit first and uses the tunnel alone as the failsafe. Refused, in a
-/// sentence a person can act on, when there is no exit to go through.
-pub fn link_with_mode(link: &str, reverse: bool) -> Result<String, String> {
+/// `link` with only the order changed, keeping the account and its servers.
+/// The order is kept even with no servers listed yet, so a later search looks
+/// for the right kind (see [`gather_exits`]).
+pub fn link_with_order(
+    link: &str,
+    hybrid: zero_config::HybridMode,
+    prefer_exit: bool,
+) -> Result<String, String> {
     let (mut settings, remark) = open_link(link)?;
     let has_exits = settings
         .get("exits")
         .and_then(Value::as_array)
         .is_some_and(|exits| !exits.is_empty());
-    if reverse && !has_exits {
+    if prefer_exit && !has_exits {
         return Err("Find servers for this account first.".into());
     }
     if let Some(object) = settings.as_object_mut() {
-        object.insert(
-            "mode".into(),
-            json!(if reverse { "reverse" } else { "hybrid" }),
-        );
+        write_order(object, hybrid, prefer_exit);
     }
     close_link(&settings, &remark)
+}
+
+/// Write the order, always explicitly, so a saved link reads back the same.
+fn write_order(
+    object: &mut serde_json::Map<String, Value>,
+    hybrid: zero_config::HybridMode,
+    prefer_exit: bool,
+) {
+    object.insert("mode".into(), json!(hybrid.as_str()));
+    if hybrid == zero_config::HybridMode::WarpFirst && prefer_exit {
+        object.insert("preferExit".into(), json!(true));
+    } else {
+        object.remove("preferExit");
+    }
 }
 
 /// A short fingerprint of an account, for showing to the person who owns it:
@@ -844,8 +1022,10 @@ pub fn fingerprint(link: &str) -> Option<String> {
 pub struct LinkSummary {
     /// Servers listed as exits.
     pub exits: usize,
-    /// Exits are tried first.
-    pub reverse: bool,
+    /// Which order the tunnel and those servers go in.
+    pub hybrid: zero_config::HybridMode,
+    /// Within the tunnel-first order, a server carries first.
+    pub prefer_exit: bool,
     /// `auto`, `wireguard`, `masque-h2` or `masque-h3`.
     pub route: &'static str,
 }
@@ -860,13 +1040,45 @@ pub fn summarize(link: &str) -> Option<LinkSummary> {
         .starts_with(zero_config::share_link::WARP_LINK_SCHEME)
         .then_some(LinkSummary {
             exits: warp.exits.len(),
-            reverse: warp.prefer_exit,
+            hybrid: warp.hybrid,
+            prefer_exit: warp.prefer_exit,
             route: warp.route.name(),
         })
 }
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn auto_searches_reverse_hybrid_first_and_hybrid_second() {
+        use zero_config::HybridMode::{ServerFirst, WarpFirst};
+        assert_eq!(search_orders(Some("auto")), [WarpFirst, ServerFirst]);
+        assert_eq!(search_orders(Some("warp-first")), [WarpFirst]);
+        assert_eq!(search_orders(Some("server-first")), [ServerFirst]);
+        // A request that names no order, or one nobody knows, is hybrid alone.
+        assert_eq!(search_orders(None), [ServerFirst]);
+        assert_eq!(search_orders(Some("sideways")), [ServerFirst]);
+    }
+
+    #[tokio::test]
+    async fn a_search_that_finds_nothing_answers_with_its_first_order() {
+        // Not a WARP link, so every turn fails at once without touching the
+        // network: what is left is the rule for an empty answer.
+        let lines = std::sync::Mutex::new(Vec::new());
+        let (order, exits) = gather_exits_in_turn(
+            "trojan://secret@203.0.113.9:8443?security=tls&sni=t.example.com#x",
+            search_orders(Some("auto")),
+            4,
+            10,
+            Duration::from_secs(5),
+            |line: &str| lines.lock().unwrap().push(line.to_string()),
+        )
+        .await;
+        assert_eq!(order, zero_config::HybridMode::WarpFirst);
+        assert!(exits.is_empty());
+        // It said once that it was moving on, between the two turns.
+        assert_eq!(lines.lock().unwrap().len(), 1);
+    }
+
     use super::*;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -1070,6 +1282,30 @@ mod tests {
         assert!(error.contains("try again in a minute"), "{error}");
     }
 
+    /// A port on the loopback that nothing is listening on, standing in for a
+    /// local proxy with nothing behind it.
+    ///
+    /// Binding a port and dropping the listener is not enough on its own: the
+    /// kernel is free to hand the same port straight back to another test
+    /// running beside this one, and then the connect succeeds, the failure
+    /// under test never happens, and the assertion fails for no real reason.
+    /// So a port is only accepted once a connect to it has actually been
+    /// refused, which is the state the callers are trying to arrange.
+    async fn a_closed_port() -> std::net::SocketAddr {
+        for _ in 0..50 {
+            let addr = std::net::TcpListener::bind("127.0.0.1:0")
+                .unwrap()
+                .local_addr()
+                .unwrap();
+            // The listener goes out of scope here on purpose: nothing should
+            // be there, and that is what has to be true before returning.
+            if tokio::net::TcpStream::connect(addr).await.is_err() {
+                return addr;
+            }
+        }
+        panic!("no port on the loopback stayed closed");
+    }
+
     #[tokio::test]
     async fn a_proxy_that_refuses_or_is_not_there_is_reported_plainly() {
         // Refuses the CONNECT.
@@ -1089,16 +1325,17 @@ mod tests {
         let mut api = Api::through(proxy);
         api.timeout = Duration::from_secs(5);
         let error = register(&api).await.err().unwrap();
-        assert!(error.contains("proxy refused"), "{error}");
+        assert!(error.contains("local proxy"), "{error}");
+        assert!(error.contains("refused the connection"), "{error}");
         // Nothing listens.
-        let closed = std::net::TcpListener::bind("127.0.0.1:0")
-            .unwrap()
-            .local_addr()
-            .unwrap();
+        let closed = a_closed_port().await;
         let mut api = Api::through(closed);
         api.timeout = Duration::from_secs(5);
         let error = register(&api).await.err().unwrap();
-        assert!(error.contains("proxy is not answering"), "{error}");
+        assert!(error.contains("local proxy"), "{error}");
+        // A proxy with nothing behind it reads as a failure to reach the
+        // service, which is what it is: the borrowed server carried nothing.
+        assert!(is_unreachable(&error), "{error}");
     }
 
     /// The replies the real service sent, kept in a usque-style account file
@@ -1132,7 +1369,13 @@ mod tests {
         };
         let exits =
             vec!["trojan://secret@203.0.113.9:8443?security=tls&sni=t.example.com#x".to_string()];
-        let link = link_with_exits(&account.link("auto"), &exits, true).unwrap();
+        let link = link_with_exits(
+            &account.link("auto"),
+            &exits,
+            zero_config::HybridMode::ServerFirst,
+            false,
+        )
+        .unwrap();
         let parsed = zero_config::parse_link(&link).unwrap();
         assert_eq!(parsed.remark, "WARP");
         let zero_config::OutboundProtocol::AmneziaWireguard(warp) = &parsed.outbound.protocol
@@ -1140,15 +1383,29 @@ mod tests {
             panic!("expected a WARP outbound")
         };
         assert_eq!(warp.exits.len(), 1);
-        assert!(warp.prefer_exit && warp.wireguard_usable());
+        assert_eq!(warp.hybrid, zero_config::HybridMode::ServerFirst);
+        assert!(warp.wireguard_usable());
         // Not a link, and an exit that cannot follow a tunnel.
-        assert!(link_with_exits("vless://x", &exits, false).is_err());
+        assert!(link_with_exits(
+            "vless://x",
+            &exits,
+            zero_config::HybridMode::ServerFirst,
+            false
+        )
+        .is_err());
         let quic = vec!["hy2://pw@203.0.113.9:443?sni=h.example.com#q".to_string()];
-        assert!(link_with_exits(&account.link("auto"), &quic, false).is_err());
+        assert!(link_with_exits(
+            &account.link("auto"),
+            &quic,
+            zero_config::HybridMode::ServerFirst,
+            false
+        )
+        .is_err());
     }
 
     #[test]
     fn a_link_can_be_summarised_and_its_order_changed() {
+        use zero_config::HybridMode;
         let account = Account {
             device_id: "d".into(),
             wireguard_private_key: [1; 32],
@@ -1159,31 +1416,40 @@ mod tests {
             masque: None,
         };
         let plain = account.link("auto");
-        let summary = summarize(&plain).unwrap();
+        // A fresh account starts tunnel first, with no servers.
         assert_eq!(
-            summary,
+            summarize(&plain).unwrap(),
             LinkSummary {
                 exits: 0,
-                reverse: false,
+                hybrid: HybridMode::WarpFirst,
+                prefer_exit: false,
                 route: "auto"
             }
         );
-        // Nothing to go through: refused, in words.
-        assert!(link_with_mode(&plain, true)
+        // The order can be chosen before any server is found, so the search
+        // looks for the right kind; preferring a server with none is refused.
+        let chosen = link_with_order(&plain, HybridMode::ServerFirst, false).unwrap();
+        assert_eq!(summarize(&chosen).unwrap().hybrid, HybridMode::ServerFirst);
+        assert!(link_with_order(&plain, HybridMode::WarpFirst, true)
             .unwrap_err()
             .contains("Find servers"));
         let exits =
             vec!["trojan://secret@203.0.113.9:8443?security=tls&sni=t.example.com#x".to_string()];
-        let with = link_with_exits(&plain, &exits, false).unwrap();
-        assert_eq!(summarize(&with).unwrap().exits, 1);
-        let flipped = link_with_mode(&with, true).unwrap();
+        let with = link_with_exits(&plain, &exits, HybridMode::ServerFirst, false).unwrap();
+        let summary = summarize(&with).unwrap();
+        assert_eq!(summary.exits, 1);
+        assert_eq!(summary.hybrid, HybridMode::ServerFirst);
+
+        // The other order, and its sub-choice, both survive the round trip.
+        let flipped = link_with_order(&with, HybridMode::WarpFirst, true).unwrap();
         let summary = summarize(&flipped).unwrap();
-        assert!(summary.reverse && summary.exits == 1);
-        assert!(
-            !summarize(&link_with_mode(&flipped, false).unwrap())
-                .unwrap()
-                .reverse
-        );
+        assert_eq!(summary.hybrid, HybridMode::WarpFirst);
+        assert!(summary.prefer_exit && summary.exits == 1);
+        let back = link_with_order(&flipped, HybridMode::WarpFirst, false).unwrap();
+        let summary = summarize(&back).unwrap();
+        assert!(!summary.prefer_exit);
+        assert_eq!(summary.hybrid, HybridMode::WarpFirst);
+
         // Not a warp link at all.
         assert!(
             summarize("trojan://secret@203.0.113.9:8443?security=tls&sni=t.example.com").is_none()
@@ -1215,7 +1481,13 @@ mod tests {
         // The exits do not change it: it names the account, not the servers.
         let exits =
             vec!["trojan://secret@203.0.113.9:8443?security=tls&sni=t.example.com#x".to_string()];
-        let with = link_with_exits(&make(1).link("auto"), &exits, false).unwrap();
+        let with = link_with_exits(
+            &make(1).link("auto"),
+            &exits,
+            zero_config::HybridMode::ServerFirst,
+            false,
+        )
+        .unwrap();
         assert_eq!(fingerprint(&with).unwrap(), a);
         assert!(fingerprint("trojan://secret@203.0.113.9:8443?security=tls").is_none());
     }
@@ -1291,6 +1563,19 @@ mod tests {
         assert_eq!(last["ok"], false);
         assert!(last["error"].as_str().unwrap().contains("proxy"), "{last}");
         assert_eq!(events.iter().filter(|e| e["t"] == "done").count(), 1);
+        // Nothing answered, so a host is told it may bring a server up and
+        // try again through it.
+        assert_eq!(last["unreachable"], true);
+    }
+
+    #[test]
+    fn a_quick_look_is_a_flag_a_host_can_ask_for() {
+        let plain: WarpRequest = serde_json::from_value(json!({})).unwrap();
+        assert!(!plain.quick);
+        assert!(plain.direct, "direct stays on by default");
+        assert_eq!(plain.want, 4);
+        let quick: WarpRequest = serde_json::from_value(json!({"quick": true})).unwrap();
+        assert!(quick.quick);
     }
 
     #[tokio::test]
@@ -1333,5 +1618,74 @@ mod tests {
             (Some("done"), Some(false))
         );
         assert_eq!(last["error"], "cancelled");
+    }
+
+    #[test]
+    fn only_a_service_that_could_not_be_reached_is_worth_a_tunnel() {
+        // The failures that mean "the service was reached and refused": a
+        // tunnel would change nothing, so the bootstrap must not borrow one.
+        for answered in [
+            "Cloudflare is limiting new WARP accounts right now; try again in a minute",
+            "the WARP service answered 500",
+            "the WARP service sent something odd",
+        ] {
+            assert!(!is_unreachable(answered), "{answered}");
+        }
+        // The failures that mean "nothing answered at all": these are what the
+        // bootstrap falls back to a borrowed server for.
+        for unreachable in [
+            "could not reach the WARP service: connecting to api.cloudflareclient.com: connection timed out",
+            "could not reach the WARP service: TLS to api.cloudflareclient.com: unexpected eof",
+            "could not reach the WARP service: timed out after 6s",
+        ] {
+            assert!(is_unreachable(unreachable), "{unreachable}");
+        }
+        // The placeholder used when no way was even tried is not a verdict.
+        assert!(!is_unreachable("no way to reach the WARP service"));
+        // A failure *after* the service answered is not either, even though it
+        // arrives through the same job: borrowing a server would not change
+        // the answer.
+        for answered_wrongly in [
+            "the WARP address is not usable: relative URL without a base",
+            "the WARP service sent something odd: malformed HTTP response",
+            "the WARP service redirected too many times",
+            "the WARP service's reply was cut short",
+            "the WARP service's reply was too big",
+        ] {
+            assert!(!is_unreachable(answered_wrongly), "{answered_wrongly}");
+        }
+    }
+
+    #[test]
+    fn a_shorter_deadline_is_kept_on_the_api() {
+        let quick = Api::direct().with_timeout(DIRECT_PROBE);
+        assert_eq!(quick.timeout, DIRECT_PROBE);
+        assert_eq!(quick.base, DIRECT_BASE);
+        assert!(quick.proxy.is_none());
+        // A relay keeps its credential; only the deadline changes.
+        let relay = Api::relay("https://example.workers.dev/warp", "s3cret");
+        assert_eq!(relay.headers.len(), 1);
+        assert_eq!(relay.with_timeout(DIRECT_PROBE).timeout, DIRECT_PROBE);
+    }
+
+    #[tokio::test]
+    async fn a_service_that_refuses_the_connection_reads_as_unreachable() {
+        // A closed port stands in for a filtered address: the connect fails,
+        // and that has to read as "could not be reached" so the bootstrap
+        // knows to borrow a server.
+        let addr = a_closed_port().await;
+        let api = Api {
+            proxy: Some(addr),
+            ..Api::direct()
+        };
+        let said = std::sync::Mutex::new(Vec::new());
+        let error = register_with(&api, &|line: &str| {
+            said.lock().unwrap().push(line.to_string())
+        })
+        .await
+        .unwrap_err();
+        assert!(is_unreachable(&error), "{error}");
+        // Nothing was made, so nothing is announced as made.
+        assert!(said.lock().unwrap().is_empty());
     }
 }

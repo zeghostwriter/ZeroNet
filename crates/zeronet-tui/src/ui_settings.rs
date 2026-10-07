@@ -19,9 +19,9 @@ const LABEL_WIDTH: usize = 28;
 const VALUE_WIDTH: usize = 20;
 
 /// Rows when Advanced is folded: four headings plus the everyday settings.
-pub(crate) const SETTINGS_ROWS_BASIC: usize = 31;
+pub(crate) const SETTINGS_ROWS_BASIC: usize = 32;
 /// Rows when Advanced is open, including the edge-scanner block.
-pub(crate) const SETTINGS_ROWS: usize = 61;
+pub(crate) const SETTINGS_ROWS: usize = 62;
 
 impl UiRenderer<'_> {
     /// Total lines the settings page needs, for the scrollbar.
@@ -292,6 +292,27 @@ impl UiRenderer<'_> {
             depth,
             self.theme.accent_bright,
             hint,
+        );
+        let (warp, warp_hint) = match crate::warp_bootstrap::Consent::parse(
+            &self.settings.warp_consent,
+        ) {
+            crate::warp_bootstrap::Consent::Unasked => {
+                ("ASK", "asked once, on the first connect")
+            }
+            crate::warp_bootstrap::Consent::Yes => (
+                "ON",
+                "chain a server through Cloudflare WARP; a server is borrowed to set it up when needed",
+            ),
+            crate::warp_bootstrap::Consent::No => ("OFF", "never use Cloudflare"),
+        };
+        self.value_row(
+            frame,
+            row(),
+            ComponentId::SettingWarpConsentCycle,
+            "Cloudflare WARP",
+            warp,
+            self.theme.accent_bright,
+            warp_hint,
         );
 
         self.group_heading(frame, row(), "APPEARANCE");

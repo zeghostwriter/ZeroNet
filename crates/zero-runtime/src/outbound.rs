@@ -509,7 +509,7 @@ async fn connect_resolved(
             Failure::new(FailureKind::DnsNoData, Stage::Resolving)
                 .with_detail("WireGuard peer has no address")
         })?;
-        let stack = crate::warp::tunnel(wireguard, Some(peer))
+        let stack = crate::warp::tunnel_for(wireguard, Some(peer), resolver)
             .await
             .map_err(|error| {
                 Failure::new(FailureKind::LocalPolicy, Stage::SocketConnected).with_detail(error)

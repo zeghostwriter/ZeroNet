@@ -115,6 +115,14 @@ pub enum ModalState {
 pub enum WarpPhase {
     /// Nothing done yet: says what will happen, and asks.
     Offer,
+    /// Asking, before anything is sent, whether Cloudflare may be used at
+    /// all. The answer is kept in Settings, so this is shown once and can be
+    /// changed later without it ever asking again.
+    ///
+    /// It is separate from [`WarpPhase::Offer`] because the two are asked at
+    /// different moments: `Offer` is a person who already opened the WARP
+    /// dialog, while this one interrupts an ordinary connect the first time.
+    Consent,
     /// Running. `steps` are what has happened so far, oldest first; the last
     /// one is what is being done now.
     Working { steps: Vec<String> },
@@ -136,8 +144,10 @@ pub enum WarpPhase {
         remark: String,
         /// Servers listed as exits.
         exits: usize,
-        /// Exits are tried first.
-        reverse: bool,
+        /// Which order the tunnel and those servers go in.
+        hybrid: zero_config::HybridMode,
+        /// Within the tunnel-first order, a server carries first.
+        prefer_exit: bool,
         /// `auto`, `wireguard`, `masque-h2` or `masque-h3`.
         route: String,
         /// The highlighted option, an index into [`WARP_OPTIONS`].

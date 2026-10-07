@@ -31,9 +31,12 @@ import com.zeronet.mobile.model.Settings
 import com.zeronet.mobile.model.classic
 import com.zeronet.mobile.model.SpeedFloor
 import com.zeronet.mobile.model.TrafficStats
+import com.zeronet.mobile.model.WarpConsent
+import com.zeronet.mobile.model.WarpOrder
 import com.zeronet.mobile.model.WarpPhase
 import com.zeronet.mobile.model.WarpState
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.async
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -204,6 +207,13 @@ object Engine {
     /** Fronted variants of past public finds tested per search (matches the desktop finder). */
     private const val FRONT_VARIANTS = 18
     private const val WARP_STEPS_KEPT = 6
+    /**
+     * How long the automatic setup lets one registration and its search for
+     * servers run. It bounds the work the core does; the wait around it is
+     * longer, so a job that reports nothing at all cannot hold the connect.
+     */
+    private const val WARP_BOOT_BUDGET_MS = 30_000L
+    private const val WARP_BOOT_WAIT_MS = 90_000L
     /** Gaming times this many servers, this many times each, before settling on one. */
     private const val GAME_TUNE_SERVERS = 5
     private const val GAME_TUNE_ROUNDS = 3
@@ -373,10 +383,42 @@ object Engine {
         connectJob?.cancel()
         monitorJob?.cancel()
         connectJob = scope.launch {
-            mutex.withLock { runConnection() }
+            if (warpBootstrapWanted()) {
+                // The setup ends by connecting the account or by failing;
+                // either way it has already dialled.
+                warpBooting = true
+                try {
+                    runWarpBootstrap()
+                } finally {
+                    warpBooting = false
+                }
+            } else {
+                mutex.withLock { runConnection() }
+            }
             afterConnectAttempt()
         }
     }
+
+    /**
+     * Whether this connect should set a Cloudflare WARP account up first.
+     *
+     * Only the recommended mode, only when the answer is [WarpConsent.On] (the
+     * question itself is asked by the UI, once), and only while no account
+     * exists: an account that is already there is just another server the
+     * ladder tries.
+     */
+    private suspend fun warpBootstrapWanted(): Boolean =
+        settings.warpConsent == WarpConsent.On &&
+            settings.profile == ConnectionProfile.Normal &&
+            !hasWarpAccount()
+
+    /**
+     * Whether an account is already stored: a server whose link is a `warp://`
+     * one. Once it exists the setup has nothing left to do, and the account is
+     * just another server the ladder tries.
+     */
+    private suspend fun hasWarpAccount(): Boolean =
+        withContext(Dispatchers.IO) { store.hasWarpAccount() }
 
     /**
      * After a connect attempt: with the kill switch holding traffic, a
@@ -1147,6 +1189,7 @@ object Engine {
             // The user's own scan first, then what others found on this network.
             .put("clean_ips", JSONArray((scan.value.results.take(10).map { "${it.ip}:${it.port}" } + crowdCleanIps).distinct().take(20)))
             .put("log_level", if (s.logs) "info" else "warning")
+            .put("warp_order", s.warpOrder.wire)
         val result = JSONObject(ZrayNative.buildConfig(request.toString()))
         if (result.has("error")) {
             EngineLog.e("buildConfig: ${result.optString("error")}")
@@ -1569,6 +1612,12 @@ object Engine {
     /** The last WARP route race, read from the core with each stats tick. */
     val race = MutableStateFlow(RaceState())
     private var warpJob: Job? = null
+    /**
+     * The automatic setup is running. It and [warpStart] both write [warp] and
+     * both run a registration in the core, so they take turns rather than
+     * interleaving their progress lines.
+     */
+    @Volatile private var warpBooting = false
 
     /**
      * Get a Cloudflare WARP account: the native job makes the keys on the
@@ -1578,11 +1627,13 @@ object Engine {
      * imported like any other server.
      */
     fun warpStart() {
-        if (warpJob?.isActive == true) return
+        // The automatic setup owns the account while it runs; starting a
+        // second registration now would interleave their progress lines.
+        if (warpJob?.isActive == true || warpBooting) return
         warp.value = WarpState(WarpPhase.Working)
         warpJob = scope.launch(Dispatchers.IO) {
             try {
-                val request = JSONObject().put("direct", true)
+                val request = JSONObject().put("direct", true).put("order", settings.warpOrder.wire)
                 if (running) request.put("proxy", "127.0.0.1:${settings.httpPort}")
                 var steps = emptyList<String>()
                 var finished = false
@@ -1626,8 +1677,301 @@ object Engine {
     fun warpCancel() {
         warpJob?.cancel()
         warpJob = null
-        warp.value = WarpState()
+        // The setup is not cancelled here: it is part of a connect, and
+        // cancelling it would leave a borrowed tunnel up. Only its progress
+        // display goes away with the sheet.
+        if (!warpBooting) warp.value = WarpState()
     }
+
+    // ------------------------------------------------- the automatic setup
+    //
+    // The one-shot setup the connect flow runs the first time: ask about
+    // Cloudflare, make the account, let any borrowed server go, and dial the
+    // account, whose tunnel and found servers go in the order the settings
+    // ask for (`warp_order`). The order and the rules are the same ones the
+    // desktop TUI runs (`warp_bootstrap` in `zeronet-tui`); this is the part
+    // that waits and dials.
+
+    /**
+     * Set a Cloudflare WARP account up and connect it, as part of a connect
+     * the person already asked for.
+     *
+     * The service is tried directly first, with a short deadline. When nothing
+     * answers — Cloudflare is filtered by name on many Iranian networks — a
+     * server is brought up to make the account through, and let go again the
+     * moment the account exists, so the tunnel is not rebuilt on top of
+     * itself. Every way this can fail falls back to an ordinary connect, so
+     * pressing connect always connects to something.
+     */
+    private suspend fun runWarpBootstrap() {
+        // The connect that was asked for. Restored whenever the setup does not
+        // end by dialling an account, so the fallback is exactly the connect
+        // the person pressed, not a half-finished account.
+        val asked = target
+        // A tunnel this setup is responsible for letting go again: the one it
+        // borrows for the trip, and the one it was handed when it started.
+        var borrowed = false
+        warp.value = WarpState(WarpPhase.Working)
+        // The setup can take a while (a short probe, then a registration and a
+        // search for servers that work through it). Say something, so the orb
+        // and the notification do not read as a connect that has hung.
+        publish(ConnState.Searching(DiscoveryProgress()))
+
+        try {
+            val made = when {
+                // Already online: the service is filtered by name, so the
+                // tunnel in hand is the one path there that works.
+                running -> {
+                    borrowed = true
+                    registerAccount()
+                }
+                else -> {
+                    // A short question first: is Cloudflare reachable from here
+                    // at all? A filtered address answers nothing, so without
+                    // the short deadline this would cost the full registration
+                    // timeout every time.
+                    val probe = registerAccount(quick = true)
+                    when {
+                        probe.account != null -> {
+                            EngineLog.i("warp: the account was made directly")
+                            probe
+                        }
+                        // It answered and refused. A rate limit or an HTTP error
+                        // means the service *was* reached, so a tunnel would
+                        // change nothing.
+                        !probe.unreachable -> {
+                            warpFail(probe, probe.error ?: "the WARP service did not answer")
+                            fallbackConnect(asked)
+                            return
+                        }
+                        else -> {
+                            EngineLog.i("warp: ${probe.error} — borrowing a server to make the account through")
+                            borrowed = true
+                            // The finally below lets this tunnel go whatever
+                            // happens next, including a cancel or a failure.
+                            try {
+                                mutex.withLock { runConnection() }
+                                if (!running) {
+                                    // The borrow *was* the connect the person
+                                    // asked for, so there is nothing left to
+                                    // fall back to: it already failed.
+                                    warp.value = WarpState(
+                                        WarpPhase.Failed, probe.steps,
+                                        error = "No server answered, so the account could not be made through one.",
+                                    )
+                                    return
+                                }
+                                registerAccount()
+                            } finally {
+                                // The flag is cleared here as well as the
+                                // tunnel: the release below must not run a
+                                // second time over a tunnel already gone.
+                                if (borrowed) { releaseBorrowed(); borrowed = false }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (borrowed) releaseBorrowed()
+            if (made.account == null) {
+                warpFail(made, made.error ?: "the account was not made")
+                fallbackConnect(asked)
+                return
+            }
+            dialAccount(asked, made)
+        } catch (e: CancellationException) {
+            // A disconnect arriving mid-setup still has to let go of a tunnel
+            // the person never chose.
+            if (borrowed) releaseBorrowed()
+            throw e
+        } catch (e: Throwable) {
+            // An escape here would take the whole engine process with it and
+            // leave the kill switch holding traffic with nothing to release it.
+            EngineLog.e("warp setup", e)
+            if (borrowed) releaseBorrowed()
+            warp.value = WarpState(WarpPhase.Failed, warp.value.steps, error = e.message.orEmpty())
+            fallbackConnect(asked)
+        }
+    }
+
+    /**
+     * Let go the tunnel the setup borrowed, before the account is dialled.
+     *
+     * The core holds one configuration at a time, so the account cannot be
+     * dialled on top of whatever is running now. This is the one rule the
+     * desktop states plainly: once a server has been borrowed it is always let
+     * go, even when the account could not be made, because a failure must
+     * never leave the person on a server they did not choose.
+     *
+     * The teardown is not cancellable, and the kill switch is put back up
+     * *before* the tunnel goes, so nothing slips out in between.
+     *
+     * `NonCancellable` wraps the lock, not the block inside it: taking a
+     * `Mutex` is itself a cancellable suspend call, so a teardown reached from
+     * a cancel (this is the one the borrow path's `finally` runs on) would
+     * otherwise give up at `withLock` whenever something else — a disconnect,
+     * a revocation — was already holding the lock, and leave the tunnel up.
+     */
+    private suspend fun releaseBorrowed() {
+        if (!running && blocker == null) return
+        withContext(NonCancellable) {
+            mutex.withLock {
+                holdBlocker()
+                monitorJob?.cancel()
+                teardown()
+            }
+        }
+        EngineLog.i("warp: let the borrowed server go")
+    }
+
+    /**
+     * Store the account and dial it: the WARP tunnel and the servers found
+     * for it, in the order the settings ask for. `asked` is the connect being
+     * replaced, restored if this fails.
+     */
+    private suspend fun dialAccount(asked: ConnectTarget, made: WarpAccount) {
+        val account = made.account ?: return
+        // Whatever is running now has to go first: the core takes one config,
+        // and a start on top of a live tunnel fails and leaves a TUN
+        // descriptor waiting that nothing will adopt. The kill switch goes up
+        // first, so nothing slips out while the tunnel is down. As in
+        // [releaseBorrowed], `NonCancellable` wraps the lock so a cancel
+        // arriving here cannot skip the teardown.
+        if (running) {
+            withContext(NonCancellable) {
+                mutex.withLock {
+                    holdBlocker()
+                    monitorJob?.cancel()
+                    teardown()
+                }
+            }
+        }
+        val imported = withContext(Dispatchers.IO) { import(account) }
+        if (imported.added + imported.duplicates == 0) {
+            warpFail(made, imported.error ?: "the account could not be saved")
+            fallbackConnect(asked)
+            return
+        }
+        val key = withContext(Dispatchers.IO) { serverKeyOf(account) }
+        if (key == null) {
+            warpFail(made, "the account was saved but could not be read back")
+            fallbackConnect(asked)
+            return
+        }
+        // The account is a server now, so the connect goes to it and nowhere
+        // else: the ladder would move off it and lose the second hop.
+        target = ConnectTarget.Specific(key)
+        mutex.withLock { runConnection() }
+        if (!running) {
+            fallbackConnect(asked)
+            return
+        }
+        warp.value = WarpState(WarpPhase.Done, made.steps, made.fingerprint, made.exits, made.route)
+    }
+
+    /** Say what went wrong, keeping the steps that led there. */
+    private fun warpFail(made: WarpAccount, reason: String) {
+        EngineLog.w("warp: $reason")
+        warp.value = WarpState(WarpPhase.Failed, made.steps, error = reason)
+    }
+
+    /**
+     * The connect that was asked for still happens when the setup could not
+     * make an account: the setup is an addition to connecting, never a
+     * replacement for it. The target is restored either way, because the setup
+     * may have pointed it at the account on the way.
+     */
+    private suspend fun fallbackConnect(asked: ConnectTarget) {
+        target = asked
+        if (running) return
+        EngineLog.i("warp: connecting as usual instead")
+        mutex.withLock { runConnection() }
+    }
+
+    /**
+     * Run the native registration job and wait for its one final answer.
+     *
+     * The request goes straight out when [quick], with the short deadline the
+     * core uses for that, and only the answer matters. Otherwise it goes
+     * through the tunnel in hand: the service is filtered by name, so a
+     * running proxy is the one path there that always works.
+     *
+     * The wait is bounded: the job's events only end the flow when a final
+     * answer arrives, and a job that never starts sends none. Without a
+     * deadline that would hang the setup, and a borrowed tunnel with it.
+     */
+    private suspend fun registerAccount(quick: Boolean = false): WarpAccount = withContext(Dispatchers.IO) {
+        val request = if (quick) JSONObject().put("quick", true) else
+            JSONObject().put("direct", false).put("proxy", "127.0.0.1:${settings.httpPort}")
+        // The servers it looks for depend on the order: reachable through
+        // Cloudflare for Reverse, reachable from here for Hybrid, and for
+        // Auto the first of those two ways that finds any.
+        request.put("order", settings.warpOrder.wire)
+        // Long enough for a registration and a search through the feeds, short
+        // enough that a stuck job cannot hold a connect open for ever.
+        request.put("budget_ms", WARP_BOOT_BUDGET_MS)
+        var steps = emptyList<String>()
+        var account: String? = null
+        var fingerprint = ""
+        var exits = 0
+        var route = ""
+        var error: String? = null
+        var unreachable = false
+        var finished = false
+        val answers = async {
+            nativeJob { ZrayNative.warpRegister(request.toString(), it) }.collect { e ->
+                when (e.optString("t")) {
+                    "step" -> {
+                        EngineLog.i("warp: ${e.optString("line")}")
+                        steps = (steps + e.optString("line")).takeLast(WARP_STEPS_KEPT)
+                        warp.value = WarpState(WarpPhase.Working, steps)
+                    }
+                    "done" -> {
+                        finished = true
+                        if (e.optBoolean("ok")) {
+                            account = e.optString("link")
+                            fingerprint = e.optString("fingerprint")
+                            exits = e.optInt("exits")
+                            route = e.optString("route")
+                        } else {
+                            error = e.optString("error").ifBlank { "the WARP service did not answer" }
+                            // Only "nothing answered at all" is worth borrowing a
+                            // server for.
+                            unreachable = e.optBoolean("unreachable")
+                        }
+                    }
+                }
+            }
+        }
+        // Nothing to answer a job that started is a failure, but not an
+        // *unreachable* one: borrowing a server for it would change nothing.
+        val answered = withTimeoutOrNull(WARP_BOOT_WAIT_MS) { answers.await() }
+        if (answered == null) {
+            answers.cancel()
+            return@withContext WarpAccount(null, steps, "the WARP service did not answer", false)
+        }
+        if (!finished) error = "cancelled"
+        WarpAccount(account, steps, error, unreachable, fingerprint, exits, route)
+    }
+
+    /** The store's key for a share link, which is what a specific connect names. */
+    private fun serverKeyOf(link: String): String? {
+        val items = JSONObject(ZrayNative.parseLinks(link)).optJSONArray("items") ?: return null
+        if (items.length() == 0) return null
+        return items.getJSONObject(0).optString("key").ifBlank { null }
+    }
+
+    /** What one registration attempt ended with. */
+    private class WarpAccount(
+        val account: String?,
+        val steps: List<String>,
+        val error: String?,
+        val unreachable: Boolean,
+        val fingerprint: String = "",
+        val exits: Int = 0,
+        val route: String = "",
+    )
 
     // -------------------------------------------------------------- self-test
 

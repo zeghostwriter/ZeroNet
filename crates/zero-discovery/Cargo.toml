@@ -10,6 +10,7 @@ zero-core = { workspace = true }
 zero-config = { workspace = true }
 zero-net = { workspace = true }
 zero-runtime = { workspace = true }
+zero-dns = { workspace = true }
 zero-transport = { workspace = true }
 # Only the scan engine: the terminal front end (and its ratatui/crossterm/clap
 # graph) stays out of the mobile build.

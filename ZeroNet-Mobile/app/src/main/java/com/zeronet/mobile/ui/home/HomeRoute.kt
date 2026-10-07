@@ -101,7 +101,6 @@ fun HomeRoute() {
             if (failed?.reason == FailReason.ServerUnavailable) controller.selectTarget(ConnectTarget.Fastest) else controller.connect()
         },
         onPickServer = { picker = true },
-        onProfile = { p -> controller.update { it.copy(profile = p) } },
     )
 
     ServerPickerSheet(

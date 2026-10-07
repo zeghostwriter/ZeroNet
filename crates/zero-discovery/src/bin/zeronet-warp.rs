@@ -6,7 +6,7 @@
 //!                       [--proxy 127.0.0.1:10809]
 //!                       [--relay https://worker/path/warp --auth CREDENTIAL]
 //! zeronet-warp scan <warp:// link | ->
-//! zeronet-warp gather <warp:// link | -> [--want 5] [--sample 150] [--reverse]
+//! zeronet-warp gather <warp:// link | -> [--want 5] [--sample 150] [--warp-first] [--exit-first]
 //! ```
 //!
 //! `register` makes the keys on this machine, sends only their public halves
@@ -21,12 +21,17 @@
 //! `scan` tries edge addresses next to the ones in the link over HTTP/2 and
 //! prints the ones that accept the account, fastest first.
 //!
-//! `gather` reads the public feeds and tries their servers *through* the
-//! account's tunnel, keeping the ones that carry a request, and prints a new
-//! `warp://` link with them as its `exits`. A server that Iran blocks outright
-//! can still be reached from Cloudflare's network, so this finds working
-//! servers where a direct test finds none. With `--reverse` the link sends
-//! traffic through an exit first and uses the tunnel alone as the failsafe.
+//! `gather` reads the public feeds and finds servers worth keeping, then
+//! prints a new `warp://` link listing them.
+//!
+//! The link it writes names the order `hybrid` means by default: a listed
+//! server is dialled first and Cloudflare's tunnel is brought up *through* it,
+//! so the local network sees an ordinary server and never sees Cloudflare.
+//! `--warp-first` asks for the other order — the tunnel is dialled directly and
+//! a listed server is reached from inside it — which is the one that reaches
+//! servers Iran blocks outright, since those can still be reached from
+//! Cloudflare's network. `--exit-first` then picks which of the two carries
+//! traffic once the tunnel is up.
 
 use std::time::Duration;
 
@@ -41,7 +46,7 @@ fn value<'a>(args: &'a [String], flag: &str) -> Option<&'a str> {
 
 fn usage() -> ! {
     eprintln!(
-        "usage:\n  zeronet-warp register --accept-tos [--route auto] [--proxy ADDR] [--relay URL --auth CREDENTIAL]\n  zeronet-warp scan <warp:// link | ->\n  zeronet-warp gather <warp:// link | -> [--want N] [--sample N] [--reverse]"
+        "usage:\n  zeronet-warp register --accept-tos [--route auto] [--proxy ADDR] [--relay URL --auth CREDENTIAL]\n  zeronet-warp scan <warp:// link | ->\n  zeronet-warp gather <warp:// link | -> [--want N] [--sample N] [--warp-first] [--exit-first]"
     );
     std::process::exit(2);
 }
@@ -151,18 +156,31 @@ async fn run_gather(args: &[String]) -> Result<(), String> {
     let sample: usize = value(args, "--sample")
         .and_then(|v| v.parse().ok())
         .unwrap_or(150);
-    let reverse = args.iter().any(|argument| argument == "--reverse");
-    let exits =
-        zero_discovery::warp::gather_exits(&link, want, sample, Duration::from_secs(120), |line| {
-            eprintln!("{line}")
-        })
-        .await?;
+    // `--server-first` is the default order; `--warp-first` keeps the tunnel as
+    // the outer connection, and `--exit-first` picks which of the two carries
+    // traffic once the tunnel is up.
+    let warp_first = args.iter().any(|argument| argument == "--warp-first");
+    let exit_first = args.iter().any(|argument| argument == "--exit-first");
+    let hybrid = if warp_first {
+        zero_config::HybridMode::WarpFirst
+    } else {
+        zero_config::HybridMode::ServerFirst
+    };
+    let exits = zero_discovery::warp::gather_exits(
+        &link,
+        hybrid,
+        want,
+        sample,
+        Duration::from_secs(120),
+        |line| eprintln!("{line}"),
+    )
+    .await?;
     if exits.is_empty() {
-        return Err("No server carried a request through the tunnel.".into());
+        return Err("No server carried a request.".into());
     }
     println!(
         "{}",
-        zero_discovery::warp::link_with_exits(&link, &exits, reverse)?
+        zero_discovery::warp::link_with_exits(&link, &exits, hybrid, exit_first)?
     );
     Ok(())
 }

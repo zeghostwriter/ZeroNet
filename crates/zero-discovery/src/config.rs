@@ -99,6 +99,10 @@ struct BuildRequest {
     /// Where `geosite.dat`/`geoip.dat` live. Normally supplied by the host
     /// (`dataDir/assets`), not by the request.
     assets_dir: Option<PathBuf>,
+    /// The order every WARP account in `links` runs in, overriding what its
+    /// link says: `server-first` (hybrid) or `warp-first` (reverse hybrid).
+    /// Unset, or `auto`, keeps each link's own order.
+    warp_order: Option<String>,
 }
 
 impl Default for BuildRequest {
@@ -121,6 +125,7 @@ impl Default for BuildRequest {
             log_level: "warning".into(),
             clean_ips: Vec::new(),
             assets_dir: None,
+            warp_order: None,
         }
     }
 }
@@ -295,10 +300,23 @@ pub fn build_config_with_assets(
     // Links: validated one by one so the error names the culprit, then passed
     // in link form so the preset's parser is the only mapping from link to
     // outbound.
+    // `auto` leaves an account in the order it was written with, which is the
+    // order its servers were found and tested in.
+    let warp_order = match request.warp_order.as_deref() {
+        None | Some("") | Some("auto") => None,
+        Some("server-first") => Some(zero_config::HybridMode::ServerFirst),
+        Some("warp-first") => Some(zero_config::HybridMode::WarpFirst),
+        Some(other) => {
+            return Err(format!(
+                "warp_order must be auto, server-first or warp-first, not {other:?}"
+            ))
+        }
+    };
     let mut outbounds = Vec::with_capacity(request.links.len());
     for (index, link) in request.links.iter().enumerate() {
-        let parsed = zero_config::parse_link(link.trim())
-            .map_err(|error| format!("links[{index}]: {error}"))?;
+        let link = with_warp_order(link.trim(), warp_order);
+        let parsed =
+            zero_config::parse_link(&link).map_err(|error| format!("links[{index}]: {error}"))?;
         parsed
             .outbound
             .validate()
@@ -546,6 +564,25 @@ pub fn build_config_with_assets(
     zero_config::compile_config(&config, zero_core::GenerationId(1))
         .map_err(|error| error.to_string())?;
     Ok(config)
+}
+
+/// `link` with its WARP order replaced by `order`, when it is a WARP account
+/// and an order is given; otherwise `link` as it is. Whether an exit carries
+/// traffic first is kept, since only the order is being chosen here.
+fn with_warp_order(
+    link: &str,
+    order: Option<zero_config::HybridMode>,
+) -> std::borrow::Cow<'_, str> {
+    let Some(order) = order else {
+        return link.into();
+    };
+    let Some(summary) = crate::warp::summarize(link) else {
+        return link.into();
+    };
+    if summary.hybrid == order {
+        return link.into();
+    }
+    crate::warp::link_with_order(link, order, summary.prefer_exit).map_or(link.into(), Into::into)
 }
 
 /// Whether ClientHello fragmentation applies to this outbound.
@@ -1108,6 +1145,40 @@ mod tests {
             .as_ref()
             .unwrap();
         assert_eq!(clean.candidates.len(), 2);
+    }
+
+    #[test]
+    fn the_warp_order_setting_overrides_what_a_warp_link_says() {
+        let account = crate::warp::link_with_exits(
+            &zero_config::share_link::warp_link(
+                &json!({"route": "masque-h2", "masque": {
+                    "privateKey": "AAAA", "serverPublicKey": "AAAA", "address": "172.16.0.2"
+                }}),
+                "WARP",
+            ),
+            &["trojan://secret@203.0.113.9:8443?security=tls&sni=t.example.com#x".to_string()],
+            zero_config::HybridMode::WarpFirst,
+            false,
+        )
+        .unwrap();
+        let mode = |order: Option<&str>| {
+            let mut request = json!({"links": [account], "mode": "proxy"});
+            if let Some(order) = order {
+                request["warp_order"] = order.into();
+            }
+            let config = build_config(&request).unwrap();
+            let link = config["outbounds"][0]["link"].as_str().unwrap().to_string();
+            crate::warp::summarize(&link).unwrap().hybrid
+        };
+        assert_eq!(mode(None), zero_config::HybridMode::WarpFirst);
+        // Auto keeps the order the account was written with.
+        assert_eq!(mode(Some("auto")), zero_config::HybridMode::WarpFirst);
+        assert_eq!(
+            mode(Some("server-first")),
+            zero_config::HybridMode::ServerFirst
+        );
+        assert_eq!(mode(Some("warp-first")), zero_config::HybridMode::WarpFirst);
+        assert!(build_config(&json!({"links": [account], "warp_order": "sideways"})).is_err());
     }
 
     #[test]

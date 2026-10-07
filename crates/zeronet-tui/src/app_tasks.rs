@@ -130,6 +130,9 @@ pub(crate) enum BgEvent {
     WarpProgress(String),
     /// The WARP job finished: what it made, or why it could not.
     WarpFinished(Result<crate::app_warp::WarpDone, String>),
+    /// A step of the automatic WARP setup finished: the account it made
+    /// (directly or through a borrowed server), or why it could not.
+    WarpBoot(Result<crate::app_warp::WarpDone, String>),
     /// A check of the connection test started or finished.
     TestProgress(zero_discovery::selftest::Check),
 }
@@ -164,6 +167,23 @@ pub(crate) struct Background {
     pub(crate) warp_target: Option<i64>,
     /// What the running WARP job has done so far, for the dialog.
     pub(crate) warp_steps: Vec<String>,
+    /// The automatic WARP setup, while it is running (see
+    /// `zeronet_tui::warp_bootstrap`). `None` when nothing is being set up.
+    pub(crate) warp_boot: Option<zeronet_tui::warp_bootstrap::Bootstrap>,
+    /// A step of the setup is in flight — a job, or a search for a server to
+    /// borrow — so the per-frame driver must not start it a second time.
+    pub(crate) warp_boot_busy: bool,
+    /// The account the setup made, held between the step that made it and the
+    /// step that stores and dials it.
+    pub(crate) warp_boot_done: Option<crate::app_warp::WarpDone>,
+    /// A connect is waiting behind the setup: it runs if the setup ends
+    /// without dialling, so pressing connect always connects to something.
+    pub(crate) warp_boot_defer_connect: bool,
+    /// The setup was tried this session and did not make an account. It is
+    /// not offered again on its own: a connect must not spend every attempt
+    /// on a Cloudflare service that is not answering. The WARP dialog is
+    /// still there for trying by hand.
+    pub(crate) warp_boot_spent: bool,
     /// The connection test is running; asking for another shows this one.
     pub(crate) test_in_flight: bool,
     feed_attempts: HashMap<i64, Instant>,
@@ -202,6 +222,11 @@ impl Background {
             warp_in_flight: false,
             warp_target: None,
             warp_steps: Vec::new(),
+            warp_boot: None,
+            warp_boot_busy: false,
+            warp_boot_done: None,
+            warp_boot_defer_connect: false,
+            warp_boot_spent: false,
             test_in_flight: false,
             feed_attempts: HashMap::new(),
             health: TunnelWatch::new(),
@@ -485,6 +510,10 @@ impl App<'_> {
             }
             BgEvent::WarpFinished(result) => {
                 self.on_warp_finished(result);
+                true
+            }
+            BgEvent::WarpBoot(result) => {
+                self.on_warp_boot(result);
                 true
             }
             BgEvent::TestProgress(check) => {

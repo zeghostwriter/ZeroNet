@@ -428,20 +428,47 @@ pub struct Link {
 /// among edge addresses, not for carrying traffic.
 pub async fn try_endpoint(spec: &Spec, endpoint: &Endpoint) -> Result<Duration, String> {
     let started = tokio::time::Instant::now();
-    match timeout(CONNECT_TIMEOUT, connect(spec, endpoint)).await {
+    match timeout(CONNECT_TIMEOUT, connect(spec, endpoint, None)).await {
         Ok(Ok(_session)) => Ok(started.elapsed()),
         Ok(Err(error)) => Err(error),
         Err(_) => Err("timed out".into()),
     }
 }
 
+/// Opens a byte stream to a Cloudflare edge address through another
+/// connection (a server the account lists), for the `hybrid` order.
+///
+/// It is a function rather than one stream because the session is rebuilt on
+/// every drop and every network change, and each rebuild needs a fresh
+/// connection through the carrier, to whichever edge address is tried next.
+pub type Opener = Arc<
+    dyn Fn(SocketAddr) -> futures::future::BoxFuture<'static, Result<zero_core::BoxStream, String>>
+        + Send
+        + Sync,
+>;
+
 /// Connect to the first endpoint of `spec` that authenticates, and keep the
 /// tunnel up from then on. Fails when none does.
 pub async fn start(spec: Spec) -> Result<Link, String> {
+    start_with(spec, None).await
+}
+
+/// [`start`], with every connection to the edge opened through `opener`.
+///
+/// Only HTTP/2 can be carried: HTTP/3 rides QUIC, which needs a UDP socket of
+/// its own, so a spec with any HTTP/3 endpoint is refused up front.
+pub async fn start_over(spec: Spec, opener: Opener) -> Result<Link, String> {
+    if !spec.endpoints.iter().all(|endpoint| endpoint.http2) {
+        return Err("only the HTTP/2 tunnel can be carried by another connection".into());
+    }
+    start_with(spec, Some(opener)).await
+}
+
+async fn start_with(spec: Spec, opener: Option<Opener>) -> Result<Link, String> {
     if spec.endpoints.is_empty() {
         return Err("MASQUE has no endpoint".into());
     }
-    let (session, index) = connect_any(&spec, 0).await?;
+    let (session, index) = connect_any(&spec, 0, opener.as_ref()).await?;
     let (up_tx, up_rx) = mpsc::channel(QUEUE);
     let (down_tx, down_rx) = mpsc::channel(QUEUE);
     let rebind = Arc::new(Notify::new());
@@ -452,6 +479,7 @@ pub async fn start(spec: Spec) -> Result<Link, String> {
         up_rx,
         down_tx,
         Arc::clone(&rebind),
+        opener,
     ));
     Ok(Link {
         up: up_tx,
@@ -464,19 +492,25 @@ pub async fn start(spec: Spec) -> Result<Link, String> {
 /// and take the first that authenticates. Waiting for one to time out before
 /// trying the next would cost a blocked first address its whole timeout on
 /// every connect; staggering keeps the order of preference without that.
-async fn connect_any(spec: &Spec, first: usize) -> Result<(Session, usize), String> {
+async fn connect_any(
+    spec: &Spec,
+    first: usize,
+    opener: Option<&Opener>,
+) -> Result<(Session, usize), String> {
     use futures::stream::{FuturesUnordered, StreamExt};
     let count = spec.endpoints.len();
     let mut attempts = FuturesUnordered::new();
     for offset in 0..count {
         let index = (first + offset) % count;
         let endpoint = &spec.endpoints[index];
+        let opener = opener.cloned();
         attempts.push(async move {
             tokio::time::sleep(ATTEMPT_STAGGER * offset as u32).await;
-            let result = match timeout(CONNECT_TIMEOUT, connect(spec, endpoint)).await {
-                Ok(result) => result.map_err(|error| format!("{}: {error}", endpoint.address)),
-                Err(_) => Err(format!("{}: timed out", endpoint.address)),
-            };
+            let result =
+                match timeout(CONNECT_TIMEOUT, connect(spec, endpoint, opener.as_ref())).await {
+                    Ok(result) => result.map_err(|error| format!("{}: {error}", endpoint.address)),
+                    Err(_) => Err(format!("{}: timed out", endpoint.address)),
+                };
             (index, result)
         });
     }
@@ -501,6 +535,7 @@ async fn supervise(
     mut up: mpsc::Receiver<Vec<u8>>,
     down: mpsc::Sender<Vec<u8>>,
     rebind: Arc<Notify>,
+    opener: Option<Opener>,
 ) {
     let mut failures = 0u32;
     loop {
@@ -528,7 +563,7 @@ async fn supervise(
             } else {
                 current + 1
             };
-            match connect_any(&spec, start_at % spec.endpoints.len()).await {
+            match connect_any(&spec, start_at % spec.endpoints.len(), opener.as_ref()).await {
                 Ok((next, index)) => {
                     session = next;
                     current = index;
@@ -563,10 +598,18 @@ enum Session {
     Http3(Box<H3Session>),
 }
 
-async fn connect(spec: &Spec, endpoint: &Endpoint) -> Result<Session, String> {
+async fn connect(
+    spec: &Spec,
+    endpoint: &Endpoint,
+    opener: Option<&Opener>,
+) -> Result<Session, String> {
     if endpoint.http2 {
+        let carried = match opener {
+            Some(open) => Some(open(endpoint.address).await?),
+            None => None,
+        };
         Ok(Session::Http2(Box::new(
-            H2Session::connect(spec, endpoint).await?,
+            H2Session::connect(spec, endpoint, carried).await?,
         )))
     } else {
         Ok(Session::Http3(Box::new(
@@ -626,7 +669,7 @@ fn get_varint(input: &[u8]) -> Option<(u64, usize)> {
 // ------------------------------------------------------------------ HTTP/2
 
 struct H2Session {
-    connection: h2::client::Connection<tokio_rustls::client::TlsStream<tokio::net::TcpStream>>,
+    connection: h2::client::Connection<tokio_rustls::client::TlsStream<zero_core::BoxStream>>,
     _client: h2::client::SendRequest<Bytes>,
     send: h2::SendStream<Bytes>,
     recv: h2::RecvStream,
@@ -635,15 +678,29 @@ struct H2Session {
 }
 
 impl H2Session {
-    async fn connect(spec: &Spec, endpoint: &Endpoint) -> Result<Self, String> {
-        let tcp = zero_core::platform::connect_protected(endpoint.address)
-            .await
-            .map_err(|error| format!("connect: {error}"))?;
-        let _ = tcp.set_nodelay(true);
+    /// Bring a session up, over `carried` when the caller opened the
+    /// connection itself (the `hybrid` order), otherwise over a socket dialled
+    /// here. Only the direct socket gets `TCP_NODELAY`: a carried stream is
+    /// set up by whoever opened it.
+    async fn connect(
+        spec: &Spec,
+        endpoint: &Endpoint,
+        carried: Option<zero_core::BoxStream>,
+    ) -> Result<Self, String> {
+        let io: zero_core::BoxStream = match carried {
+            Some(stream) => stream,
+            None => {
+                let tcp = zero_core::platform::connect_protected(endpoint.address)
+                    .await
+                    .map_err(|error| format!("connect: {error}"))?;
+                let _ = tcp.set_nodelay(true);
+                Box::pin(tcp)
+            }
+        };
         let server_name = ServerName::try_from(endpoint.sni.to_string())
             .map_err(|error| format!("SNI {}: {error}", endpoint.sni))?;
         let tls = tokio_rustls::TlsConnector::from(Arc::new(tls_config(spec, b"h2")?))
-            .connect(server_name, tcp)
+            .connect(server_name, io)
             .await
             .map_err(|error| format!("TLS: {error}"))?;
         let (mut client, connection) = h2::client::Builder::new()

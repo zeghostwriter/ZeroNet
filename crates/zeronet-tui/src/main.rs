@@ -847,6 +847,22 @@ impl<'a> App<'a> {
         }
     }
 
+    /// Cycle the Cloudflare answer: ask once, always use it, never use it.
+    ///
+    /// The middle state is what the connect flow reads: "ask" shows the
+    /// question on the next connect, and answering it moves the setting to
+    /// one of the other two, so the question is asked once.
+    fn cycle_warp_consent(&mut self) {
+        use zeronet_tui::warp_bootstrap::Consent;
+        self.settings.warp_consent = match Consent::parse(&self.settings.warp_consent) {
+            Consent::Unasked => "on",
+            Consent::Yes => "off",
+            Consent::No => "",
+        }
+        .to_string();
+        self.persist_settings();
+    }
+
     /// Switch palettes: the chrome, the effects and the saved choice.
     fn apply_theme(&mut self, id: zeronet_tui::theme::ThemeId) {
         self.theme = Theme::new(id, self.caps.depth);
@@ -1144,6 +1160,9 @@ impl<'a> App<'a> {
                     self.spawn_node_pings(ping_tx.clone());
                 }
             }
+
+            // The automatic WARP setup, one step per frame while it runs.
+            self.warp_boot_step().await?;
 
             if self.should_quit {
                 // The cleanup — system proxy, engine, TUN — is `shutdown`,
@@ -1481,6 +1500,12 @@ impl<'a> App<'a> {
         }
         self.stats = next;
 
+        // The automatic WARP setup may be waiting on a server it borrowed for
+        // the trip; a live tunnel is what it was waiting for.
+        if self.stats.status == ConnectionStatus::Connected {
+            self.warp_boot_borrow_up();
+        }
+
         // The session clock runs through a reconnect, like any VPN client's:
         // it measures the session, not the current socket.
         match self.stats.status {
@@ -1534,6 +1559,7 @@ impl<'a> App<'a> {
                     .map(zeronet_tui::daemon::describe_config_error)
                     .unwrap_or_else(|| "unknown error".into());
                 self.toasts.error(format!("Connection failed: {reason}"));
+                self.warp_boot_borrow_failed(&format!("Connecting failed: {reason}"));
                 // Nothing is listening any more. Unless a newer connect is
                 // already on its way, stop claiming a connection: clear the
                 // intent (so the connect control means "connect" again),
@@ -2468,6 +2494,16 @@ impl<'a> App<'a> {
                 }
             }
         }
+        // Disconnecting is never gated on the Cloudflare question; only a
+        // connect is.
+        if !self.connection.wants_connection() && self.offer_warp_bootstrap() {
+            return Ok(());
+        }
+        // The same control, so the same rule: a toggle that disconnects ends
+        // the setup with it rather than letting it go on to connect.
+        if self.connection.wants_connection() {
+            self.warp_boot_stop();
+        }
         let action = self.connection.toggle();
         self.apply_engine_action(action).await
     }
@@ -2491,11 +2527,15 @@ impl<'a> App<'a> {
             }
             Command::ToggleConnection => self.toggle_connection().await?,
             Command::Connect => {
-                let action = self.connection.connect();
-                self.apply_engine_action(action).await?;
+                if !self.offer_warp_bootstrap() {
+                    let action = self.connection.connect();
+                    self.apply_engine_action(action).await?;
+                }
             }
             Command::Disconnect => {
-                self.cancel_finder();
+                // A disconnect ends the automatic setup too, connect intent
+                // and all: the setup would otherwise carry on and connect.
+                self.warp_boot_stop();
                 let action = self.connection.disconnect();
                 self.apply_engine_action(action).await?;
             }
@@ -2503,7 +2543,9 @@ impl<'a> App<'a> {
 
             // ---- cancel / quit
             Command::Cancel => {
-                if self.modal_state.is_active() {
+                if matches!(self.modal_state, ModalState::Warp { .. }) {
+                    self.dismiss_warp_dialog();
+                } else if self.modal_state.is_active() {
                     self.close_modal();
                 } else if self.filter_focused || !self.filter.is_empty() {
                     self.filter.clear();
@@ -3685,7 +3727,9 @@ impl App<'_> {
 
     /// Handle a click on the dimmed area outside the dialog.
     fn on_backdrop_click(&mut self) {
-        if self.modal_state.dismiss_on_backdrop() {
+        if matches!(self.modal_state, ModalState::Warp { .. }) {
+            self.dismiss_warp_dialog();
+        } else if self.modal_state.dismiss_on_backdrop() {
             self.close_modal();
         } else {
             // The manual form holds typed input; flash rather than discard.
@@ -3702,6 +3746,9 @@ impl App<'_> {
         if self.modal_state.is_active() && !self.modal_anim.is_visible(tick) {
             self.modal_state = ModalState::None;
             self.image_view = None;
+            // Whatever was on screen has gone; if the automatic setup is still
+            // working it gets its dialog back.
+            self.restore_warp_boot_dialog();
         }
     }
 
@@ -4460,9 +4507,15 @@ impl App<'_> {
             | ComponentId::AshesWarningDismiss
             | ComponentId::ManualFormCancel
             | ComponentId::UpdateSecondary
-            | ComponentId::WarpSecondary
             | ComponentId::TestSecondary
-            | ComponentId::ModalClose => self.close_modal(),
+            | ComponentId::ModalClose => {
+                if matches!(self.modal_state, ModalState::Warp { .. }) {
+                    self.dismiss_warp_dialog();
+                } else {
+                    self.close_modal();
+                }
+            }
+            ComponentId::WarpSecondary => self.dismiss_warp_dialog(),
 
             ComponentId::ModalBackdrop => self.on_backdrop_click(),
 
@@ -4521,6 +4574,7 @@ impl App<'_> {
                 self.settings.finder_max_tier = (self.settings.finder_max_tier + 1) % 4;
                 self.persist_settings();
             }
+            ComponentId::SettingWarpConsentCycle => self.cycle_warp_consent(),
             ComponentId::SettingAutoUpdateToggle => {
                 self.settings.auto_update_check = !self.settings.auto_update_check;
                 self.persist_settings();

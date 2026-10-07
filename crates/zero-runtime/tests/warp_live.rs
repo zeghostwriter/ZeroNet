@@ -417,3 +417,80 @@ async fn which_edge_addresses_take_a_masque_tunnel() {
     eprintln!("{} addresses answered", found.len());
     assert!(!found.is_empty(), "no address answered");
 }
+
+// ------------------------------------------------------------- hybrid order
+//
+// The `hybrid` order against the real service: Cloudflare's tunnel brought up
+// through a server, then a request through the tunnel.
+//
+// ```text
+// ZRAY_WARP_TEST_ACCOUNT=/path/to/account.json \
+// ZRAY_WARP_TEST_CARRIER='vless://…@host:443?security=tls&sni=…#carrier' \
+//   cargo test -p zero-runtime --test warp_live -- --ignored --nocapture carried
+// ```
+
+#[tokio::test]
+#[ignore = "needs a MASQUE-enrolled WARP account and a server that reaches Cloudflare"]
+async fn a_carried_tunnel_reaches_warp_through_a_server() {
+    let (Some((file, _)), Ok(carrier)) = (account(), std::env::var("ZRAY_WARP_TEST_CARRIER"))
+    else {
+        eprintln!("ZRAY_WARP_TEST_ACCOUNT or ZRAY_WARP_TEST_CARRIER is not set; nothing to check");
+        return;
+    };
+    let masque = &file["masque"]["config"];
+    let addresses: Vec<&str> = ["v4", "v6"]
+        .iter()
+        .filter_map(|family| masque["interface"]["addresses"][family].as_str())
+        .collect();
+    let settings = serde_json::json!({
+        "route": "masque-h2",
+        "mode": "hybrid",
+        "exits": [carrier],
+        "masque": {
+            "privateKey": file["ec_private"],
+            "serverPublicKey": masque["peers"][0]["public_key"],
+            "address": addresses,
+        }
+    });
+    let outbound = zero_config::xray_json::parse_config(&serde_json::json!({
+        "outbounds": [{"protocol": "warp", "tag": "warp", "settings": settings}]
+    }))
+    .expect("the account parses")
+    .0
+    .outbounds[0]
+        .clone();
+    let OutboundProtocol::AmneziaWireguard(config) = outbound.protocol else {
+        panic!("expected a WARP outbound");
+    };
+    let resolver = zero_dns::Resolver::new(zero_config::dns::DnsSettings::default());
+    let started = std::time::Instant::now();
+    let tunnel = zero_runtime::warp::tunnel_for(&config, None, Some(&resolver))
+        .await
+        .expect("the tunnel comes up");
+    assert!(
+        tunnel.carried(),
+        "the tunnel was dialled directly, not through the server"
+    );
+    eprintln!("carried tunnel up in {} ms", started.elapsed().as_millis());
+    let mut stream = tokio::time::timeout(
+        Duration::from_secs(15),
+        tunnel.connect_host(&Address::parse_host("www.cloudflare.com"), 80),
+    )
+    .await
+    .expect("connect in time")
+    .expect("TCP through the tunnel");
+    stream
+        .write_all(
+            b"GET /cdn-cgi/trace HTTP/1.1\r\nHost: www.cloudflare.com\r\nConnection: close\r\n\r\n",
+        )
+        .await
+        .unwrap();
+    let mut reply = Vec::new();
+    let _ = tokio::time::timeout(Duration::from_secs(15), stream.read_to_end(&mut reply)).await;
+    let reply = String::from_utf8_lossy(&reply);
+    eprintln!("{reply}");
+    assert!(
+        reply.contains("warp=on"),
+        "the request did not arrive through WARP"
+    );
+}
