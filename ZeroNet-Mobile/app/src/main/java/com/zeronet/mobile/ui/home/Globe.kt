@@ -25,6 +25,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -208,7 +209,9 @@ fun ConnectGlobe(
     // Gaming: activation burst, title slam, HUD brackets.
     val boost = remember { Animatable(1f) }
     val hud = remember { Animatable(if (gaming) 1f else 0f) }
-    var gamingSeen by remember { mutableStateOf(gaming) }
+    // Saved, so it outlives a visit to another tab: gaming mode is switched on
+    // in Settings, and the burst then plays when the person comes back here.
+    var gamingSeen by rememberSaveable { mutableStateOf(gaming) }
     LaunchedEffect(gaming, reduced) {
         if (gaming == gamingSeen) {
             hud.snapTo(if (gaming) 1f else 0f)

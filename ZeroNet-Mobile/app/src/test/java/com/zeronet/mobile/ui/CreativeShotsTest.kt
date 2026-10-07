@@ -25,7 +25,10 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.test.performClick
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import com.github.takahirom.roborazzi.captureRoboImage
 import org.junit.Rule
@@ -182,14 +185,102 @@ class CreativeShotsTest {
 
     // ------------------------------------------------------ the controller
 
-    private fun pad(name: String, ms: Long) = compose.shot(name, advanceMs = ms) {
+    private fun pad(name: String, ms: Long, dark: Boolean = true) = compose.shot(name, dark = dark, tab = Tab.Settings, advanceMs = ms) {
         com.zeronet.mobile.ui.effects.GamepadBurst(1)
     }
 
     @Test fun gamepad_in() = pad("pad_0_in", 300)
-    @Test fun gamepad_buttons() = pad("pad_1_pressing", 1_300)
-    @Test fun gamepad_bumpers() = pad("pad_2_bumpers", 1_680)
-    @Test fun gamepad_words() = pad("pad_3_end", 2_500)
+    @Test fun gamepad_buttons() = pad("pad_1_pressing", 1_230)
+    @Test fun gamepad_triggers() = pad("pad_2_triggers", 2_020)
+    @Test fun gamepad_ignite() = pad("pad_3_ignite", 2_260)
+    @Test fun gamepad_words() = pad("pad_4_words", 3_100)
+    @Test fun gamepad_words_light() = pad("pad_4_words_light", 3_100, dark = false)
+
+    @Config(qualifiers = "fa-$PHONE")
+    @Test fun gamepad_words_fa() = pad("pad_4_words_fa", 3_100)
+
+    @Config(qualifiers = "w360dp-h640dp-xhdpi")
+    @Test fun gamepad_words_small() = pad("pad_4_words_small", 3_100)
+
+    /**
+     * The scene is started by the profile changing, from wherever the app
+     * shell is: here Settings is on screen, as it is for a real person.
+     */
+    @Test fun gaming_intro_plays_over_settings_when_the_profile_becomes_gaming() {
+        var profile by androidx.compose.runtime.mutableStateOf(com.zeronet.mobile.model.ConnectionProfile.Normal)
+        val title = androidx.test.core.app.ApplicationProvider.getApplicationContext<android.content.Context>()
+            .getString(com.zeronet.mobile.R.string.gaming_on_title)
+        compose.mainClock.autoAdvance = false
+        compose.setContent {
+            com.zeronet.mobile.ui.theme.ZeroTheme(themeMode = com.zeronet.mobile.model.ThemeMode.Dark, gaming = profile == com.zeronet.mobile.model.ConnectionProfile.Gaming) {
+                androidx.compose.foundation.layout.Box {
+                    com.zeronet.mobile.ui.shell.ZeroRoot(showBottomBar = true, tab = Tab.Settings, onTab = {}) {
+                        com.zeronet.mobile.ui.settings.SettingsScreen(
+                            com.zeronet.mobile.ui.settings.SettingsUiState(settings = com.zeronet.mobile.model.Settings(profile = profile)),
+                            com.zeronet.mobile.ui.settings.SettingsActions(onChange = { change -> profile = change(com.zeronet.mobile.model.Settings(profile = profile)).profile }),
+                        )
+                    }
+                    com.zeronet.mobile.ui.effects.GamingIntro(profile)
+                }
+            }
+        }
+        compose.mainClock.advanceTimeBy(1_000)
+        // Nothing plays for the profile the app opened with.
+        compose.onAllNodes(androidx.compose.ui.test.hasText(title)).assertCountEquals(0)
+
+        // The real thing: the person taps Gaming in the Settings list.
+        val gaming = androidx.test.core.app.ApplicationProvider.getApplicationContext<android.content.Context>()
+            .getString(com.zeronet.mobile.R.string.profile_gaming)
+        compose.onNode(androidx.compose.ui.test.hasText(gaming)).performClick()
+        compose.waitForIdle()
+        compose.mainClock.advanceTimeBy(3_100)
+        compose.onAllNodes(androidx.compose.ui.test.hasText(title)).assertCountEquals(1)
+        compose.onRoot().captureRoboImage("build/outputs/roborazzi/pad_5_over_settings.png")
+
+        // It ends by itself and leaves Settings as it was.
+        compose.mainClock.advanceTimeBy(1_500)
+        compose.onAllNodes(androidx.compose.ui.test.hasText(title)).assertCountEquals(0)
+
+        // Leaving gaming and coming back plays it again; leaving in the middle ends it.
+        compose.runOnUiThread { profile = com.zeronet.mobile.model.ConnectionProfile.Fast }
+        compose.waitForIdle()
+        compose.mainClock.advanceTimeBy(300)
+        compose.runOnUiThread { profile = com.zeronet.mobile.model.ConnectionProfile.Gaming }
+        compose.waitForIdle()
+        compose.mainClock.advanceTimeBy(3_100)
+        compose.onAllNodes(androidx.compose.ui.test.hasText(title)).assertCountEquals(1)
+        compose.runOnUiThread { profile = com.zeronet.mobile.model.ConnectionProfile.Normal }
+        compose.waitForIdle()
+        compose.mainClock.advanceTimeBy(100)
+        compose.onAllNodes(androidx.compose.ui.test.hasText(title)).assertCountEquals(0)
+    }
+
+    @Test fun a_tap_skips_the_gaming_scene_to_its_end() {
+        val title = androidx.test.core.app.ApplicationProvider.getApplicationContext<android.content.Context>()
+            .getString(com.zeronet.mobile.R.string.gaming_on_title)
+        compose.mainClock.autoAdvance = false
+        compose.setContent {
+            com.zeronet.mobile.ui.theme.ZeroTheme(themeMode = com.zeronet.mobile.model.ThemeMode.Dark) {
+                com.zeronet.mobile.ui.effects.GamepadBurst(1, androidx.compose.ui.Modifier.testTag("scene"))
+            }
+        }
+        compose.mainClock.advanceTimeBy(900)
+        compose.onAllNodes(androidx.compose.ui.test.hasText(title)).assertCountEquals(1)
+        compose.onNode(androidx.compose.ui.test.hasTestTag("scene")).performClick()
+        compose.mainClock.advanceTimeBy(700)
+        compose.onAllNodes(androidx.compose.ui.test.hasText(title)).assertCountEquals(0)
+    }
+
+    @Test fun with_reduced_motion_the_gaming_scene_is_one_still_picture() {
+        compose.mainClock.autoAdvance = false
+        compose.setContent {
+            com.zeronet.mobile.ui.theme.ZeroTheme(themeMode = com.zeronet.mobile.model.ThemeMode.Dark, reducedMotion = true) {
+                com.zeronet.mobile.ui.effects.GamepadBurst(1)
+            }
+        }
+        compose.mainClock.advanceTimeBy(600)
+        compose.onRoot().captureRoboImage("build/outputs/roborazzi/pad_6_reduced.png")
+    }
 
     // --------------------------------------------------------------- Mars
 

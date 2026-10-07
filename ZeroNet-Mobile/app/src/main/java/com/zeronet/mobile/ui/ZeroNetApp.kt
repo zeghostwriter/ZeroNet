@@ -8,6 +8,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.layout.Box
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.SideEffect
@@ -18,6 +19,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.zeronet.mobile.model.ConnectionProfile
 import com.zeronet.mobile.model.MotionLevel
 import com.zeronet.mobile.ui.components.rememberGlassAllowed
+import com.zeronet.mobile.ui.effects.GamingIntro
 import com.zeronet.mobile.ui.home.HomeRoute
 import com.zeronet.mobile.ui.onboarding.OnboardingRoute
 import com.zeronet.mobile.ui.scanner.ScannerRoute
@@ -63,18 +65,23 @@ fun ZeroNetApp(
         val dark = ZeroTheme.colors.isDark
         SideEffect { onThemeResolved(dark) }
         CompositionLocalProvider(LocalController provides controller) {
-            AnimatedContent(
-                targetState = showOnboarding,
-                transitionSpec = { (fadeIn(tween(ZeroMotion.ms(320))) + scaleIn(initialScale = 0.97f)) togetherWith fadeOut(tween(ZeroMotion.ms(160))) },
-                label = "onboarding",
-            ) { onboarding ->
-                if (onboarding) {
-                    ZeroRoot(showBottomBar = false, tab = controller.tab, onTab = {}, messages = controller.messages) {
-                        OnboardingRoute(onFinished = onOnboardingFinished)
+            Box {
+                AnimatedContent(
+                    targetState = showOnboarding,
+                    transitionSpec = { (fadeIn(tween(ZeroMotion.ms(320))) + scaleIn(initialScale = 0.97f)) togetherWith fadeOut(tween(ZeroMotion.ms(160))) },
+                    label = "onboarding",
+                ) { onboarding ->
+                    if (onboarding) {
+                        ZeroRoot(showBottomBar = false, tab = controller.tab, onTab = {}, messages = controller.messages) {
+                            OnboardingRoute(onFinished = onOnboardingFinished)
+                        }
+                    } else {
+                        MainTabs(controller)
                     }
-                } else {
-                    MainTabs(controller)
                 }
+                // Over every tab and the bottom bar: gaming mode is switched on
+                // in Settings, so the scene has to play wherever the person is.
+                GamingIntro(settings.profile)
             }
         }
     }

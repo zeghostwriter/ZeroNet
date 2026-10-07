@@ -37,7 +37,6 @@ import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.zIndex
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -130,14 +129,6 @@ fun HomeScreen(
         StateBackdrop(phase, gaming = state.profile == ConnectionProfile.Gaming)
         // A screen left alone for a long while visits Mars (see MarsTrip); a touch anywhere brings it home.
         Cosmos(warp = marsTrip.frame?.warp ?: 0f)
-        // The controller plays each time gaming mode is switched on.
-        var burst by remember { androidx.compose.runtime.mutableIntStateOf(0) }
-        var lastProfile by remember { androidx.compose.runtime.mutableStateOf(state.profile) }
-        LaunchedEffect(state.profile) {
-            if (state.profile == ConnectionProfile.Gaming && lastProfile != ConnectionProfile.Gaming) burst += 1
-            lastProfile = state.profile
-        }
-        com.zeronet.mobile.ui.effects.GamepadBurst(burst, Modifier.zIndex(5f))
         BoxWithConstraints(Modifier.fillMaxSize()) {
             val orbSize = minOf(maxWidth - 64.dp, maxHeight * 0.44f, 320.dp).coerceAtLeast(180.dp)
             Column(
