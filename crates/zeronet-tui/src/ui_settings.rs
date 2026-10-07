@@ -157,13 +157,20 @@ impl UiRenderer<'_> {
         // Spelled out rather than "ENABLED": binding the proxy to every
         // interface is the one setting on this page that other machines can
         // see, and the value ought to say which of the two it is.
+        // With LAN on, other devices need the password, so it stays on screen
+        // here rather than only in the toast shown when it was switched on.
+        let lan_on = format!("0.0.0.0 · zeronet / {}", self.settings.lan_password);
         self.toggle_row(
             frame,
             row(),
             ComponentId::SettingAllowLanToggle,
             "Allow LAN Connections",
             self.settings.allow_lan,
-            "0.0.0.0 (LAN)",
+            if self.settings.lan_password.is_empty() {
+                "0.0.0.0 (LAN)"
+            } else {
+                &lan_on
+            },
             "127.0.0.1 only",
         );
         self.toggle_row(
