@@ -184,9 +184,166 @@ where
     accept_socks5_with_credentials(stream, &[]).await
 }
 
-/// Run SOCKS5 with RFC 1929 username/password authentication. An empty
-/// credential slice preserves the no-auth behavior used by the default
-/// inbound and makes the authentication policy explicit at the call site.
+/// Run an HTTP forward/CONNECT request, optionally requiring a
+/// `Proxy-Authorization: Basic` credential.
+///
+/// An empty credential slice preserves the no-auth behavior used by the
+/// default inbound and makes the authentication policy explicit at the call
+/// site, the same way [`accept_socks5_with_credentials`] does. Without this,
+/// an `http` inbound had no way to be protected at all: `socks_auth` was only
+/// consulted on the SOCKS5 path, so enabling "allow LAN" exposed an
+/// unauthenticated HTTP proxy even when accounts were configured.
+pub async fn accept_http_with_credentials<S>(
+    stream: &mut S,
+    first: u8,
+    credentials: &[Credential],
+) -> Result<Accepted, String>
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
+    accept_http_inner(stream, first, credentials).await
+}
+
+/// Run an HTTP forward/CONNECT request with no authentication.
+pub async fn accept_http<S>(stream: &mut S, first: u8) -> Result<Accepted, String>
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
+    accept_http_inner(stream, first, &[]).await
+}
+
+async fn accept_http_inner<S>(
+    stream: &mut S,
+    first: u8,
+    credentials: &[Credential],
+) -> Result<Accepted, String>
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
+    let mut buf = BytesMut::with_capacity(1024);
+    buf.put_u8(first);
+
+    let head_end = loop {
+        if let Some(p) = find_head_end(&buf) {
+            break p;
+        }
+        if buf.len() >= MAX_HTTP_HEAD {
+            return Err("HTTP request head exceeded the size limit".into());
+        }
+        let n = stream
+            .read_buf(&mut buf)
+            .await
+            .map_err(|e| format!("reading HTTP request: {e}"))?;
+        if n == 0 {
+            return Err("connection closed before the HTTP request completed".into());
+        }
+    };
+
+    let head = String::from_utf8_lossy(&buf[..head_end]).to_string();
+    if !credentials.is_empty() && !basic_auth_ok(&head, credentials) {
+        stream
+            .write_all(
+                b"HTTP/1.1 407 Proxy Authentication Required\r\n\
+Proxy-Authenticate: Basic realm=\"zeronet\"\r\n\
+Content-Length: 0\r\nConnection: close\r\n\r\n",
+            )
+            .await
+            .map_err(|e| format!("writing 407: {e}"))?;
+        return Err("HTTP proxy credentials missing or wrong".into());
+    }
+
+    let request_line = head.lines().next().unwrap_or("").to_string();
+    let mut parts = request_line.split_whitespace();
+    let method = parts.next().unwrap_or("").to_string();
+    let target = parts.next().unwrap_or("").to_string();
+
+    if method.eq_ignore_ascii_case("CONNECT") {
+        let destination = parse_authority(&target, 443)
+            .ok_or_else(|| format!("cannot parse CONNECT target {target:?}"))?;
+        return Ok(Accepted {
+            destination,
+            prefix: buf[head_end..].to_vec(),
+            kind: InboundKind::HttpConnect,
+        });
+    }
+
+    // Absolute-form request, or fall back to the Host header.
+    let destination = parse_absolute_target(&target)
+        .or_else(|| {
+            head.lines()
+                .find(|l| l.to_ascii_lowercase().starts_with("host:"))
+                .and_then(|l| l.split_once(':'))
+                .and_then(|(_, v)| parse_authority(v.trim(), 80))
+        })
+        .ok_or_else(|| format!("cannot determine destination from {request_line:?}"))?;
+
+    // The request, head included, must reach the origin — but as the origin
+    // expects it, not as a proxy does. See [`origin_form_head`].
+    let mut prefix = origin_form_head(&head).into_bytes();
+    prefix.extend_from_slice(&buf[head_end..]);
+    Ok(Accepted {
+        destination,
+        prefix,
+        kind: InboundKind::HttpForward,
+    })
+}
+
+/// Whether the head carries a `Proxy-Authorization: Basic` value matching one
+/// of `credentials`.
+///
+/// Every configured account is tried, and no early return reveals which one
+/// matched — a proxy that answered differently per account would let a
+/// neighbour on the LAN enumerate valid usernames.
+fn basic_auth_ok(head: &str, credentials: &[Credential]) -> bool {
+    use base64::Engine as _;
+    let mut found = false;
+    for line in head.split("\r\n") {
+        let Some((name, value)) = line.split_once(':') else {
+            continue;
+        };
+        if !name.trim().eq_ignore_ascii_case("proxy-authorization") {
+            continue;
+        }
+        let Some(encoded) = value
+            .trim()
+            .strip_prefix("Basic ")
+            .or_else(|| value.trim().strip_prefix("basic "))
+        else {
+            continue;
+        };
+        let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(encoded.trim()) else {
+            continue;
+        };
+        let Ok(pair) = String::from_utf8(decoded) else {
+            continue;
+        };
+        let Some((user, password)) = pair.split_once(':') else {
+            continue;
+        };
+        found = true;
+        // Every account is tried and the results are combined, so a caller
+        // cannot tell which one matched, or how many were left to try.
+        let matched = credentials.iter().fold(false, |seen, account| {
+            seen | (constant_time_eq(account.username.as_bytes(), user.as_bytes())
+                & constant_time_eq(account.password.as_bytes(), password.as_bytes()))
+        });
+        found &= matched;
+    }
+    found
+}
+
+/// Equal length and contents, without an early exit on the first difference.
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (x, y) in a.iter().zip(b) {
+        diff |= x ^ y;
+    }
+    diff == 0
+}
+
 pub async fn accept_socks5_with_credentials<S>(
     stream: &mut S,
     credentials: &[Credential],
@@ -358,69 +515,6 @@ pub async fn reply<S: AsyncWrite + Unpin>(
 
 /// Largest request head we will buffer before giving up.
 const MAX_HTTP_HEAD: usize = 16 * 1024;
-
-/// Parse an HTTP proxy request.
-///
-/// `first` is the byte already consumed by protocol detection.
-pub async fn accept_http<S>(stream: &mut S, first: u8) -> Result<Accepted, String>
-where
-    S: AsyncRead + AsyncWrite + Unpin,
-{
-    let mut buf = BytesMut::with_capacity(1024);
-    buf.put_u8(first);
-
-    let head_end = loop {
-        if let Some(p) = find_head_end(&buf) {
-            break p;
-        }
-        if buf.len() >= MAX_HTTP_HEAD {
-            return Err("HTTP request head exceeded the size limit".into());
-        }
-        let n = stream
-            .read_buf(&mut buf)
-            .await
-            .map_err(|e| format!("reading HTTP request: {e}"))?;
-        if n == 0 {
-            return Err("connection closed before the HTTP request completed".into());
-        }
-    };
-
-    let head = String::from_utf8_lossy(&buf[..head_end]).to_string();
-    let request_line = head.lines().next().unwrap_or("").to_string();
-    let mut parts = request_line.split_whitespace();
-    let method = parts.next().unwrap_or("").to_string();
-    let target = parts.next().unwrap_or("").to_string();
-
-    if method.eq_ignore_ascii_case("CONNECT") {
-        let destination = parse_authority(&target, 443)
-            .ok_or_else(|| format!("cannot parse CONNECT target {target:?}"))?;
-        return Ok(Accepted {
-            destination,
-            prefix: buf[head_end..].to_vec(),
-            kind: InboundKind::HttpConnect,
-        });
-    }
-
-    // Absolute-form request, or fall back to the Host header.
-    let destination = parse_absolute_target(&target)
-        .or_else(|| {
-            head.lines()
-                .find(|l| l.to_ascii_lowercase().starts_with("host:"))
-                .and_then(|l| l.split_once(':'))
-                .and_then(|(_, v)| parse_authority(v.trim(), 80))
-        })
-        .ok_or_else(|| format!("cannot determine destination from {request_line:?}"))?;
-
-    // The request, head included, must reach the origin — but as the origin
-    // expects it, not as a proxy does. See [`origin_form_head`].
-    let mut prefix = origin_form_head(&head).into_bytes();
-    prefix.extend_from_slice(&buf[head_end..]);
-    Ok(Accepted {
-        destination,
-        prefix,
-        kind: InboundKind::HttpForward,
-    })
-}
 
 /// Rewrite a forward-proxy request head into what an origin server expects.
 ///
@@ -729,6 +823,136 @@ Content-Length: 4\r\n\r\nbody";
             "POST /?q=1 HTTP/1.1\r\nContent-Length: 4\r\nHost: example.com:8080\r\n\
 Connection: close\r\n\r\nbody"
         );
+    }
+
+    fn credential(user: &str, pass: &str) -> Credential {
+        Credential {
+            username: user.into(),
+            password: pass.into(),
+        }
+    }
+
+    fn basic(user: &str, pass: &str) -> String {
+        use base64::Engine as _;
+        format!(
+            "Basic {}",
+            base64::engine::general_purpose::STANDARD.encode(format!("{user}:{pass}"))
+        )
+    }
+
+    /// `allow_lan` bound an `http` inbound to every interface, and
+    /// `socks_auth` was consulted only on the SOCKS5 path — so accounts
+    /// configured for an HTTP proxy protected nothing.
+    #[tokio::test]
+    async fn an_http_proxy_with_credentials_refuses_an_anonymous_client() {
+        let (mut client, mut server) = duplex(4096);
+        // The client has to outlive the refusal, so it reads the reply and
+        // hands it back rather than dropping its end first.
+        let seen = tokio::spawn(async move {
+            client
+                .write_all(b"CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n")
+                .await
+                .unwrap();
+            let mut reply = Vec::new();
+            client.read_to_end(&mut reply).await.unwrap();
+            reply
+        });
+
+        let credentials = [credential("alice", "s3cret")];
+        let mut first = [0u8; 1];
+        server.read_exact(&mut first).await.unwrap();
+        let error = accept_http_with_credentials(&mut server, first[0], &credentials)
+            .await
+            .unwrap_err();
+        assert!(error.contains("credentials"), "got: {error}");
+
+        drop(server);
+        let reply = String::from_utf8(seen.await.unwrap()).unwrap();
+        assert!(reply.starts_with("HTTP/1.1 407"), "got: {reply}");
+        assert!(reply.contains("Proxy-Authenticate: Basic"), "got: {reply}");
+    }
+
+    #[tokio::test]
+    async fn an_http_proxy_with_credentials_refuses_a_wrong_password() {
+        let (mut client, mut server) = duplex(4096);
+        tokio::spawn(async move {
+            let _ = client
+                .write_all(
+                    b"CONNECT example.com:443 HTTP/1.1\r\n\
+Proxy-Authorization: Basic YWxpY2U6d3Jvbmc=\r\n\r\n",
+                )
+                .await;
+        });
+
+        let credentials = [credential("alice", "s3cret")];
+        let mut first = [0u8; 1];
+        server.read_exact(&mut first).await.unwrap();
+        assert!(
+            accept_http_with_credentials(&mut server, first[0], &credentials)
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn an_http_proxy_with_credentials_admits_the_right_one() {
+        let (mut client, mut server) = duplex(4096);
+        let raw = format!(
+            "CONNECT example.com:443 HTTP/1.1\r\nProxy-Authorization: {}\r\n\r\n",
+            basic("alice", "s3cret")
+        );
+        tokio::spawn(async move {
+            client.write_all(raw.as_bytes()).await.unwrap();
+        });
+
+        let credentials = [credential("bob", "other"), credential("alice", "s3cret")];
+        let mut first = [0u8; 1];
+        server.read_exact(&mut first).await.unwrap();
+        let accepted = accept_http_with_credentials(&mut server, first[0], &credentials)
+            .await
+            .expect("the configured account must be admitted");
+        assert_eq!(accepted.kind, InboundKind::HttpConnect);
+        assert_eq!(
+            accepted.destination.address.as_domain(),
+            Some("example.com")
+        );
+    }
+
+    /// The credential is for the proxy, so it must not reach the origin.
+    #[tokio::test]
+    async fn an_authenticated_http_forward_does_not_leak_the_header() {
+        let (mut client, mut server) = duplex(4096);
+        let raw = format!(
+            "GET http://example.com/path HTTP/1.1\r\nProxy-Authorization: {}\r\n\r\n",
+            basic("alice", "s3cret")
+        );
+        tokio::spawn(async move {
+            client.write_all(raw.as_bytes()).await.unwrap();
+        });
+
+        let credentials = [credential("alice", "s3cret")];
+        let mut first = [0u8; 1];
+        server.read_exact(&mut first).await.unwrap();
+        let accepted = accept_http_with_credentials(&mut server, first[0], &credentials)
+            .await
+            .unwrap();
+        let forwarded = String::from_utf8(accepted.prefix).unwrap();
+        assert!(!forwarded.to_lowercase().contains("proxy-authorization"));
+    }
+
+    /// No accounts configured must behave exactly as before.
+    #[tokio::test]
+    async fn an_http_proxy_without_credentials_stays_open() {
+        let (mut client, mut server) = duplex(4096);
+        tokio::spawn(async move {
+            client
+                .write_all(b"CONNECT example.com:443 HTTP/1.1\r\n\r\n")
+                .await
+                .unwrap();
+        });
+        let mut first = [0u8; 1];
+        server.read_exact(&mut first).await.unwrap();
+        assert!(accept_http(&mut server, first[0]).await.is_ok());
     }
 
     #[tokio::test]

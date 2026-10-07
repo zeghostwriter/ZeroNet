@@ -161,6 +161,9 @@ impl FramePacer {
 /// Parting message. Gold when the terminal can colour it.
 const GOODBYE: &str = "Zero is now Zero, Goodbye!";
 
+/// Settings-table key holding the password LAN clients must present.
+const LAN_CREDENTIAL_KEY: &str = "lan_credential";
+
 fn main() -> Result<()> {
     // The privileged helper is this same binary re-executed under sudo. It
     // must be dealt with before the terminal, the database or the async
@@ -872,6 +875,34 @@ impl<'a> App<'a> {
         self.toasts.info(format!("System proxy: {}", mode.label()));
     }
 
+    /// The password a LAN client must present, generated once and kept.
+    ///
+    /// Regenerating it on every read would break a phone or TV that had it
+    /// configured, so it lives in the settings table like any other.
+    fn lan_credential(&self) -> Option<zeronet_tui::daemon::LanCredential> {
+        if !self.settings.allow_lan {
+            return None;
+        }
+        if let Some(pass) = self.db.get_value(LAN_CREDENTIAL_KEY) {
+            if !pass.is_empty() {
+                return Some(zeronet_tui::daemon::LanCredential {
+                    user: "zeronet".into(),
+                    pass,
+                });
+            }
+        }
+        let credential = zeronet_tui::daemon::new_lan_credential();
+        if self
+            .db
+            .set_value(LAN_CREDENTIAL_KEY, &credential.pass)
+            .is_ok()
+        {
+            Some(credential)
+        } else {
+            None
+        }
+    }
+
     /// Engine options assembled from current settings.
     ///
     /// Built fresh on every connect so a port changed in Settings takes
@@ -886,6 +917,7 @@ impl<'a> App<'a> {
             tun_auto_route: self.settings.tun_auto_route,
             tun_strict_route: self.settings.tun_strict_route,
             allow_lan: self.settings.allow_lan,
+            lan_credential: self.lan_credential(),
             udp_enabled: self.settings.udp_enabled,
             sniffing_enabled: self.settings.sniffing_enabled,
             sniffing_route_only: self.settings.sniffing_route_only,
@@ -3582,7 +3614,7 @@ impl App<'_> {
         }
 
         let dir = std::path::PathBuf::from("./zeronet-export");
-        if let Err(e) = std::fs::create_dir_all(&dir) {
+        if let Err(e) = sharelink::create_private_dir(&dir) {
             self.toasts.error(format!("Cannot create export dir: {e}"));
             return;
         }
@@ -3590,7 +3622,7 @@ impl App<'_> {
         let body = sharelink::subscription_body(&links);
         let writes = [("links.txt", links.join("\n")), ("subscription.txt", body)];
         for (name, content) in writes {
-            if let Err(e) = std::fs::write(dir.join(name), content) {
+            if let Err(e) = sharelink::write_private_file(&dir.join(name), content.as_bytes()) {
                 self.toasts.error(format!("Failed writing {name}: {e}"));
                 return;
             }
@@ -4887,11 +4919,23 @@ impl App<'_> {
             ComponentId::SettingAllowLanToggle => {
                 self.settings.allow_lan = !self.settings.allow_lan;
                 if self.settings.allow_lan {
-                    // Worth spelling out: the proxy stops being private to
-                    // this machine, and nothing else on the page does that.
-                    self.toasts.warning(
-                        "The proxy is open to your LAN now. Anyone on this network can use it.",
-                    );
+                    // Worth spelling out, and worth giving the password: the
+                    // proxy stops being private to this machine, and nothing
+                    // else on the page does that. Other hosts now have to
+                    // authenticate, so the user needs the credential to set up
+                    // the phone or TV they turned this on for.
+                    let credential = self.lan_credential();
+                    let message = match &credential {
+                        Some(credential) => format!(
+                            "LAN access on. User \"{}\", password {}",
+                            credential.user, credential.pass
+                        ),
+                        None => {
+                            "The proxy is open to your LAN now. Anyone on this network can use it."
+                                .to_string()
+                        }
+                    };
+                    self.toasts.warning(message);
                     self.persist_settings();
                 } else {
                     self.save_and_report("Proxy bound to localhost only".to_string());
@@ -5154,7 +5198,7 @@ impl App<'_> {
         }
         let exports = zero_scanner::export::generate_exports(&self.scanner_results, None);
         let out_dir = std::path::PathBuf::from("./clean_endpoints");
-        if let Err(e) = std::fs::create_dir_all(&out_dir) {
+        if let Err(e) = sharelink::create_private_dir(&out_dir) {
             self.toasts
                 .error(format!("Could not create export dir: {e}"));
             return;
@@ -5166,7 +5210,7 @@ impl App<'_> {
             ("subscription.txt", &exports.subscription_base64),
         ];
         for (name, body) in writes {
-            if let Err(e) = std::fs::write(out_dir.join(name), body) {
+            if let Err(e) = sharelink::write_private_file(&out_dir.join(name), body.as_bytes()) {
                 self.toasts.error(format!("Failed writing {name}: {e}"));
                 return;
             }

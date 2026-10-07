@@ -1596,7 +1596,27 @@ impl Server {
                         Ok((accepted, boxed(chained)))
                     }
                     _ => {
-                        let accepted = socks::accept_http(&mut stream, first[0]).await?;
+                        // The HTTP path needs the same credentials as the
+                        // SOCKS5 one. An `http` inbound configured with
+                        // accounts was previously ignored here, so the
+                        // accounts protected nothing.
+                        let http_credentials: Vec<zero_protocol::socks::Credential> =
+                            match socks_auth {
+                                zero_config::SocksAuth::None => Vec::new(),
+                                zero_config::SocksAuth::Password(accounts) => accounts
+                                    .iter()
+                                    .map(|account| zero_protocol::socks::Credential {
+                                        username: account.username.clone(),
+                                        password: account.password.clone(),
+                                    })
+                                    .collect(),
+                            };
+                        let accepted = socks::accept_http_with_credentials(
+                            &mut stream,
+                            first[0],
+                            &http_credentials,
+                        )
+                        .await?;
                         Ok((accepted, stream))
                     }
                 }

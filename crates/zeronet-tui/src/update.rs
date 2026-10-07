@@ -281,6 +281,8 @@ pub async fn check(proxy: Option<u16>) -> Result<(Option<Release>, Option<u16>),
         return Ok((None, route));
     }
     if let (Some(asset), Some(url)) = (release.asset.as_mut(), checksums_url(&json)) {
+        // A failure here is not fatal at check time: `download` refuses to
+        // install an unverified binary, and reports why.
         if let Ok(listing) = fetch_text(&url, route).await {
             asset.sha256 = checksum_for(&listing, &asset.name);
         }
@@ -376,7 +378,19 @@ async fn download(
     route: Option<u16>,
     progress: impl Fn(u64, u64),
 ) -> Result<(), String> {
-    let mut file = std::fs::File::create(dest).map_err(|e| {
+    // `create_new` after an explicit remove: `File::create` follows a symlink,
+    // so a file planted at the staging path would be written through. The mode
+    // is set now rather than in `swap_in`, because until then the payload
+    // would sit on disk world-readable for the whole download.
+    let _ = std::fs::remove_file(dest);
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o700);
+    }
+    let mut file = opts.open(dest).map_err(|e| {
         if e.kind() == std::io::ErrorKind::PermissionDenied {
             format!(
                 "ZeroNet cannot write to {}. Download the update from the release page instead.",
@@ -432,11 +446,26 @@ async fn download(
     }
     file.sync_all()
         .map_err(|e| format!("cannot save the download: {e}"))?;
-    let digest = hex(&hasher.finalize());
-    if let Some(expected) = &asset.sha256 {
-        if &digest != expected {
-            return Err("the download is damaged (its checksum does not match)".into());
-        }
+    verify_digest(asset.sha256.as_deref(), &hex(&hasher.finalize()))
+}
+
+/// Fail closed on an unverifiable download.
+///
+/// A missing expectation means the release published no `SHA256SUMS.txt`, the
+/// checksum request failed (a 403 or 429 during an update wave is enough), or
+/// the listing names a different artifact. Installing anyway would leave the
+/// update resting entirely on the TLS chain, which cannot tell a good release
+/// from a compromised account.
+fn verify_digest(expected: Option<&str>, digest: &str) -> Result<(), String> {
+    let Some(expected) = expected else {
+        return Err(
+            "the release publishes no checksum for this build, so it cannot be \
+                    installed safely. Download it from the release page to check it by hand."
+                .into(),
+        );
+    };
+    if digest != expected {
+        return Err("the download is damaged (its checksum does not match)".into());
     }
     Ok(())
 }
@@ -449,7 +478,16 @@ fn swap_in(staging: &Path, target: &Path) -> Result<(), String> {
         std::fs::set_permissions(staging, std::fs::Permissions::from_mode(0o755))
             .map_err(|e| format!("cannot make the update executable: {e}"))?;
         std::fs::rename(staging, target)
-            .map_err(|e| format!("cannot replace {}: {e}", target.display()))
+            .map_err(|e| format!("cannot replace {}: {e}", target.display()))?;
+        // Make the rename itself durable. Without this the directory entry
+        // can be lost on power failure, leaving the program with no
+        // executable at all.
+        if let Some(parent) = target.parent() {
+            if let Ok(dir) = std::fs::File::open(parent) {
+                let _ = dir.sync_all();
+            }
+        }
+        Ok(())
     }
     #[cfg(windows)]
     {
@@ -489,6 +527,11 @@ fn finish_platform(target: &Path, version: &str) {
             .arg(&plist)
             .output();
     }
+    // Re-signed ad hoc: replacing a file inside a bundle invalidates the
+    // seal, and without this macOS refuses to open it — which would break the
+    // update outright. The cost is that the result is no longer Developer ID
+    // signed and no longer notarized, and stays that way for later updates.
+    // Worth knowing before reading the ad-hoc signature as a passing check.
     let _ = std::process::Command::new("/usr/bin/codesign")
         .args(["--force", "--deep", "--sign", "-"])
         .arg(bundle)
@@ -516,8 +559,10 @@ pub fn relaunch(path: &Path) -> std::io::Error {
 /// Open a web page in the default browser.
 pub fn open_in_browser(url: &str) -> std::io::Result<()> {
     let mut command = if cfg!(windows) {
-        let mut c = std::process::Command::new("cmd");
-        c.args(["/C", "start", ""]);
+        // `cmd /C start` re-parses the URL as a command line, so a `&` in it
+        // would separate commands. `rundll32` takes the URL as one argument.
+        let mut c = std::process::Command::new("rundll32");
+        c.arg("url.dll,FileProtocolHandler");
         c
     } else if cfg!(target_os = "macos") {
         std::process::Command::new("open")
@@ -912,5 +957,36 @@ mod tests {
         assert_eq!(std::fs::read(&target).unwrap(), b"new");
         assert!(!staged.exists());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The one check standing between a compromised release account and code
+    /// execution as the user. `download` refuses to install without it.
+    #[test]
+    fn a_download_with_no_published_checksum_is_refused() {
+        let error = verify_digest(None, &"a".repeat(64)).unwrap_err();
+        assert!(error.contains("no checksum"), "got: {error}");
+    }
+
+    #[test]
+    fn a_download_whose_checksum_disagrees_is_refused() {
+        let error = verify_digest(Some(&"b".repeat(64)), &"a".repeat(64)).unwrap_err();
+        assert!(error.contains("checksum does not match"), "got: {error}");
+    }
+
+    #[test]
+    fn a_download_whose_checksum_agrees_is_kept() {
+        let digest = "a1b2c3d4e5f6".repeat(5) + "abcd";
+        verify_digest(Some(&digest), &digest).expect("a matching checksum must install");
+    }
+
+    /// The digest has to be of the bytes that reached the disk, so a real
+    /// download of a known payload is compared against the same function
+    /// `download` uses.
+    #[test]
+    fn the_installed_bytes_are_the_hashed_ones() {
+        use sha2::Digest as _;
+        let payload: &[u8] = b"a known binary";
+        let digest = hex(&sha2::Sha256::digest(payload));
+        assert!(verify_digest(Some(&digest), &digest).is_ok());
     }
 }

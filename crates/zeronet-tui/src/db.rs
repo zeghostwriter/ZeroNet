@@ -265,9 +265,10 @@ pub struct Database {
 impl Database {
     pub fn open<P: AsRef<Path>>(path: P) -> SqlResult<Self> {
         let db_path = path.as_ref().to_path_buf();
-        if let Some(parent) = db_path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
+        // Creates the parent and the file with a private mode. Doing this
+        // here rather than with `create_dir_all` first is what keeps the
+        // umask from ever producing a world-readable database.
+        restrict_to_owner(&db_path);
 
         let conn = Connection::open(&db_path)?;
         // Without a busy timeout a second instance (or anything else holding
@@ -286,6 +287,7 @@ impl Database {
         };
         db.init_schema()?;
         db.migrate()?;
+        restrict_wal_sidecars(db.path());
         db.prune_metrics();
         Ok(db)
     }
@@ -1287,6 +1289,61 @@ impl Database {
     }
 }
 
+/// Make the database unreadable to other users, before it is created.
+///
+/// `Connection::open` creates the file `0666 & ~umask` and the parent
+/// directory `0777 & ~umask`, so with the usual `umask 022` every proxy
+/// credential, subscription token and REALITY private key the user has ever
+/// imported would land in a world-readable file. Narrowing the mode here
+/// covers the create; narrowing it again afterwards covers a database that
+/// already existed with looser permissions.
+fn restrict_to_owner(path: &Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
+        // Created with the mode rather than chmod'ed after: an existing
+        // `ZERONET_DATA_DIR` may be the user's own shared directory, and
+        // tightening it would be a side effect nobody asked for. Only the
+        // database itself is narrowed unconditionally.
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::DirBuilder::new()
+                .recursive(true)
+                .mode(0o700)
+                .create(parent);
+        }
+        if !path.exists() {
+            let _ = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .open(path);
+        }
+        let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+    }
+    #[cfg(not(unix))]
+    let _ = path;
+}
+
+/// Keep the write-ahead log and shared-memory files as private as the
+/// database. WAL mode creates both on the next write, with the same mode
+/// SQLite gave the database itself.
+fn restrict_wal_sidecars(db_path: &Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        for suffix in ["-wal", "-shm"] {
+            let mut name = db_path.as_os_str().to_os_string();
+            name.push(suffix);
+            let sidecar = PathBuf::from(name);
+            if sidecar.exists() {
+                let _ = std::fs::set_permissions(&sidecar, std::fs::Permissions::from_mode(0o600));
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = db_path;
+}
+
 fn dirs_or_local() -> PathBuf {
     if let Some(mut dir) = dirs_home() {
         dir.push(".zeronet");
@@ -1705,6 +1762,66 @@ mod tests {
         assert_eq!(db.get_value("crowd_net").as_deref(), Some("asn:12880"));
         // Unknown keys do not disturb the settings.
         assert_eq!(db.load_settings(), AppSettings::default());
+    }
+
+    /// The credentials in this database are the whole reason it must not be
+    /// world-readable. Run on unix only: the modes do not exist elsewhere.
+    #[cfg(unix)]
+    #[test]
+    fn the_database_and_its_wal_are_not_readable_by_other_users() {
+        use std::os::unix::fs::PermissionsExt;
+        let db = Database::open_temporary("private").unwrap();
+        let mode = |path: &Path| std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
+
+        assert_eq!(mode(db.path()), 0o600, "zeronet.db");
+        assert_eq!(mode(db.path().parent().unwrap()), 0o700, "its directory");
+
+        // A credential written after WAL mode is on must land somewhere
+        // equally private.
+        db.set_value("probe", "secret").unwrap();
+        let mut wal = db.path().as_os_str().to_os_string();
+        wal.push("-wal");
+        let wal = PathBuf::from(wal);
+        if wal.exists() {
+            assert_eq!(mode(&wal), 0o600, "zeronet.db-wal");
+        }
+    }
+
+    /// A database an older build left at 0644 is tightened on open, not just
+    /// a freshly created one.
+    #[cfg(unix)]
+    #[test]
+    fn an_existing_world_readable_database_is_tightened() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("zeronet-loose-{}", now_secs()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("zeronet.db");
+        std::fs::write(&path, b"").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        let _db = Database::open(&path).unwrap();
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// `ZERONET_DATA_DIR` can point somewhere the user shares on purpose, so
+    /// an existing directory keeps its own mode.
+    #[cfg(unix)]
+    #[test]
+    fn an_existing_data_directory_keeps_its_own_mode() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("zeronet-shared-{}", now_secs()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let _db = Database::open(dir.join("zeronet.db")).unwrap();
+        let dir_mode = std::fs::metadata(&dir).unwrap().permissions().mode() & 0o777;
+        assert_eq!(
+            dir_mode, 0o755,
+            "the app narrowed a directory the user chose"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
