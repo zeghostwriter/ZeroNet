@@ -6,6 +6,8 @@
 
 pub mod amnezia;
 pub mod anytls;
+pub mod chacha20;
+pub mod chacha20poly1305;
 mod io_util;
 pub mod mux;
 pub mod shadowsocks;

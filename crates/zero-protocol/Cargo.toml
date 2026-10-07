@@ -21,6 +21,7 @@ aes = { workspace = true }
 cipher = { workspace = true }
 aes-gcm = { workspace = true }
 chacha20poly1305 = { workspace = true }
+poly1305 = { workspace = true }
 hex = { workspace = true }
 rand = { workspace = true }
 boringtun = { workspace = true }
@@ -34,4 +35,5 @@ base64 = { workspace = true }
 zeroize = { workspace = true }
 
 [dev-dependencies]
+chacha20 = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "io-util", "net", "time", "test-util"] }

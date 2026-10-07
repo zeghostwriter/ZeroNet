@@ -236,7 +236,7 @@ fn decode_address(buf: &[u8]) -> Result<(Destination, usize), Error> {
 enum ChunkCipher {
     Aes128(Box<Aes128Gcm>),
     Aes256(Box<Aes256Gcm>),
-    Chacha(Box<chacha20poly1305::ChaCha20Poly1305>),
+    Chacha(Box<crate::chacha20poly1305::ChaCha20Poly1305>),
 }
 
 struct ChunkState {
@@ -254,7 +254,7 @@ impl ChunkState {
                 Aes256Gcm::new_from_slice(subkey).expect("subkey length checked"),
             )),
             Method::Chacha20Poly1305 => ChunkCipher::Chacha(Box::new(
-                chacha20poly1305::ChaCha20Poly1305::new_from_slice(subkey)
+                crate::chacha20poly1305::ChaCha20Poly1305::new_from_slice(subkey)
                     .expect("subkey length checked"),
             )),
         };
@@ -270,14 +270,17 @@ impl ChunkState {
     /// Append `plaintext` to `out` as `ciphertext || tag`, encrypting in place.
     fn seal_into(&mut self, plaintext: &[u8], out: &mut Vec<u8>) -> Result<(), Error> {
         let nonce = self.nonce();
-        let nonce = Nonce::from_slice(&nonce);
         let start = out.len();
         out.extend_from_slice(plaintext);
         let body = &mut out[start..];
         let tag = match &self.cipher {
-            ChunkCipher::Aes128(c) => c.encrypt_in_place_detached(nonce, &[], body),
-            ChunkCipher::Aes256(c) => c.encrypt_in_place_detached(nonce, &[], body),
-            ChunkCipher::Chacha(c) => c.encrypt_in_place_detached(nonce, &[], body),
+            ChunkCipher::Aes128(c) => {
+                c.encrypt_in_place_detached(Nonce::from_slice(&nonce), &[], body)
+            }
+            ChunkCipher::Aes256(c) => {
+                c.encrypt_in_place_detached(Nonce::from_slice(&nonce), &[], body)
+            }
+            ChunkCipher::Chacha(c) => c.encrypt_in_place_detached(&nonce, &[], body),
         }
         .map_err(|_| Error::Crypto)?;
         out.extend_from_slice(tag.as_slice());
@@ -292,14 +295,22 @@ impl ChunkState {
             return Err(Error::InvalidFrame("chunk shorter than tag"));
         }
         let nonce = self.nonce();
-        let nonce = Nonce::from_slice(&nonce);
         let split = chunk.len() - TAG_LEN;
         let (body, tag) = chunk.split_at_mut(split);
-        let tag = aes_gcm::Tag::from_slice(tag);
         match &self.cipher {
-            ChunkCipher::Aes128(c) => c.decrypt_in_place_detached(nonce, &[], body, tag),
-            ChunkCipher::Aes256(c) => c.decrypt_in_place_detached(nonce, &[], body, tag),
-            ChunkCipher::Chacha(c) => c.decrypt_in_place_detached(nonce, &[], body, tag),
+            ChunkCipher::Aes128(c) => c.decrypt_in_place_detached(
+                Nonce::from_slice(&nonce),
+                &[],
+                body,
+                aes_gcm::Tag::from_slice(tag),
+            ),
+            ChunkCipher::Aes256(c) => c.decrypt_in_place_detached(
+                Nonce::from_slice(&nonce),
+                &[],
+                body,
+                aes_gcm::Tag::from_slice(tag),
+            ),
+            ChunkCipher::Chacha(c) => c.decrypt_in_place_detached(&nonce, &[], body, tag),
         }
         .map_err(|_| Error::Crypto)?;
         self.counter = self.counter.wrapping_add(1);

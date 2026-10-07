@@ -10,7 +10,6 @@ use std::pin::Pin;
 use std::task::{Context, Poll};
 
 use aes_gcm::{aead::AeadInPlace, Aes128Gcm, Aes256Gcm, KeyInit, Nonce};
-use chacha20poly1305::ChaCha20Poly1305;
 use hkdf::Hkdf;
 use md5::{Digest, Md5};
 use rand::RngCore;
@@ -19,6 +18,7 @@ use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
 use zero_core::{Address, BoxStream, Destination, Network};
 
+use crate::chacha20poly1305::ChaCha20Poly1305;
 use crate::io_util::{ReadBuffer, WriteBuffer, DEFAULT_READ_CAPACITY};
 
 const SALT_LEN: usize = 32;
@@ -154,7 +154,7 @@ impl CipherState {
                 .encrypt_in_place_detached(Nonce::from_slice(&nonce), b"", body)
                 .map_err(|_| Error::Crypto)?,
             SsCipher::ChaCha(cipher) => cipher
-                .encrypt_in_place_detached(chacha20poly1305::Nonce::from_slice(&nonce), b"", body)
+                .encrypt_in_place_detached(&nonce, b"", body)
                 .map_err(|_| Error::Crypto)?,
         };
         out.extend_from_slice(&tag);
@@ -179,12 +179,7 @@ impl CipherState {
                 .decrypt_in_place_detached(Nonce::from_slice(&nonce), b"", body, tag.into())
                 .map_err(|_| Error::Crypto)?,
             SsCipher::ChaCha(cipher) => cipher
-                .decrypt_in_place_detached(
-                    chacha20poly1305::Nonce::from_slice(&nonce),
-                    b"",
-                    body,
-                    tag.into(),
-                )
+                .decrypt_in_place_detached(&nonce, b"", body, tag)
                 .map_err(|_| Error::Crypto)?,
         }
         self.advance()
