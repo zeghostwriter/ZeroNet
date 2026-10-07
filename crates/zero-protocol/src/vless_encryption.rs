@@ -649,6 +649,15 @@ enum ReadStage {
     Records,
 }
 
+/// Plaintext of the record at the head of `read_buf`, not yet delivered. The
+/// record is decrypted in place, so this is a window rather than a copy.
+#[derive(Debug, Clone, Copy, Default)]
+struct PlainWindow {
+    pos: usize,
+    end: usize,
+    frame_len: usize,
+}
+
 /// Xray's `CommonConn`, with `XorConn` folded in as [`HeaderMask`]s.
 pub struct EncryptedStream<S> {
     inner: S,
@@ -667,8 +676,7 @@ pub struct EncryptedStream<S> {
     read_buf: ReadBuffer,
     /// How many bytes at the front of `read_buf` have been unmasked.
     unmasked: usize,
-    plain: Vec<u8>,
-    plain_pos: usize,
+    plain: PlainWindow,
     /// Vision received `PaddingDirect`: the server now writes its raw inner
     /// stream underneath this layer.
     direct_read: bool,
@@ -702,8 +710,7 @@ impl<S> EncryptedStream<S> {
             pre_write: Vec::new(),
             read_buf: ReadBuffer::with_capacity(32 * 1024),
             unmasked: 0,
-            plain: Vec::new(),
-            plain_pos: 0,
+            plain: PlainWindow::default(),
             direct_read: false,
             write_buf: WriteBuffer::default(),
         }
@@ -822,13 +829,18 @@ impl<S: AsyncRead + Unpin> EncryptedStream<S> {
                         *peer = next;
                     }
                     result?;
-                    self.plain.clear();
-                    self.plain.extend_from_slice(&record[..len - TAG_LEN]);
-                    self.plain_pos = 0;
-                    self.consume(HEADER_LEN + len);
-                    if !self.plain.is_empty() {
-                        return Poll::Ready(Ok(true));
-                    }
+                    // Decrypted in place, so the plaintext is already in
+                    // `read_buf`: hand `poll_read` a window over it instead of
+                    // copying it out twice. The shape shadowsocks.rs uses.
+                    // `decode_header` rejects lengths below
+                    // `MIN_RECORD = 1 + TAG_LEN`, so this is never empty.
+                    debug_assert!(len > TAG_LEN);
+                    self.plain = PlainWindow {
+                        pos: 0,
+                        end: len - TAG_LEN,
+                        frame_len: HEADER_LEN + len,
+                    };
+                    return Poll::Ready(Ok(true));
                 }
             }
         }
@@ -853,11 +865,22 @@ impl<S: AsyncRead + Unpin> AsyncRead for EncryptedStream<S> {
         buf: &mut ReadBuf<'_>,
     ) -> Poll<io::Result<()>> {
         let this = &mut *self;
-        if this.plain_pos < this.plain.len() {
-            let n = buf.remaining().min(this.plain.len() - this.plain_pos);
-            buf.put_slice(&this.plain[this.plain_pos..this.plain_pos + n]);
-            this.plain_pos += n;
-            return Poll::Ready(Ok(()));
+        if this.plain.pos < this.plain.end {
+            let window =
+                &this.read_buf.data()[HEADER_LEN + this.plain.pos..HEADER_LEN + this.plain.end];
+            let n = buf.remaining().min(window.len());
+            buf.put_slice(&window[..n]);
+            this.plain.pos += n;
+            if this.plain.pos < this.plain.end {
+                return Poll::Ready(Ok(()));
+            }
+            // Fully delivered: the record can go and the buffer be refilled.
+            let frame_len = this.plain.frame_len;
+            this.plain = PlainWindow::default();
+            this.consume(frame_len);
+            if buf.remaining() == 0 {
+                return Poll::Ready(Ok(()));
+            }
         }
         if this.direct_read {
             if !this.read_buf.is_empty() {
@@ -874,9 +897,17 @@ impl<S: AsyncRead + Unpin> AsyncRead for EncryptedStream<S> {
         if !ready!(this.poll_fill_plain(cx))? {
             return Poll::Ready(Ok(()));
         }
-        let n = buf.remaining().min(this.plain.len());
-        buf.put_slice(&this.plain[..n]);
-        this.plain_pos = n;
+        // `poll_fill_plain` only returns with a window set, or at EOF.
+        let window =
+            &this.read_buf.data()[HEADER_LEN + this.plain.pos..HEADER_LEN + this.plain.end];
+        let n = buf.remaining().min(window.len());
+        buf.put_slice(&window[..n]);
+        this.plain.pos += n;
+        if this.plain.pos >= this.plain.end {
+            let frame_len = this.plain.frame_len;
+            this.plain = PlainWindow::default();
+            this.consume(frame_len);
+        }
         Poll::Ready(Ok(()))
     }
 }
@@ -1172,5 +1203,151 @@ mod tests {
         assert_eq!(aead.next_nonce()[11], 1);
         aead.nonce = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff];
         assert_eq!(aead.next_nonce(), [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0]);
+    }
+
+    /// The read path, end to end, against a server that seals records the way
+    /// Xray's does. The stream hands out plaintext as a window over the read
+    /// buffer rather than copying each record into a second buffer, so what
+    /// has to hold is that the window is consumed only once fully delivered: a
+    /// caller reading a few bytes at a time must make progress across the
+    /// record boundary and then find the next record intact.
+    struct Server {
+        aead: Aead,
+    }
+
+    impl Server {
+        fn new(ctx: &[u8], key: &[u8]) -> Self {
+            Self {
+                aead: Aead::new(ctx, key),
+            }
+        }
+
+        /// One wire record: the 5-byte header, then the sealed plaintext.
+        fn record(&mut self, out: &mut Vec<u8>, plaintext: &[u8]) {
+            let len = plaintext.len() + TAG_LEN;
+            let header = [23, 3, 3, (len >> 8) as u8, len as u8];
+            out.extend_from_slice(&header);
+            self.aead.seal_into(None, plaintext, &header, out);
+        }
+    }
+
+    /// Drive `stream` with reads of `chunk` bytes, returning everything it
+    /// yields and the exact sequence of lengths each read returned.
+    async fn drain<S: AsyncRead + Unpin>(stream: &mut S, chunk: usize) -> (Vec<u8>, Vec<usize>) {
+        use tokio::io::AsyncReadExt;
+        let mut got = Vec::new();
+        let mut sizes = Vec::new();
+        let mut buf = vec![0u8; chunk];
+        loop {
+            let n = stream.read(&mut buf).await.unwrap();
+            if n == 0 {
+                break;
+            }
+            sizes.push(n);
+            got.extend_from_slice(&buf[..n]);
+        }
+        (got, sizes)
+    }
+
+    async fn roundtrip(records: &[&[u8]], chunk: usize) -> (Vec<u8>, Vec<usize>) {
+        let key = b"united key material for the test";
+        let random = [3u8, 1, 4, 1, 5, 9, 2, 6, 5, 3, 5, 8, 9, 7, 9, 3];
+
+        let mut wire = random.to_vec();
+        let mut server = Server::new(&random, key);
+        for record in records {
+            server.record(&mut wire, record);
+        }
+
+        let (transport, mut feeder) = tokio::io::duplex(64 * 1024);
+        let pump = tokio::spawn(async move {
+            tokio::io::AsyncWriteExt::write_all(&mut feeder, &wire)
+                .await
+                .unwrap();
+        });
+
+        // 0-RTT shape: 16 clear bytes, then records keyed from them.
+        let mut stream = EncryptedStream::new(
+            transport,
+            key.to_vec(),
+            Aead::new(b"outbound ctx", key),
+            None,
+            ReadStage::ServerRandom,
+        );
+        let out = drain(&mut stream, chunk).await;
+        pump.await.unwrap();
+        out
+    }
+
+    #[tokio::test]
+    async fn record_plaintext_survives_every_read_size() {
+        let big: Vec<u8> = (0..MAX_RECORD_PLAINTEXT).map(|i| (i % 251) as u8).collect();
+        let cases: [&[u8]; 5] = [b"x", b"a short record", &big[..1000], &big[..8192], &big];
+        for chunk in [1usize, 3, 17, 1000, 8192, 64 * 1024] {
+            let (got, sizes) = roundtrip(&cases, chunk).await;
+            let expected: Vec<u8> = cases.concat();
+            assert_eq!(got, expected, "read size {chunk}");
+            // Every read must make progress and never overshoot the chunk.
+            assert!(sizes.iter().all(|n| *n > 0 && *n <= chunk), "{sizes:?}");
+            let total: usize = sizes.iter().sum();
+            assert_eq!(total, expected.len(), "read size {chunk}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_record_is_not_consumed_until_it_is_fully_delivered() {
+        // One record, read a single byte at a time: the window has to survive
+        // across every read, and the frame may only be consumed at the end.
+        let payload: Vec<u8> = (0..300u32).map(|i| (i % 256) as u8).collect();
+        let (got, sizes) = roundtrip(&[&payload], 1).await;
+        assert_eq!(got, payload);
+        assert_eq!(sizes.len(), payload.len());
+        assert!(sizes.iter().all(|n| *n == 1));
+    }
+
+    #[tokio::test]
+    async fn a_large_read_takes_the_whole_record_in_one_go() {
+        // The mirror of the case above: with room for the record, one read
+        // must return it whole rather than dribbling it out.
+        let payload: Vec<u8> = (0..8192u32).map(|i| (i % 256) as u8).collect();
+        let (got, sizes) = roundtrip(&[&payload], 64 * 1024).await;
+        assert_eq!(got, payload);
+        assert_eq!(sizes, vec![payload.len()]);
+    }
+
+    #[tokio::test]
+    async fn a_tag_only_record_is_rejected_rather_than_returned_as_no_bytes() {
+        // MIN_RECORD is 1 + TAG_LEN, so a tag-only record is not a legal frame
+        // and must not become a silent zero-length read. The window's
+        // `debug_assert!` leans on this.
+        let key = b"united key material for the test";
+        let random = [3u8, 1, 4, 1, 5, 9, 2, 6, 5, 3, 5, 8, 9, 7, 9, 3];
+        let mut wire = random.to_vec();
+        let mut server = Server::new(&random, key);
+        server.record(&mut wire, b"");
+        // The record's header sits just past the 16 clear bytes.
+        let at = random.len();
+        assert_eq!(
+            &wire[at + 3..at + 5],
+            &[0, TAG_LEN as u8],
+            "the wire really does carry a {TAG_LEN}-byte record"
+        );
+
+        let (transport, mut feeder) = tokio::io::duplex(64 * 1024);
+        tokio::spawn(async move {
+            let _ = tokio::io::AsyncWriteExt::write_all(&mut feeder, &wire).await;
+        });
+        let mut stream = EncryptedStream::new(
+            transport,
+            key.to_vec(),
+            Aead::new(b"outbound ctx", key),
+            None,
+            ReadStage::ServerRandom,
+        );
+        let mut buf = [0u8; 64];
+        let error = tokio::io::AsyncReadExt::read(&mut stream, &mut buf)
+            .await
+            .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
     }
 }

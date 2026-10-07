@@ -104,11 +104,12 @@ impl RecordCrypter {
     }
 
     fn nonce(&self) -> [u8; 12] {
+        // RFC 8446 §5.3: the static IV with the sequence number XORed into its
+        // last 8 bytes. Those 8 bytes are one big-endian word, so this is one
+        // load, one xor and one store rather than eight of each.
         let mut n = self.static_iv;
-        let seq = self.seq.to_be_bytes();
-        for (i, b) in seq.iter().enumerate() {
-            n[4 + i] ^= b;
-        }
+        let seq = u64::from_be_bytes(n[4..12].try_into().unwrap()) ^ self.seq;
+        n[4..12].copy_from_slice(&seq.to_be_bytes());
         n
     }
 

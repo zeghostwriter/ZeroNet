@@ -7,7 +7,7 @@ use std::io;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
-use bytes::{Buf, BytesMut};
+use bytes::{Buf, BufMut, BytesMut};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
 use zero_core::{Failure, FailureKind, Stage};
 
@@ -251,24 +251,24 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for WebSocketStream<S> {
                 return Poll::Ready(Ok(()));
             }
 
-            // Read straight into the frame buffer rather than through a stack
-            // scratch buffer and a second copy.
-            let start = this.read_buf.len();
-            this.read_buf.resize(start + READ_CHUNK, 0);
-            let mut rb = ReadBuf::new(&mut this.read_buf[start..]);
-            let polled = Pin::new(&mut this.inner).poll_read(cx, &mut rb);
-            let filled = rb.filled().len();
-            this.read_buf.truncate(start + filled);
-            match polled {
-                Poll::Ready(Ok(())) => {
-                    if filled == 0 {
-                        // Peer closed without a CLOSE frame.
-                        this.read_closed = true;
-                        return Poll::Ready(Ok(()));
-                    }
+            // Read into the frame buffer's own spare capacity. `resize(_, 0)`
+            // zeroed the whole chunk on every read, over bytes the socket then
+            // overwrote.
+            this.read_buf.reserve(READ_CHUNK);
+            let filled = {
+                let mut rb = ReadBuf::uninit(this.read_buf.spare_capacity_mut());
+                match Pin::new(&mut this.inner).poll_read(cx, &mut rb) {
+                    Poll::Ready(Ok(())) => rb.filled().len(),
+                    Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
+                    Poll::Pending => return Poll::Pending,
                 }
-                Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
-                Poll::Pending => return Poll::Pending,
+            };
+            // SAFETY: `filled` bytes were just written into the spare capacity.
+            unsafe { this.read_buf.advance_mut(filled) };
+            if filled == 0 {
+                // Peer closed without a CLOSE frame.
+                this.read_closed = true;
+                return Poll::Ready(Ok(()));
             }
         }
     }

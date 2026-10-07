@@ -9,7 +9,7 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use bytes::{BufMut, BytesMut};
+use bytes::BufMut;
 use tokio::io::duplex;
 use tokio::time::{timeout, Duration, Instant};
 use zero_core::{boxed, BoxStream, Destination};
@@ -428,7 +428,7 @@ pub fn encode_packet(
         return Err("TUIC packet payload is too large".into());
     }
     let address = encode_address(destination)?;
-    let mut output = BytesMut::with_capacity(10 + address.len() + payload.len());
+    let mut output = Vec::with_capacity(10 + address.len() + payload.len());
     output.put_u8(VERSION);
     output.put_u8(PACKET);
     output.put_u16(association);
@@ -438,7 +438,7 @@ pub fn encode_packet(
     output.put_u16(payload.len() as u16);
     output.extend_from_slice(&address);
     output.extend_from_slice(payload);
-    Ok(output.to_vec())
+    Ok(output)
 }
 
 /// Encode one TUIC PACKET message, splitting it at the negotiated QUIC
@@ -485,7 +485,10 @@ pub fn encode_packet_fragments(
             continuation_capacity
         };
         let fragment_len = (payload.len() - offset).min(capacity);
-        let mut frame = BytesMut::with_capacity(
+        // A `Vec`, not a `BytesMut`: both callers wrap the result in
+        // `Bytes::from`, which takes a `Vec` by pointer and copies a
+        // `BytesMut`, so `to_vec()` was that copy, per fragment.
+        let mut frame = Vec::with_capacity(
             if fragment_id == 0 {
                 first_overhead
             } else {
@@ -505,7 +508,7 @@ pub fn encode_packet_fragments(
             frame.put_u8(0xff);
         }
         frame.extend_from_slice(&payload[offset..offset + fragment_len]);
-        output.push(frame.to_vec());
+        output.push(frame);
         offset += fragment_len;
     }
     Ok(output)
