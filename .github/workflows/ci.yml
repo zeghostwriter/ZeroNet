@@ -210,3 +210,18 @@ jobs:
           name: android-screenshots
           path: ZeroNet-Mobile/app/build/outputs/roborazzi
           if-no-files-found: ignore
+
+  # The hot-path benchmark asserts bit-identity for the framed read paths and
+  # reports their allocation counts exactly, via a counting global allocator.
+  # An allocation count is the same on every machine, so a regression in it is
+  # visible in review; the wall-clock times it also prints are context only and
+  # are deliberately not gated on.
+  hotpath:
+    name: hot path
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - name: allocation counts and bit-identity
+        run: cargo run --release -p hotpath-bench

@@ -1366,6 +1366,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "hotpath-bench"
+version = "0.0.0"
+dependencies = [
+ "tokio",
+ "zero-protocol",
+]
+
+[[package]]
 name = "http"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

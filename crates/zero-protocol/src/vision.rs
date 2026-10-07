@@ -1,10 +1,15 @@
 //! The client-side XTLS Vision padding stream.
-//!
 //! Vision is a byte framing layer inside the outer TLS/REALITY stream. The
 //! VLESS response header stays unframed; after it, both directions begin with
 //! the account UUID followed by command/length/padding frames. Command 0
 //! continues padding, while command 1 ends it and leaves subsequent bytes as
 //! ordinary plaintext inside the outer stream.
+//!
+//! A frame's content is delivered from the buffer `split_to` returned, which
+//! is already contiguous and initialized, rather than copied into a `Vec` and
+//! staged again. A downloaded byte is copied once on its way to the caller
+//! instead of twice, and one allocation per frame goes with it.
+//! `bench/hotpath` counts what that saves.
 //!
 //! This implementation deliberately emits `PaddingEnd`, never
 //! `PaddingDirect`. The latter requires handing an already-record-aligned raw
@@ -43,7 +48,11 @@ pub struct VisionStream<S> {
     uuid: [u8; 16],
     read_mode: ReadMode,
     read_input: BytesMut,
-    read_output: BytesMut,
+    /// The frame or header split off `read_input`, and the part of it still to
+    /// deliver. `split_to` hands back a view of the same bytes, so the content
+    /// is already contiguous and initialized here.
+    read_pending: BytesMut,
+    read_window: std::ops::Range<usize>,
     eof: bool,
 
     write_padding: bool,
@@ -68,7 +77,8 @@ impl<S> VisionStream<S> {
             uuid,
             read_mode: ReadMode::ResponseHeader,
             read_input: BytesMut::with_capacity(READ_CHUNK),
-            read_output: BytesMut::new(),
+            read_pending: BytesMut::new(),
+            read_window: 0..0,
             eof: false,
             write_padding: true,
             write_attempts: 0,
@@ -88,7 +98,8 @@ impl<S> VisionStream<S> {
             uuid,
             read_mode: ReadMode::InitialUuid,
             read_input: BytesMut::with_capacity(READ_CHUNK),
-            read_output: BytesMut::new(),
+            read_pending: BytesMut::new(),
+            read_window: 0..0,
             eof: false,
             write_padding: true,
             write_attempts: 0,
@@ -240,15 +251,18 @@ impl<S> VisionStream<S> {
             ));
         }
         let header = self.read_input.split_to(total);
-        self.read_output.extend_from_slice(&header);
+        self.read_pending = header;
+        self.read_window = 0..self.read_pending.len();
         self.read_mode = ReadMode::InitialUuid;
         Ok(true)
     }
 
-    fn parse_one_frame(&mut self) -> io::Result<Option<Vec<u8>>> {
+    /// `Ok(true)` when a frame was consumed, left in `read_pending` for
+    /// [`AsyncRead::poll_read`] to hand over.
+    fn parse_one_frame(&mut self) -> io::Result<bool> {
         if self.read_mode == ReadMode::InitialUuid {
             if self.read_input.len() < self.uuid.len() {
-                return Ok(None);
+                return Ok(false);
             }
             if self.read_input[..16] != self.uuid {
                 return Err(io::Error::new(
@@ -261,7 +275,7 @@ impl<S> VisionStream<S> {
         }
 
         if self.read_input.len() < 5 {
-            return Ok(None);
+            return Ok(false);
         }
         let command = self.read_input[0];
         if !matches!(command, COMMAND_CONTINUE | COMMAND_END | COMMAND_DIRECT) {
@@ -280,11 +294,21 @@ impl<S> VisionStream<S> {
         }
         let total = 5 + content_len + padding_len;
         if self.read_input.len() < total {
-            return Ok(None);
+            return Ok(false);
         }
 
+        // The window skips the 5-byte header and the trailing padding. A frame
+        // with no content leaves the window empty, the same signal an empty
+        // payload gave before, and is dropped rather than held while the parser
+        // waits for the next one.
         let frame = self.read_input.split_to(total);
-        let content = frame[5..5 + content_len].to_vec();
+        if content_len == 0 {
+            self.read_window = 0..0;
+            drop(frame);
+        } else {
+            self.read_pending = frame;
+            self.read_window = 5..5 + content_len;
+        }
         if command != COMMAND_CONTINUE {
             if command == COMMAND_DIRECT {
                 if let Some(switch) = self.direct_read_switch.as_mut() {
@@ -293,7 +317,7 @@ impl<S> VisionStream<S> {
             }
             self.read_mode = ReadMode::Plain;
         }
-        Ok(Some(content))
+        Ok(true)
     }
 }
 
@@ -304,10 +328,15 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for VisionStream<S> {
         buf: &mut ReadBuf<'_>,
     ) -> Poll<io::Result<()>> {
         loop {
-            if !self.read_output.is_empty() {
-                let n = self.read_output.len().min(buf.remaining());
-                let bytes = self.read_output.split_to(n);
-                buf.put_slice(&bytes);
+            if !self.read_window.is_empty() {
+                let n = self.read_window.len().min(buf.remaining());
+                // Straight out of the split-off frame: one copy per byte.
+                let from = self.read_window.start;
+                buf.put_slice(&self.read_pending[from..from + n]);
+                self.read_window.start += n;
+                if self.read_window.is_empty() {
+                    self.read_pending.clear();
+                }
                 return Poll::Ready(Ok(()));
             }
             if self.eof {
@@ -321,13 +350,8 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for VisionStream<S> {
                     Err(e) => return Poll::Ready(Err(e)),
                 },
                 ReadMode::InitialUuid | ReadMode::Frames => match self.parse_one_frame() {
-                    Ok(Some(content)) => {
-                        if !content.is_empty() {
-                            self.read_output.extend_from_slice(&content);
-                        }
-                        continue;
-                    }
-                    Ok(None) => {}
+                    Ok(true) => continue,
+                    Ok(false) => {}
                     Err(e) => return Poll::Ready(Err(e)),
                 },
                 ReadMode::Plain => {
