@@ -48,13 +48,57 @@ enum TcpSocketState {
 /// timeout, holding its buffers the whole time.
 const ORPHAN_LINGER: std::time::Duration = std::time::Duration::from_secs(30);
 
+/// How long a socket that has not finished its handshake may wait for the peer
+/// before it is given up on.
+///
+/// The socket's own idle timeout is the wrong clock for this. It bounds how long
+/// an *established* connection may stay silent, and it is two hours; a
+/// handshake that never completes reached it only through that timeout, so 512
+/// blackholed SYNs held every slot in the cap for two hours and every new
+/// connection on the device was refused in the meantime. Linux gives a request
+/// socket about this long before giving up on it.
+const HANDSHAKE_LINGER: std::time::Duration = std::time::Duration::from_secs(120);
+
+/// Whether `state` is one the handshake deadline applies to.
+///
+/// Only the states in which the connection is not yet usable. Everything else,
+/// `Established` included, keeps the idle timeout it already had: a long silence
+/// on a live connection is the peer's business, not a leaked slot.
+fn handshake_pending(state: TcpState) -> bool {
+    matches!(state, TcpState::Listen | TcpState::SynReceived)
+}
+
+/// How many connections may exist at once. Each costs the 192 KB of buffers
+/// `PATCHES.md` records, held for the life of the connection, and the live-flow
+/// set only stopped retransmitted SYNs from duplicating one rather than
+/// bounding the total. Matches `UDP_INFLIGHT_LIMIT` in the runtime, which
+/// bounds the UDP half of the same interface.
+const MAX_LIVE_SOCKETS: usize = 512;
+
 /// The four-tuple a TCP connection is known by.
 type Flow = (SocketAddr, SocketAddr);
+
+/// Record `flow` as live if it is new and there is room, and report whether the
+/// caller should build a socket. One lock covers both, so two SYNs racing in
+/// cannot both pass a check the other has just made stale.
+fn claim(flows: &SpinMutex<HashSet<Flow>>, flow: Flow) -> bool {
+    let mut live = flows.lock();
+    if live.contains(&flow) {
+        return false;
+    }
+    if live.len() >= MAX_LIVE_SOCKETS {
+        return false;
+    }
+    live.insert(flow);
+    true
+}
 
 struct TcpSocketControl {
     /// Which connection this is, so its entry in the live-flow set can be
     /// removed when the socket closes.
     flow: Flow,
+    /// When the socket was created, which is when its handshake started.
+    created_at: std::time::Instant,
     /// When the application dropped its end. Past this point incoming data
     /// has nobody to read it and is discarded rather than buffered.
     orphaned_at: Option<std::time::Instant>,
@@ -161,7 +205,10 @@ impl TcpListenerRunner {
             // the first one: upstream built a second socket (and a second
             // stream the proxy would dial out for) that never saw traffic
             // and lived for the full idle timeout.
-            if packet.syn() && !packet.ack() && flows.lock().insert((src_addr, dst_addr)) {
+            //
+            // A refused SYN allocates nothing and falls through to the socket
+            // loop, which has none to answer and so sends a RST.
+            if packet.syn() && !packet.ack() && claim(&flows, (src_addr, dst_addr)) {
                 let mut socket = TcpSocket::new(
                     TcpSocketBuffer::new(vec![0u8; tcp_recv_buffer_size as usize]),
                     TcpSocketBuffer::new(vec![0u8; tcp_send_buffer_size as usize]),
@@ -182,6 +229,7 @@ impl TcpListenerRunner {
 
                 let control = Arc::new(SpinMutex::new(TcpSocketControl {
                     flow: (src_addr, dst_addr),
+                    created_at: std::time::Instant::now(),
                     orphaned_at: None,
                     send_buffer: RingBuffer::new(vec![0u8; staging_send]),
                     send_waker: None,
@@ -241,10 +289,11 @@ impl TcpListenerRunner {
 
             // Check all the sockets' status
             let mut sockets_to_remove = Vec::new();
-            // The earliest moment an orphaned socket is due to be reset. The
-            // loop otherwise sleeps until the next packet or smoltcp timer
-            // (keepalive is 28 s), which let orphans outlive their linger.
-            let mut orphan_deadline: Option<std::time::Instant> = None;
+            // The earliest moment this loop has a reason to wake on its own: a
+            // handshake to give up on, or an orphaned socket to reset. It
+            // otherwise sleeps until the next packet or smoltcp timer
+            // (keepalive is 28 s), which let both outlive their linger.
+            let mut wake_deadline: Option<std::time::Instant> = None;
 
             for (socket_handle, control) in sockets.iter() {
                 let socket_handle = *socket_handle;
@@ -287,6 +336,24 @@ impl TcpListenerRunner {
                     }
                 }
 
+                // A handshake the peer never finishes must not hold its cap
+                // slot for the two hours `set_timeout` allows an established
+                // connection to stay silent. `abort` is the file's own idiom for
+                // this: it leaves the socket `Closed` on the next poll, which is
+                // the branch above that already drops the live-flow entry, so
+                // the slot and its buffers are reclaimed without being freed
+                // twice.
+                if handshake_pending(socket.state()) {
+                    let since = control.created_at;
+                    if since.elapsed() >= HANDSHAKE_LINGER {
+                        trace!("giving up on a TCP handshake that never completed");
+                        socket.abort();
+                        continue;
+                    }
+                    let due = since + HANDSHAKE_LINGER;
+                    wake_deadline = Some(wake_deadline.map_or(due, |d| d.min(due)));
+                }
+
                 // Nobody holds the stream any more: whatever arrives is
                 // discarded so the peer's window never stalls on a full
                 // buffer, and the connection is reset once it has lingered
@@ -303,7 +370,7 @@ impl TcpListenerRunner {
                         continue;
                     }
                     let due = since + ORPHAN_LINGER;
-                    orphan_deadline = Some(orphan_deadline.map_or(due, |d| d.min(due)));
+                    wake_deadline = Some(wake_deadline.map_or(due, |d| d.min(due)));
                 }
 
                 // Check if readable
@@ -415,7 +482,7 @@ impl TcpListenerRunner {
                 let mut next_duration = iface
                     .poll_delay(before_poll, &socket_set)
                     .unwrap_or(Duration::from_millis(5));
-                if let Some(deadline) = orphan_deadline {
+                if let Some(deadline) = wake_deadline {
                     let until = deadline.saturating_duration_since(std::time::Instant::now());
                     let until = Duration::from_micros(until.as_micros().min(u64::MAX as u128) as u64);
                     if until < next_duration {
@@ -651,5 +718,76 @@ impl AsyncWrite for TcpStream {
         self.notify.notify_one();
 
         Poll::Pending
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn flow(port: u16) -> Flow {
+        (
+            SocketAddr::new(std::net::IpAddr::V4(std::net::Ipv4Addr::new(10, 0, 0, 1)), port),
+            SocketAddr::new(std::net::IpAddr::V4(std::net::Ipv4Addr::new(1, 1, 1, 1)), 443),
+        )
+    }
+
+    #[test]
+    fn a_flow_is_claimed_once_and_only_up_to_the_limit() {
+        let flows: SpinMutex<HashSet<Flow>> = SpinMutex::new(HashSet::new());
+
+        for port in 0..MAX_LIVE_SOCKETS as u16 {
+            assert!(claim(&flows, flow(port)), "flow {port} should be admitted");
+        }
+        assert_eq!(flows.lock().len(), MAX_LIVE_SOCKETS);
+
+        // Past the limit nothing is admitted, so nothing is allocated either.
+        assert!(
+            !claim(&flows, flow(MAX_LIVE_SOCKETS as u16)),
+            "a SYN past the limit must not be admitted"
+        );
+        assert_eq!(flows.lock().len(), MAX_LIVE_SOCKETS);
+
+        // A retransmission still takes no second slot, at the limit included.
+        assert!(!claim(&flows, flow(0)));
+
+        // A closed connection frees its slot.
+        flows.lock().remove(&flow(7));
+        assert!(claim(&flows, flow(MAX_LIVE_SOCKETS as u16)));
+        assert_eq!(flows.lock().len(), MAX_LIVE_SOCKETS);
+    }
+
+    /// Which states the handshake deadline takes over from the idle timeout.
+    ///
+    /// The invariant is that the cap's slots come back. It matters only for a
+    /// connection that has not become usable, because that is the only case the
+    /// idle timeout cannot already bound; an established connection has earned
+    /// its slot for as long as the peer keeps it, so the two-hour silence bound
+    /// stays exactly where it was.
+    #[test]
+    fn only_a_connection_that_has_not_established_is_given_up_on() {
+        for state in [
+            TcpState::Listen,
+            TcpState::SynReceived,
+            TcpState::Established,
+            TcpState::CloseWait,
+            TcpState::LastAck,
+            TcpState::FinWait1,
+            TcpState::FinWait2,
+            TcpState::TimeWait,
+            TcpState::Closing,
+            TcpState::SynSent,
+            TcpState::Closed,
+        ] {
+            assert_eq!(
+                handshake_pending(state),
+                matches!(state, TcpState::Listen | TcpState::SynReceived),
+                "{state:?}"
+            );
+        }
+        // And the bound has to be the one a peer's SYN gets, not the two hours
+        // an established connection is allowed to stay silent.
+        assert!(HANDSHAKE_LINGER < std::time::Duration::from_secs(7200));
+        assert!(HANDSHAKE_LINGER >= std::time::Duration::from_secs(60));
     }
 }
