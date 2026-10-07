@@ -375,6 +375,35 @@ mod tests {
         assert_eq!(accounts[0].password.as_ref(), "correct-horse");
     }
 
+    /// Xray's `http` inbound turns auth on by listing accounts, with no
+    /// `auth` key; without this the LAN password the TUI writes protected
+    /// nothing on the HTTP port.
+    #[test]
+    fn http_accounts_turn_password_auth_on() {
+        let inbound = |settings: serde_json::Value| {
+            let config = serde_json::json!({
+                "inbounds": [{"listen": "0.0.0.0", "port": 10809, "protocol": "http", "settings": settings}],
+                "outbounds": [{"protocol": "freedom"}]
+            });
+            parse_config(&config).map(|(config, _)| config.inbounds[0].socks_auth.clone())
+        };
+        let SocksAuth::Password(accounts) =
+            inbound(serde_json::json!({"accounts": [{"user": "zeronet", "pass": "pw"}]})).unwrap()
+        else {
+            panic!("an http inbound with accounts must require them")
+        };
+        assert_eq!(accounts[0].username.as_ref(), "zeronet");
+        assert!(matches!(
+            inbound(serde_json::json!({})).unwrap(),
+            SocksAuth::None
+        ));
+        assert!(matches!(
+            inbound(serde_json::json!({"accounts": []})).unwrap(),
+            SocksAuth::None
+        ));
+        assert!(inbound(serde_json::json!({"accounts": [{"pass": "pw"}]})).is_err());
+    }
+
     #[test]
     fn compiles_anytls_client_and_server_with_certificate_tls() {
         let config = serde_json::json!({

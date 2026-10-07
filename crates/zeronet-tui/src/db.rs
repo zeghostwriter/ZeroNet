@@ -179,6 +179,10 @@ pub struct AppSettings {
     pub finder_max_tier: u32,
     /// Keep this many found servers; the least useful beyond it are pruned.
     pub finder_keep: usize,
+    /// The password other devices on the LAN give the proxy (user `zeronet`)
+    /// once LAN access is on. Made once and kept, so a phone or TV set up with
+    /// it keeps working; empty until LAN access is first switched on.
+    pub lan_password: String,
 }
 
 impl Default for AppSettings {
@@ -240,6 +244,7 @@ impl Default for AppSettings {
             share_results: true,
             finder_max_tier: 2,
             finder_keep: 40,
+            lan_password: String::new(),
         }
     }
 }
@@ -633,6 +638,7 @@ impl Database {
                             settings.finder_keep = v.clamp(5, 500);
                         }
                     }
+                    "lan_credential" => settings.lan_password = item.1,
                     _ => {}
                 }
             }
@@ -783,6 +789,7 @@ impl Database {
             ),
             ("finder_max_tier", &settings.finder_max_tier.to_string()),
             ("finder_keep", &settings.finder_keep.to_string()),
+            ("lan_credential", &settings.lan_password),
         ];
 
         for (k, v) in pairs {
@@ -1451,6 +1458,7 @@ mod tests {
             share_results: false,
             finder_max_tier: 3,
             finder_keep: 12,
+            lan_password: "lan-secret".into(),
         }
     }
 

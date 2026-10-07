@@ -161,9 +161,6 @@ impl FramePacer {
 /// Parting message. Gold when the terminal can colour it.
 const GOODBYE: &str = "Zero is now Zero, Goodbye!";
 
-/// Settings-table key holding the password LAN clients must present.
-const LAN_CREDENTIAL_KEY: &str = "lan_credential";
-
 fn main() -> Result<()> {
     // The privileged helper is this same binary re-executed under sudo. It
     // must be dealt with before the terminal, the database or the async
@@ -260,6 +257,7 @@ async fn client_main() -> Result<Option<std::path::PathBuf>> {
     let mut terminal = Terminal::new(CrosstermBackend::new(out))?;
 
     let mut app = App::new(&db, &daemon, caps, is_elevated, elevation_prompt, images)?;
+    app.ensure_lan_password();
     if let Some(message) = recovered_proxy {
         app.toasts.info(message);
     }
@@ -875,31 +873,26 @@ impl<'a> App<'a> {
         self.toasts.info(format!("System proxy: {}", mode.label()));
     }
 
-    /// The password a LAN client must present, generated once and kept.
+    /// The credential LAN clients must present, once one has been made.
     ///
-    /// Regenerating it on every read would break a phone or TV that had it
-    /// configured, so it lives in the settings table like any other.
+    /// Handed to the engine whether LAN access is on or off: on, it is
+    /// required on the SOCKS and HTTP ports; off, the engine uses it to
+    /// recognise and remove the account it stamped earlier.
     fn lan_credential(&self) -> Option<zeronet_tui::daemon::LanCredential> {
-        if !self.settings.allow_lan {
-            return None;
-        }
-        if let Some(pass) = self.db.get_value(LAN_CREDENTIAL_KEY) {
-            if !pass.is_empty() {
-                return Some(zeronet_tui::daemon::LanCredential {
-                    user: "zeronet".into(),
-                    pass,
-                });
-            }
-        }
-        let credential = zeronet_tui::daemon::new_lan_credential();
-        if self
-            .db
-            .set_value(LAN_CREDENTIAL_KEY, &credential.pass)
-            .is_ok()
-        {
-            Some(credential)
-        } else {
-            None
+        (!self.settings.lan_password.is_empty()).then(|| zeronet_tui::daemon::LanCredential {
+            user: "zeronet".into(),
+            pass: self.settings.lan_password.clone(),
+        })
+    }
+
+    /// Make the LAN password if LAN access is on and none exists yet: on the
+    /// first switch-on, and at start for a profile that had LAN on before
+    /// passwords existed. Kept once made, so devices set up with it keep
+    /// working.
+    fn ensure_lan_password(&mut self) {
+        if self.settings.allow_lan && self.settings.lan_password.is_empty() {
+            self.settings.lan_password = zeronet_tui::daemon::new_lan_credential().pass;
+            self.persist_settings();
         }
     }
 
@@ -4924,18 +4917,11 @@ impl App<'_> {
                     // else on the page does that. Other hosts now have to
                     // authenticate, so the user needs the credential to set up
                     // the phone or TV they turned this on for.
-                    let credential = self.lan_credential();
-                    let message = match &credential {
-                        Some(credential) => format!(
-                            "LAN access on. User \"{}\", password {}",
-                            credential.user, credential.pass
-                        ),
-                        None => {
-                            "The proxy is open to your LAN now. Anyone on this network can use it."
-                                .to_string()
-                        }
-                    };
-                    self.toasts.warning(message);
+                    self.ensure_lan_password();
+                    self.toasts.warning(format!(
+                        "LAN access on. Other devices sign in as \"zeronet\" with password {} (shown in Settings).",
+                        self.settings.lan_password
+                    ));
                     self.persist_settings();
                 } else {
                     self.save_and_report("Proxy bound to localhost only".to_string());

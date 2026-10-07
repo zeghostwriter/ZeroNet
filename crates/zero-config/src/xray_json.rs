@@ -269,6 +269,7 @@ fn parse_inbound(v: &Value, idx: usize, _out: &mut ParseOutput) -> R<Inbound> {
 
     let socks_auth = match proto {
         "socks" | "mixed" => parse_socks_auth(v.get("settings"), &path)?,
+        "http" => parse_http_auth(v.get("settings"), &path)?,
         _ => SocksAuth::None,
     };
 
@@ -310,6 +311,22 @@ fn parse_inbound(v: &Value, idx: usize, _out: &mut ParseOutput) -> R<Inbound> {
         sniffing,
         socks_auth,
     })
+}
+
+/// An `http` inbound's accounts. Xray's HTTP inbound has no `auth` switch:
+/// listing accounts is what turns `Proxy-Authorization` on, so a non-empty
+/// `accounts` reads as password auth with the same checks SOCKS applies.
+fn parse_http_auth(settings: Option<&Value>, path: &str) -> R<SocksAuth> {
+    let listed = settings
+        .and_then(|settings| settings.get("accounts"))
+        .and_then(Value::as_array)
+        .is_some_and(|accounts| !accounts.is_empty());
+    if !listed {
+        return Ok(SocksAuth::None);
+    }
+    let mut forced = settings.cloned().unwrap_or_default();
+    forced["auth"] = Value::from("password");
+    parse_socks_auth(Some(&forced), path)
 }
 
 fn parse_socks_auth(settings: Option<&Value>, path: &str) -> R<SocksAuth> {
