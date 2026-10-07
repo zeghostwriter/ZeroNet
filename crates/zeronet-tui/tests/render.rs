@@ -1109,6 +1109,31 @@ fn the_settings_screen_exposes_the_proxy_modes() {
     assert!(frame.contains("keeps your settings"));
 }
 
+/// The Cloudflare answer has to be visible, and to say which of the three it
+/// is, because it is what the connect flow reads before it asks.
+#[test]
+fn the_cloudflare_answer_is_on_the_page_and_says_which_it_is() {
+    let mut h = Harness::new();
+    h.active_tab = ActiveTab::Settings;
+    h.advanced_open = true;
+
+    let all = settings_text(&mut h, 150, 44);
+    assert!(all.contains("Cloudflare WARP"), "the row is missing");
+    assert!(
+        all.contains("asked once, on the first"),
+        "the default has to say it will ask"
+    );
+
+    for (stored, shown) in [
+        ("on", "chain a server through Cloudflare"),
+        ("off", "never use Cloudflare"),
+    ] {
+        h.settings.warp_consent = stored.into();
+        let all = settings_text(&mut h, 150, 44);
+        assert!(all.contains(shown), "{stored} should read as {shown:?}");
+    }
+}
+
 /// The engine settings carried over from v2rayN, and the scanner's own
 /// controls, all have to be on the page and reachable.
 ///
@@ -2555,6 +2580,35 @@ fn the_warp_dialog_asks_before_it_makes_an_account() {
 }
 
 #[test]
+fn the_warp_consent_question_says_what_agreeing_does() {
+    use zeronet_tui::modal::WarpPhase;
+    let mut h = Harness::new();
+    h.modal_state = warp_dialog(WarpPhase::Consent);
+    let frame = h.draw(120, 40);
+    dump("modal_warp_consent", &frame);
+    assert!(frame.contains("Use Cloudflare WARP?"));
+    // The two things a person must know before agreeing: an account is made,
+    // and a server is borrowed for the trip when Cloudflare is filtered.
+    assert!(frame.contains("anonymous Cloudflare WARP account"));
+    assert!(frame.contains("brought up first"));
+    assert!(frame.contains("change this answer in Settings"));
+    // The terms are part of agreeing, so the dialog has to be tall enough to
+    // show the address: this paragraph is the one that wraps onto a tenth
+    // line, and a body sized for nine drops the URL without a word.
+    assert!(frame.contains("cloudflare.com/application/terms"));
+    assert!(frame.contains("Agree"));
+    // The second button saves a permanent "no", so it is not dressed up as a
+    // deferral it cannot honour.
+    assert!(frame.contains("No, thanks"));
+    for id in [ComponentId::WarpPrimary, ComponentId::WarpSecondary] {
+        let found = (0..40)
+            .flat_map(|y| (0..120).map(move |x| (x, y)))
+            .any(|(x, y)| h.interaction.hit_test(x, y) == Some(id));
+        assert!(found, "{id:?} is unreachable");
+    }
+}
+
+#[test]
 fn the_warp_dialog_shows_the_work_as_it_happens() {
     use zeronet_tui::modal::WarpPhase;
     let mut h = Harness::new();
@@ -2573,8 +2627,11 @@ fn the_warp_dialog_shows_the_work_as_it_happens() {
     assert!(frame.contains("Account created"));
     assert!(frame.contains("Found a server that works (842 ms)"));
     assert!(frame.contains("Trying 100 servers"));
-    // Hiding is offered, and the work is not cancelled by it.
-    assert!(frame.contains("Hide"));
+    // The second button backs the setup out, so it says so: the setup is
+    // driven from this dialog and a borrowed server is let go either way, so
+    // dressing that up as a harmless "hide" would misdescribe what it does.
+    assert!(frame.contains("Cancel (Esc)"));
+    assert!(!frame.contains("Hide"));
 }
 
 #[test]
@@ -2607,32 +2664,31 @@ fn the_warp_dialog_reports_the_result_and_offers_to_connect() {
 
 #[test]
 fn the_warp_dialog_manages_an_existing_profile_with_clickable_options() {
+    use zero_config::HybridMode;
     use zeronet_tui::modal::WarpPhase;
     let mut h = Harness::new();
     h.modal_state = warp_dialog(WarpPhase::Manage {
         profile: 3,
         remark: "WARP".into(),
         exits: 2,
-        reverse: false,
+        hybrid: HybridMode::WarpFirst,
+        prefer_exit: false,
         route: "auto".into(),
         selected: 1,
     });
     let frame = h.draw(120, 40);
     dump("modal_warp_manage", &frame);
     assert!(frame.contains("2 servers listed"));
-    assert!(frame.contains("The tunnel alone goes first"));
-    assert!(frame.contains("Find servers that work through this account"));
-    assert!(frame.contains("Go through servers first instead"));
+    assert!(frame.contains("Reverse hybrid: tunnel first"));
+    assert!(frame.contains("a server as failsafe"));
+    assert!(frame.contains("Find servers for this account"));
+    assert!(frame.contains("Switch to hybrid (a server first)"));
     assert!(frame.contains("Get a new account"));
-    // The highlighted entry carries the marker.
     let marked = frame
         .lines()
-        .find(|line| line.contains("▸"))
+        .find(|line| line.contains("\u{25b8}"))
         .expect("a highlighted entry");
-    assert!(
-        marked.contains("Go through servers first instead"),
-        "{marked}"
-    );
+    assert!(marked.contains("Switch to hybrid"), "{marked}");
     for index in 0..zeronet_tui::modal::WARP_OPTIONS {
         let id = ComponentId::WarpOption(index);
         let found = (0..40)
@@ -2641,19 +2697,34 @@ fn the_warp_dialog_manages_an_existing_profile_with_clickable_options() {
         assert!(found, "option {index} is unreachable");
     }
 
-    // The other order reads the other way round.
+    // The server-first order says the opposite thing, in both halves.
     h.modal_state = warp_dialog(WarpPhase::Manage {
         profile: 3,
         remark: "WARP".into(),
         exits: 1,
-        reverse: true,
+        hybrid: HybridMode::ServerFirst,
+        prefer_exit: false,
         route: "masque-h2".into(),
         selected: 0,
     });
     let frame = h.draw(120, 40);
     assert!(frame.contains("1 server listed"));
-    assert!(frame.contains("Servers go first"));
-    assert!(frame.contains("Go through the tunnel alone first instead"));
+    assert!(frame.contains("Hybrid: a server first"));
+    assert!(frame.contains("Switch to reverse hybrid"));
+
+    // And within the tunnel-first order, a server carrying the traffic reads
+    // differently again from one standing by.
+    h.modal_state = warp_dialog(WarpPhase::Manage {
+        profile: 3,
+        remark: "WARP".into(),
+        exits: 1,
+        hybrid: HybridMode::WarpFirst,
+        prefer_exit: true,
+        route: "masque-h2".into(),
+        selected: 0,
+    });
+    let frame = h.draw(120, 40);
+    assert!(frame.contains("a server carries traffic"));
 }
 
 #[test]

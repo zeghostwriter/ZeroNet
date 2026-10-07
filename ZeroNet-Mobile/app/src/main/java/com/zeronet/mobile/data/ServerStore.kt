@@ -137,6 +137,19 @@ class ServerStore private constructor(context: Context) :
         if (c.moveToFirst()) c.getInt(0) else 0
     }
 
+    /**
+     * Whether a Cloudflare WARP account is stored, asked on every connect.
+     *
+     * A targeted query rather than reading the table: `all()` is several
+     * hundred rows, and this only needs to know whether one of them is a
+     * `warp://` link. The index on `link` is not worth adding for a check that
+     * returns after the first row.
+     */
+    fun hasWarpAccount(): Boolean =
+        readableDatabase.rawQuery(
+            "SELECT 1 FROM servers WHERE link LIKE 'warp://%' LIMIT 1", null,
+        ).use { it.moveToFirst() }
+
     // ----------------------------------------------------------------- writes
 
     /** Insert or refresh descriptive fields; keeps favourite/stats of an existing row. */

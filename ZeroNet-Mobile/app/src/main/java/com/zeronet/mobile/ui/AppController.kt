@@ -18,7 +18,9 @@ import com.zeronet.mobile.data.SettingsStore
 import com.zeronet.mobile.model.ConnState
 import com.zeronet.mobile.model.ConnectTarget
 import com.zeronet.mobile.model.ConnectionMode
+import com.zeronet.mobile.model.ConnectionProfile
 import com.zeronet.mobile.model.Settings
+import com.zeronet.mobile.model.WarpConsent
 import com.zeronet.mobile.ui.shell.AppMessages
 import com.zeronet.mobile.ui.shell.Tab
 import com.zeronet.mobile.update.AppUpdater
@@ -70,6 +72,13 @@ class AppController(
     /** A manual check opens the sheet with whatever it finds; the start-up check only for new news. */
     private var showNextFinding = false
 
+    /** The Cloudflare consent question is up; the connect waits behind it. */
+    var warpConsentOpen by mutableStateOf(false)
+        private set
+
+    /** What the connect behind the question was going to reach. */
+    private var warpConsentTarget: ConnectTarget? = null
+
     /** The user was sent to allow installs; install once they are back. */
     private var pendingInstall = false
 
@@ -119,7 +128,49 @@ class AppController(
         if (engine.state.value.isActive) engine.disconnect() else connect()
     }
 
+    /**
+     * Connect, asking about Cloudflare first the one time.
+     *
+     * The question only stands in the way of the recommended mode, and only
+     * while no account exists yet. Once it is answered the setting holds the
+     * answer, so this is a plain connect from then on.
+     */
     fun connect(target: ConnectTarget = ConnectTarget.decode(settings.current.lastTarget)) {
+        val now = settings.current
+        val shouldAsk = now.warpConsent == WarpConsent.Ask &&
+            now.profile == ConnectionProfile.Normal &&
+            !hasWarpAccount()
+        if (shouldAsk) {
+            warpConsentTarget = target
+            warpConsentOpen = true
+            return
+        }
+        connectNow(target)
+    }
+
+    /** Whether an account is already stored: a server that is a `warp://` link. */
+    private fun hasWarpAccount(): Boolean =
+        servers.servers.value.any { it.link.startsWith("warp://") }
+
+    /**
+     * The person answered the Cloudflare question; the answer is kept, and the
+     * connect they asked for goes ahead either way.
+     *
+     * Agreeing does not start a second, separate connect: the answer is stored
+     * first and the ordinary connect carries it, so the VPN permission, the
+     * kill switch and the service start all happen exactly once. The engine
+     * reads the stored answer at the start of that connect and sets the
+     * account up before it dials anything.
+     */
+    fun answerWarpConsent(agree: Boolean) {
+        warpConsentOpen = false
+        val target = warpConsentTarget ?: ConnectTarget.decode(settings.current.lastTarget)
+        warpConsentTarget = null
+        settings.update { it.copy(warpConsent = if (agree) WarpConsent.On else WarpConsent.Off) }
+        connectNow(target)
+    }
+
+    private fun connectNow(target: ConnectTarget) {
         if (settings.current.mode == ConnectionMode.Vpn && needsVpnPermission()) {
             platform.requestVpnPermission { granted ->
                 if (granted) engine.connect(target) else messages.show(context.getString(R.string.msg_vpn_permission_denied))

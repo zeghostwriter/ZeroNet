@@ -22,6 +22,7 @@ import com.zeronet.mobile.ui.home.HomeRoute
 import com.zeronet.mobile.ui.onboarding.OnboardingRoute
 import com.zeronet.mobile.ui.scanner.ScannerRoute
 import com.zeronet.mobile.ui.servers.ServersRoute
+import com.zeronet.mobile.ui.servers.WarpConsentSheet
 import com.zeronet.mobile.ui.settings.SettingsRoute
 import com.zeronet.mobile.ui.shell.Tab
 import com.zeronet.mobile.ui.shell.TabHost
@@ -104,5 +105,9 @@ private fun MainTabs(controller: AppController) {
             )
         }
         UpdateSheet(controller.updateSheetOpen, update, actions)
+        // The Cloudflare question stands in the way of a connect, so it is put
+        // here rather than on a page: it has to appear wherever the person
+        // pressed connect.
+        WarpConsentSheet(controller.warpConsentOpen, controller::answerWarpConsent)
     }
 }

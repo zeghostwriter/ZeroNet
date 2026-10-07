@@ -157,35 +157,6 @@ class CreativeShotsTest {
         )
     }
 
-    // ------------------------------------------------------------ the blob
-
-    private fun blobShot(name: String, at: List<Long>, from: com.zeronet.mobile.model.ConnectionProfile, to: com.zeronet.mobile.model.ConnectionProfile) {
-        var profile by androidx.compose.runtime.mutableStateOf(from)
-        compose.mainClock.autoAdvance = false
-        compose.setContent {
-            com.zeronet.mobile.ui.theme.ZeroTheme(themeMode = com.zeronet.mobile.model.ThemeMode.Dark) {
-                androidx.compose.foundation.layout.Box(
-                    androidx.compose.ui.Modifier.padding(24.dp)
-                ) {
-                    com.zeronet.mobile.ui.home.ProfileSelector(profile, { profile = it })
-                }
-            }
-        }
-        compose.mainClock.advanceTimeBy(1_500)
-        compose.runOnIdle { profile = to }
-        var passed = 0L
-        for ((i, t) in at.withIndex()) {
-            compose.mainClock.advanceTimeBy(t - passed)
-            passed = t
-            compose.onRoot().captureRoboImage("build/outputs/roborazzi/${name}_$i.png")
-        }
-    }
-
-    @Test fun blob_travels_normal_to_gaming() = blobShot(
-        "blob", listOf(60, 130, 220, 420),
-        com.zeronet.mobile.model.ConnectionProfile.Normal, com.zeronet.mobile.model.ConnectionProfile.Gaming,
-    )
-
     // ----------------------------------------------------------- the space
 
     @Test fun space_home_idle() = compose.shot("space_idle", advanceMs = 2000) { HomeScreen(home(race).copy(conn = ConnState.Idle), {}, {}, {}) }

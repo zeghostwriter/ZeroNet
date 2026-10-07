@@ -235,14 +235,44 @@ impl App<'_> {
             }
             FinderEvent::Done { alive, reason } => {
                 let session = self.finder.session.take();
+                // What the automatic WARP setup needs to hear is whether the
+                // search left it a server to make the account through, and the
+                // session already knows: `connect` is cleared the moment a
+                // find is dialled, so it is *still set* here exactly when this
+                // search was asked to dial and never got to — nothing was
+                // found, everything found was a profile the person excluded, or
+                // it was cancelled first. A search that was not asked to dial
+                // reads the same, but the setup starts its own search with
+                // `connect`, and `start_finder` only ever upgrades one already
+                // running, so no other search can answer for it.
+                //
+                // Whether a dialled server *works* is the engine's answer, and
+                // it arrives after this. Failing a find that was dialled here
+                // would throw away a borrow that is about to come up.
+                let dialled = session.as_ref().is_some_and(|s| !s.connect);
+                let found_none = alive == 0 && reason != "cancelled";
+                // The two ways the search ends with nothing to borrow while
+                // still looking like it found something: every find it did was
+                // a profile the person excluded and so was never dialled, or
+                // the search was cancelled before anything was.
+                if self.bg.warp_boot.is_some() && !dialled && !found_none {
+                    self.warp_boot_borrow_failed(
+                        "No server could be connected to make the WARP account through.",
+                    );
+                }
                 let seconds = session
                     .as_ref()
                     .map_or(0, |s| s.started.elapsed().as_secs());
                 let _ = self.db.prune_found(self.settings.finder_keep);
                 self.reload_configs();
-                if alive == 0 && reason != "cancelled" {
+                if found_none {
                     self.toasts.warning(
                         "No working server found this time. Try again in a while, raise Search Depth in Settings, or add a config of your own.",
+                    );
+                    // If the automatic WARP setup was borrowing a server to
+                    // make an account through, there is nothing to borrow.
+                    self.warp_boot_borrow_failed(
+                        "No server answered, so the WARP account could not be made through one.",
                     );
                     if let Some(session) = &session {
                         if session.connect {

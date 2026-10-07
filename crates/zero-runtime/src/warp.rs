@@ -43,7 +43,7 @@ use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, Mutex as StdMutex};
 use std::time::{Duration, Instant};
 
-use zero_config::{AmneziaWireguardConfig, MasqueConfig, WarpRoute};
+use zero_config::{AmneziaWireguardConfig, HybridMode, MasqueConfig, WarpRoute};
 use zero_protocol::wg_stack::{self, PacketLink, WgStack, WgStackParams};
 use zero_transport::masque::{self, Endpoint, MasqueKey, Spec};
 
@@ -151,6 +151,8 @@ pub struct Tunnel {
     stack: WgStack,
     route: WarpRoute,
     entry: Arc<Entry>,
+    /// Reached through one of the outbound's servers (the `hybrid` order).
+    carried: bool,
 }
 
 impl Deref for Tunnel {
@@ -171,6 +173,12 @@ impl Tunnel {
     /// The route this tunnel runs over (never `Auto`).
     pub fn route(&self) -> WarpRoute {
         self.route
+    }
+
+    /// Whether the tunnel is reached through one of the outbound's servers
+    /// (the `hybrid` order) rather than dialled directly.
+    pub fn carried(&self) -> bool {
+        self.carried
     }
 
     /// Feed the outcome of a connection or exchange back to route selection.
@@ -221,13 +229,17 @@ fn candidates(
 }
 
 /// Two outbounds with the same account, endpoints and WireGuard peer share a
-/// tunnel.
-fn identity(config: &AmneziaWireguardConfig, peer: Option<SocketAddr>) -> u64 {
+/// tunnel. A carried tunnel is a different one from the same account dialled
+/// directly, and depends on the servers that carry it, so those go in too.
+fn identity(config: &AmneziaWireguardConfig, peer: Option<SocketAddr>, carried: bool) -> u64 {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     peer.hash(&mut hasher);
     config.private_key.hash(&mut hasher);
     config.peer_public_key.hash(&mut hasher);
     config.route.hash(&mut hasher);
+    if carried {
+        config.exits.hash(&mut hasher);
+    }
     if let Some(masque) = &config.masque {
         masque.private_key.hash(&mut hasher);
         masque.http2_endpoints.hash(&mut hasher);
@@ -352,8 +364,13 @@ async fn open(
 /// better, since it can be let through where the rest is not.
 async fn verify(stack: &WgStack) -> Result<(), String> {
     match tokio::time::timeout(PROBE_TIMEOUT, egress(stack)).await {
-        Ok(result) => result,
-        Err(_) => Err("no answer through the tunnel".into()),
+        // The reason is kept: "no answer through the tunnel" on its own sends
+        // the reader looking at the filter when the tunnel is what is broken.
+        Ok(result) => result.map_err(|error| format!("the tunnel carried nothing: {error}")),
+        Err(_) => Err(format!(
+            "no answer through the tunnel in {}s",
+            PROBE_TIMEOUT.as_secs()
+        )),
     }
 }
 
@@ -581,7 +598,7 @@ pub async fn tunnel(
 ) -> Result<Tunnel, String> {
     let entry = Arc::clone(
         lock(&ENTRIES)
-            .entry(identity(config, wireguard_peer))
+            .entry(identity(config, wireguard_peer, false))
             .or_default(),
     );
     // One selection at a time: the streams that arrive while it runs wait for
@@ -600,6 +617,7 @@ pub async fn tunnel(
                 stack,
                 route,
                 entry: Arc::clone(&entry),
+                carried: false,
             });
         }
         // Dead or useless. A tunnel that simply idled out is neither.
@@ -662,6 +680,7 @@ pub async fn tunnel(
         stack,
         route,
         entry: Arc::clone(&entry),
+        carried: false,
     })
 }
 
@@ -721,6 +740,175 @@ fn promote_if_due(
     });
 }
 
+// --------------------------------------------------------- carried tunnels
+//
+// The `hybrid` order: a server the account lists is dialled first and
+// Cloudflare's edge is reached *through* it, so the local network sees an
+// ordinary connection to that server and never sees Cloudflare. Only the
+// HTTP/2 tunnel can ride another connection (HTTP/3 and WireGuard need a UDP
+// socket of their own), so a carried tunnel is always MASQUE over HTTP/2.
+//
+// A carried tunnel is registered like a direct one, under its own identity,
+// kept while it is alive and rebuilt through a carrier when it dies.
+
+/// How long the listed servers get, in total, to bring a carried tunnel up and
+/// prove it. Longer than [`EXIT_BUDGET`]: it covers the server's own handshake,
+/// Cloudflare's TLS and CONNECT through it, and the egress probe.
+const CARRY_BUDGET: Duration = Duration::from_secs(12);
+
+/// The tunnel a WARP outbound's connections ride, in the order it asks for.
+///
+/// Under [`HybridMode::ServerFirst`] the tunnel is carried by one of the
+/// listed servers when one can; when none can (or there is no resolver to open
+/// one with) it is dialled directly instead, because a working connection on
+/// the other order beats no connection. `wireguard_peer` is where the
+/// WireGuard endpoint resolved to, for the direct routes.
+pub async fn tunnel_for(
+    config: &AmneziaWireguardConfig,
+    wireguard_peer: Option<SocketAddr>,
+    resolver: Option<&zero_dns::Resolver>,
+) -> Result<Tunnel, String> {
+    if config.hybrid == HybridMode::ServerFirst && !config.exits.is_empty() {
+        if let Some(resolver) = resolver {
+            match tunnel_carried(config, resolver).await {
+                Ok(tunnel) => return Ok(tunnel),
+                Err(error) => {
+                    tracing::debug!(%error, "no listed server carried the WARP tunnel; dialling it directly")
+                }
+            }
+        }
+    }
+    tunnel(config, wireguard_peer).await
+}
+
+/// One connection to `destination` through `server`, dialled directly from
+/// here: the server's own connection, then its protocol asked for the
+/// destination, with any reply header the protocol adds taken off.
+async fn open_via(
+    server: &zero_config::Outbound,
+    resolver: &zero_dns::Resolver,
+    destination: &zero_core::Destination,
+) -> Result<zero_core::BoxStream, String> {
+    let opened = async {
+        let (secured, _) = crate::outbound::open_secured(server, resolver).await?;
+        crate::outbound::connect_over(server, secured, destination).await
+    };
+    let stream = opened
+        .await
+        .map_err(|error| format!("server {}: {error}", server.tag))?;
+    Ok(crate::outbound::strip_response(server, stream))
+}
+
+/// Opens a stream to a Cloudflare edge address through `exit`.
+///
+/// The opener outlives this call (it is asked again on every rebuild of the
+/// session), so it owns its copies of the exit and the resolver.
+fn carrier_opener(
+    exit: Arc<zero_config::Outbound>,
+    resolver: zero_dns::Resolver,
+) -> masque::Opener {
+    Arc::new(move |edge: SocketAddr| {
+        let (exit, resolver) = (Arc::clone(&exit), resolver.clone());
+        Box::pin(async move {
+            let destination =
+                zero_core::Destination::tcp(zero_core::Address::Ip(edge.ip()), edge.port());
+            open_via(&exit, &resolver, &destination).await
+        })
+    })
+}
+
+/// Whether `server`, dialled directly from here, carries a request, and how
+/// long opening it and getting the answer took. For finding servers worth
+/// listing for the `hybrid` order, where Cloudflare is reached through them
+/// (`zeronet-warp gather`); the connection is dropped.
+pub async fn test_carrier(
+    server: &zero_config::Outbound,
+    resolver: &zero_dns::Resolver,
+    timeout: Duration,
+) -> Result<Duration, String> {
+    let started = Instant::now();
+    let destination = zero_core::Destination::tcp(zero_core::Address::parse_host(PROBE_HOST), 80);
+    let attempt = async {
+        let mut stream = open_via(server, resolver, &destination).await?;
+        fetch_probe(&mut stream).await
+    };
+    match tokio::time::timeout(timeout, attempt).await {
+        Ok(Ok(())) => Ok(started.elapsed()),
+        Ok(Err(error)) => Err(error),
+        Err(_) => Err("timed out".into()),
+    }
+}
+
+/// Bring Cloudflare's tunnel up through one of `config`'s servers.
+///
+/// The two cheapest are tried a moment apart and the first one that both
+/// authenticates and carries the egress probe is kept: a tunnel that finishes
+/// its handshake and carries nothing is the failure that would otherwise look
+/// like success. Every outcome goes into the carriers' own score book.
+async fn tunnel_carried(
+    config: &AmneziaWireguardConfig,
+    resolver: &zero_dns::Resolver,
+) -> Result<Tunnel, String> {
+    let masque_config = config
+        .masque
+        .as_deref()
+        .ok_or("this WARP outbound has no MASQUE key, so there is nothing to carry")?;
+    let entry = Arc::clone(
+        lock(&ENTRIES)
+            .entry(identity(config, None, true))
+            .or_default(),
+    );
+    let mut slot = entry.slot.lock().await;
+    if let Some(current) = slot.current.take() {
+        let condemned = entry.health.condemned.swap(false, Ordering::Relaxed);
+        if current.stack.is_alive() && !condemned {
+            let stack = current.stack.clone();
+            slot.current = Some(current);
+            return Ok(Tunnel {
+                stack,
+                route: WarpRoute::MasqueHttp2,
+                entry: Arc::clone(&entry),
+                carried: true,
+            });
+        }
+    }
+    entry.health.faults.store(0, Ordering::Relaxed);
+    // Built once for every attempt: the HTTP/2 edges whatever the route says,
+    // since this order cannot use the others.
+    let spec = masque_spec_with(masque_config, WarpRoute::MasqueHttp2, &slot.found_h2)?;
+    let addresses = &masque_config.addresses;
+    let stack = race_exits(config, true, 2, CARRY_BUDGET, |exit| {
+        let opener = carrier_opener(exit, resolver.clone());
+        let spec = spec.clone();
+        async move {
+            let link = masque::start_over(spec, opener).await?;
+            let stack = WgStack::start_link(
+                addresses.clone(),
+                resolver_of(addresses),
+                PacketLink {
+                    up: link.up,
+                    down: link.down,
+                    rebind: link.rebind,
+                },
+            )?;
+            verify(&stack).await?;
+            Ok(stack)
+        }
+    })
+    .await?;
+    slot.current = Some(Current {
+        route: WarpRoute::MasqueHttp2,
+        stack: stack.clone(),
+    });
+    entry.health.last_ok.store(now_ms(), Ordering::Relaxed);
+    Ok(Tunnel {
+        stack,
+        route: WarpRoute::MasqueHttp2,
+        entry: Arc::clone(&entry),
+        carried: true,
+    })
+}
+
 // ------------------------------------------------------------------ exits
 //
 // A WARP outbound may list `exits`: servers to dial *through* the tunnel. The
@@ -743,9 +931,14 @@ const EXIT_STAGGER: Duration = Duration::from_millis(1500);
 /// What an exit that has not been measured yet is assumed to cost, so that a
 /// measured good one is preferred to it and it is still tried in its turn.
 const UNMEASURED_MS: f64 = 1500.0;
-/// Failures in a row that take an exit out of use, and for how long.
+/// Failures in a row that take an exit out of use, and for how long the
+/// first time. Each further failure doubles the wait, up to
+/// [`EXIT_PENALTY_DOUBLINGS`] times (80 minutes): a server that stays dead is
+/// asked less and less often, because every time its penalty runs out the
+/// connections of that moment wait on it again.
 const EXIT_FAILURES: u32 = 2;
 const EXIT_PENALTY: Duration = Duration::from_secs(5 * 60);
+const EXIT_PENALTY_DOUBLINGS: u32 = 4;
 
 struct ExitState {
     link: Arc<str>,
@@ -770,8 +963,13 @@ impl ExitState {
 /// The exits of every WARP outbound, keyed by the list they came from.
 static EXITS: LazyLock<StdMutex<HashMap<u64, Vec<ExitState>>>> = LazyLock::new(Default::default);
 
-fn exits_key(config: &AmneziaWireguardConfig) -> u64 {
+/// The book a server list is scored in. `direct` says the servers are dialled
+/// from here (the carriers of the `hybrid` order) rather than through the
+/// tunnel: the same server can work one way and be blocked the other, so the
+/// two paths never share a score.
+fn exits_key(config: &AmneziaWireguardConfig, direct: bool) -> u64 {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    direct.hash(&mut hasher);
     config.exits.hash(&mut hasher);
     hasher.finish()
 }
@@ -823,15 +1021,16 @@ fn record_exit(key: u64, link: &str, took: Result<Duration, ()>, now: Instant) {
         Err(()) => {
             state.failures += 1;
             if state.failures >= EXIT_FAILURES {
-                state.penalized_until = Some(now + EXIT_PENALTY);
+                let doublings = (state.failures - EXIT_FAILURES).min(EXIT_PENALTY_DOUBLINGS);
+                state.penalized_until = Some(now + EXIT_PENALTY * (1 << doublings));
             }
         }
     }
 }
 
 /// Parse an outbound's exit list once and keep the book.
-fn load_exits(config: &AmneziaWireguardConfig) -> u64 {
-    let key = exits_key(config);
+fn load_exits(config: &AmneziaWireguardConfig, direct: bool) -> u64 {
+    let key = exits_key(config, direct);
     let mut books = lock(&EXITS);
     books.entry(key).or_insert_with(|| {
         config
@@ -871,45 +1070,55 @@ async fn through_exit(
     Ok(crate::outbound::strip_response(exit, stream))
 }
 
-/// Try the best exits, the second one only if the first is slow, and return
-/// the first stream that opens.
-async fn via_exits(
+/// Try the best `count` servers of `config` with `attempt`, the next one only
+/// if the one before is slow, and return the first success. `direct` picks
+/// the score book (see [`exits_key`]).
+///
+/// Every outcome is written to the score book, and so is silence: a server
+/// still running when `budget` runs out is counted as failed, or a dead one
+/// would cost every later connection the whole budget.
+async fn race_exits<T, F, Fut>(
     config: &AmneziaWireguardConfig,
-    tunnel: &Tunnel,
-    destination: &zero_core::Destination,
-) -> Result<zero_core::BoxStream, String> {
+    direct: bool,
+    count: usize,
+    budget: Duration,
+    mut attempt: F,
+) -> Result<T, String>
+where
+    F: FnMut(Arc<zero_config::Outbound>) -> Fut,
+    Fut: std::future::Future<Output = Result<T, String>>,
+{
     use futures::stream::{FuturesUnordered, StreamExt};
-    let key = load_exits(config);
+    let key = load_exits(config, direct);
     let chosen = {
         let books = lock(&EXITS);
         pick_exits(
             books.get(&key).map_or(&[][..], Vec::as_slice),
             Instant::now(),
-            2,
+            count,
         )
     };
     if chosen.is_empty() {
-        return Err("this WARP outbound has no usable exit".into());
+        return Err("this WARP outbound has no usable server".into());
     }
     let mut waiting: Vec<Arc<str>> = chosen.iter().map(|(link, _)| Arc::clone(link)).collect();
     let mut attempts = FuturesUnordered::new();
     for (position, (link, exit)) in chosen.into_iter().enumerate() {
+        let attempt = attempt(exit);
         attempts.push(async move {
             tokio::time::sleep(EXIT_STAGGER * position as u32).await;
             let started = Instant::now();
-            let result = through_exit(tunnel, &exit, destination).await;
+            let result = attempt.await;
             (link, started.elapsed(), result)
         });
     }
-    let mut last = String::from("no exit answered");
-    let deadline = tokio::time::Instant::now() + EXIT_BUDGET;
+    let mut last = String::from("no server answered");
+    let deadline = tokio::time::Instant::now() + budget;
     loop {
         match tokio::time::timeout_at(deadline, attempts.next()).await {
-            Ok(Some((link, took, Ok(stream)))) => {
+            Ok(Some((link, took, Ok(value)))) => {
                 record_exit(key, &link, Ok(took), Instant::now());
-                // Traffic came through, so the tunnel is fine.
-                tunnel.report(&Ok::<_, String>(()));
-                return Ok(stream);
+                return Ok(value);
             }
             Ok(Some((link, _, Err(error)))) => {
                 waiting.retain(|other| *other != link);
@@ -918,15 +1127,29 @@ async fn via_exits(
             }
             Ok(None) => return Err(last),
             Err(_) => {
-                // Silence counts as failure: an exit that never answers must
-                // stop being asked, or every connection waits the budget out.
                 for link in &waiting {
                     record_exit(key, link, Err(()), Instant::now());
                 }
-                return Err(format!("no exit answered in time: {last}"));
+                return Err(format!("no server answered in time: {last}"));
             }
         }
     }
+}
+
+/// One connection to `destination` through the best of the exits, reached
+/// through the tunnel.
+async fn via_exits(
+    config: &AmneziaWireguardConfig,
+    tunnel: &Tunnel,
+    destination: &zero_core::Destination,
+) -> Result<zero_core::BoxStream, String> {
+    let stream = race_exits(config, false, 2, EXIT_BUDGET, |exit| async move {
+        through_exit(tunnel, &exit, destination).await
+    })
+    .await?;
+    // Traffic came through, so the tunnel is fine.
+    tunnel.report(&Ok::<_, String>(()));
+    Ok(stream)
 }
 
 /// Open a connection to `destination` through a WARP outbound: over the
@@ -946,7 +1169,9 @@ pub async fn connect(
         tunnel.report(&opened);
         opened
     };
-    if config.exits.is_empty() {
+    // A carried tunnel already went through a listed server; going through
+    // one again from inside it would only lengthen the path.
+    if config.exits.is_empty() || tunnel.carried {
         return plain().await;
     }
     if config.prefer_exit {
@@ -1107,16 +1332,16 @@ mod tests {
     fn accounts_with_the_same_keys_share_a_tunnel_and_others_do_not() {
         let a = config(WarpRoute::Auto);
         let mut b = a.clone();
-        assert_eq!(identity(&a, None), identity(&b, None));
+        assert_eq!(identity(&a, None, false), identity(&b, None, false));
         b.route = WarpRoute::MasqueHttp2;
-        assert_ne!(identity(&a, None), identity(&b, None));
+        assert_ne!(identity(&a, None, false), identity(&b, None, false));
         let mut c = a.clone();
         c.masque.as_mut().unwrap().http2_endpoints.clear();
-        assert_ne!(identity(&a, None), identity(&c, None));
+        assert_ne!(identity(&a, None, false), identity(&c, None, false));
         // The same account at another WireGuard address is another tunnel.
         assert_ne!(
-            identity(&a, Some("192.0.2.1:2408".parse().unwrap())),
-            identity(&a, None)
+            identity(&a, Some("192.0.2.1:2408".parse().unwrap()), false),
+            identity(&a, None, false)
         );
     }
 
@@ -1142,6 +1367,168 @@ mod tests {
             .unwrap()
             .local_addr()
             .unwrap()
+    }
+
+    /// A VLESS server on the loopback: the person chose it, and it is the only
+    /// thing Cloudflare can be reached through here.
+    async fn carrier_server() -> (u16, Arc<crate::Server>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+        let (generation, _) = zero_config::compile_config(
+            &serde_json::json!({
+                "log": {"loglevel": "warning"},
+                "inbounds": [{
+                    "tag": "in",
+                    "listen": "127.0.0.1",
+                    "port": port,
+                    "protocol": "vless",
+                    "settings": {"clients": [{"id": CARRIER_UUID}]},
+                    "streamSettings": {"network": "raw"}
+                }],
+                "outbounds": [{"tag": "direct", "protocol": "freedom"}]
+            }),
+            zero_core::GenerationId(1),
+        )
+        .expect("the carrier config parses");
+        let server = Arc::new(crate::Server::new(crate::ServerConfig {
+            config: Arc::clone(&generation.config),
+            generation: generation.id,
+        }));
+        let running = Arc::clone(&server);
+        tokio::spawn(async move {
+            let _ = running.run().await;
+        });
+        server.wait_until_listening().await;
+        (port, server)
+    }
+
+    const CARRIER_UUID: &str = "00000000-0000-0000-0000-00000000cafe";
+
+    /// An account whose tunnel is reached through the server it lists.
+    fn carried_account(
+        server: &MasqueKey,
+        edge: SocketAddr,
+        carrier: u16,
+    ) -> AmneziaWireguardConfig {
+        let mut config = account(WarpRoute::MasqueHttp2, server, Some(edge), None);
+        config.hybrid = zero_config::HybridMode::ServerFirst;
+        config.exits = vec![Arc::from(format!(
+            "vless://{CARRIER_UUID}@127.0.0.1:{carrier}?encryption=none#carrier"
+        ))];
+        config
+    }
+
+    /// The order `hybrid` names, with a real server in front of Cloudflare.
+    ///
+    /// The server here is a complete one — its own inbound, its own protocol,
+    /// its own dial onward — so the tunnel can only come up by going through
+    /// it. What it does *not* do is bypass it: the address it is asked for is
+    /// the mock edge's, and only the server knows how to get there.
+    #[tokio::test]
+    async fn a_carried_tunnel_brings_cloudflare_up_through_a_listed_server() {
+        let _gate = GATE.read().await;
+        let server = MasqueKey::generate().unwrap();
+        let (edge, _, _) = h2_server(&server, false).await;
+        let (carrier, relay) = carrier_server().await;
+        let config = carried_account(&server, edge, carrier);
+        let resolver = zero_dns::Resolver::new(zero_config::dns::DnsSettings::default());
+
+        let tunnel = tunnel_carried(&config, &resolver)
+            .await
+            .expect("the tunnel came up through the server");
+        assert!(tunnel.is_alive(), "the carried tunnel is not alive");
+        assert!(tunnel.carried(), "the tunnel was dialled directly");
+        assert_eq!(tunnel.route(), WarpRoute::MasqueHttp2);
+        // A second call finds the same tunnel rather than negotiating again,
+        // which is what the registry is for.
+        let again = tunnel_carried(&config, &resolver)
+            .await
+            .expect("the same tunnel");
+        assert!(again.is_alive());
+        drop((tunnel, again));
+
+        // The tunnel stays in the registry after this, so the server's byte
+        // counters are not settled here; the accepted connection is the claim
+        // that matters, and it can only have come from `carrier_opener` — that
+        // function is the only thing in the process that ever dials this port.
+        assert!(
+            relay.stats.snapshot().accepted >= 1,
+            "the server accepted nothing, so the tunnel went around it"
+        );
+    }
+
+    /// A server dialled from here and the same server dialled through the
+    /// tunnel are scored apart: failing one way says nothing about the other.
+    #[test]
+    fn carriers_and_exits_keep_separate_score_books() {
+        let mut config = config(WarpRoute::Auto);
+        config.exits = vec![Arc::from(
+            "trojan://secret@203.0.113.9:8443?security=tls&sni=books.example.com#books",
+        )];
+        let (direct, tunnelled) = (load_exits(&config, true), load_exits(&config, false));
+        assert_ne!(direct, tunnelled);
+        let link = Arc::clone(&config.exits[0]);
+        let now = Instant::now();
+        for _ in 0..EXIT_FAILURES {
+            record_exit(direct, &link, Err(()), now);
+        }
+        {
+            let books = lock(&EXITS);
+            assert!(pick_exits(&books[&direct], now, 2).is_empty());
+            assert_eq!(pick_exits(&books[&tunnelled], now, 2).len(), 1);
+        }
+        // Back in use once the penalty is over, and out for twice as long when
+        // it fails again.
+        let later = now + EXIT_PENALTY;
+        assert_eq!(pick_exits(&lock(&EXITS)[&direct], later, 2).len(), 1);
+        record_exit(direct, &link, Err(()), later);
+        let books = lock(&EXITS);
+        assert!(pick_exits(&books[&direct], later + EXIT_PENALTY, 2).is_empty());
+        assert_eq!(
+            pick_exits(&books[&direct], later + EXIT_PENALTY * 2, 2).len(),
+            1
+        );
+    }
+
+    /// An account with no MASQUE key has no tunnel that could be carried, and
+    /// says so rather than quietly dialing it directly.
+    #[tokio::test]
+    async fn a_wireguard_only_account_cannot_be_carried() {
+        let _gate = GATE.read().await;
+        // Built with a MASQUE half and then stripped: the parser wants key
+        // material, and this is the account shape that has none at runtime.
+        let mut config = config(WarpRoute::MasqueHttp2);
+        config.masque = None;
+        config.hybrid = zero_config::HybridMode::ServerFirst;
+        let resolver = zero_dns::Resolver::new(zero_config::dns::DnsSettings::default());
+        let error = match tunnel_carried(&config, &resolver).await {
+            Ok(_) => panic!("a WireGuard-only account has no tunnel to carry"),
+            Err(error) => error,
+        };
+        assert!(error.contains("MASQUE"), "{error}");
+    }
+
+    /// When none of the listed servers can carry the tunnel, the `hybrid`
+    /// order falls back to dialling it directly, and the connections then use
+    /// the tunnel alone.
+    #[tokio::test]
+    async fn the_hybrid_order_dials_directly_when_no_server_can_carry_it() {
+        let _gate = GATE.read().await;
+        let server = MasqueKey::generate().unwrap();
+        let (edge, _, connections) = h2_server(&server, false).await;
+        let dead = closed_port().port();
+        let mut config = carried_account(&server, edge, dead);
+        // A server of its own, so the score book is not shared with other tests.
+        config.exits = vec![Arc::from(format!(
+            "vless://{CARRIER_UUID}@127.0.0.1:{dead}?encryption=none#dead-carrier"
+        ))];
+        let resolver = zero_dns::Resolver::new(zero_config::dns::DnsSettings::default());
+        let tunnel = tunnel_for(&config, None, Some(&resolver))
+            .await
+            .expect("the direct tunnel is the fallback");
+        assert!(!tunnel.carried());
+        assert!(connections.load(Ordering::SeqCst) >= 1);
     }
 
     #[tokio::test]
@@ -1243,7 +1630,7 @@ mod tests {
         let config = account(WarpRoute::Auto, &server, Some(h2), Some(h3));
         // HTTP/3 is preferred, but it starts out under penalty (as if it had
         // failed a moment ago), so HTTP/2 carries the first connections.
-        let key = identity(&config, None);
+        let key = identity(&config, None, false);
         let entry = Arc::clone(lock(&ENTRIES).entry(key).or_default());
         entry.slot.lock().await.penalties.insert(
             WarpRoute::MasqueHttp3,
@@ -1385,7 +1772,7 @@ mod tests {
             )];
             config
         };
-        let key = load_exits(&config);
+        let key = load_exits(&config, false);
         let link = Arc::clone(&config.exits[0]);
         let now = Instant::now();
         record_exit(key, &link, Ok(Duration::from_millis(400)), now);

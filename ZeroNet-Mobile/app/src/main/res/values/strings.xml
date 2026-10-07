@@ -230,6 +230,8 @@
     <string name="settings_applies_next">Applies on next connect</string>
     <string name="settings_reconnect_now">Reconnect now</string>
     <string name="option_off">Off</string>
+    <string name="option_on">On</string>
+    <string name="option_ask">Ask</string>
     <string name="option_auto">Auto</string>
     <string name="option_system">System</string>
 
@@ -264,6 +266,16 @@
     <string name="settings_ipv6_hint">Leave off unless your network needs it</string>
     <string name="settings_mtu">Packet size (MTU)</string>
     <string name="settings_mtu_hint">%1$s is fastest. Sites that stall are handled automatically.</string>
+    <string name="settings_profile">Connection style</string>
+    <string name="settings_warp_order">WARP order</string>
+    <string name="warp_order_hybrid">Hybrid</string>
+    <string name="warp_order_reverse">Reverse hybrid</string>
+    <string name="warp_order_hybrid_hint">A found server first, then Cloudflare through it. Your network only sees the server.</string>
+    <string name="warp_order_reverse_hint">Cloudflare first, then a found server through it. Reaches servers your network blocks.</string>
+    <string name="settings_warp_consent">Cloudflare WARP</string>
+    <string name="settings_warp_consent_ask_hint">Asked once, on the first connect</string>
+    <string name="settings_warp_consent_on_hint">Pair a found server with Cloudflare WARP, in the order below. A server is borrowed to set it up when Cloudflare cannot be reached.</string>
+    <string name="settings_warp_consent_off_hint">Never use Cloudflare</string>
 
     <!-- Settings: servers & sources -->
     <string name="settings_sources_card">Servers &amp; sources</string>
@@ -524,6 +536,13 @@
     <string name="cdn_blocked">Cloudflare CDN configs don\'t work on this network, so they\'re skipped.</string>
     <string name="warp_open">Get a Cloudflare WARP account</string>
     <string name="warp_title">Cloudflare WARP</string>
+    <string name="warp_consent_title">Use Cloudflare WARP?</string>
+    <string name="warp_consent_body">This makes an anonymous Cloudflare WARP account and pairs it with a found server, so the connection has two hops instead of one.</string>
+    <string name="warp_consent_borrow">The keys are made on this phone; only their public halves are sent. If Cloudflare cannot be reached from here, a server is brought up first to make the account through, then let go again.</string>
+    <string name="warp_consent_change">You can change this answer in Settings.</string>
+    <string name="warp_consent_terms">Terms: cloudflare.com/application/terms</string>
+    <string name="warp_consent_agree">Agree</string>
+    <string name="warp_consent_decline">No, thanks</string>
     <string name="warp_body">Makes a free WARP account. The keys are created on this phone and only their public halves are sent to Cloudflare.</string>
     <string name="warp_terms">This creates an account with Cloudflare. By continuing you accept its terms: cloudflare.com/application/terms</string>
     <string name="warp_get">Accept and get account</string>
@@ -571,10 +590,6 @@
     <string name="path_do_sni">ZeroNet prefers servers that hide the name, so they still get through.</string>
     <string name="profile_legacy">Legacy</string>
     <string name="profile_legacy_hint">How Normal worked before: encrypted servers, one search</string>
-    <string name="profile_tag_normal">Recommended</string>
-    <string name="profile_tag_fast">Quickest</string>
-    <string name="profile_tag_gaming">Low ping</string>
-    <string name="profile_tag_legacy">Classic</string>
     <string name="way_warp">Trying your WARP account…</string>
     <string name="way_disguise">Trying again with the connection disguised…</string>
     <string name="way_open">Trying every remaining method…</string>

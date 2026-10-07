@@ -116,7 +116,6 @@ fun HomeScreen(
     onRetry: () -> Unit,
     onPickServer: () -> Unit,
     modifier: Modifier = Modifier,
-    onProfile: (ConnectionProfile) -> Unit = {},
 ) {
     val c = ZeroTheme.colors
     val conn = state.conn
@@ -177,8 +176,6 @@ fun HomeScreen(
                         .fillMaxWidth()
                         .padding(horizontal = 16.dp),
                 ) {
-                    ProfileSelector(state.profile, onProfile)
-                    Spacer(Modifier.height(12.dp))
                     ServerCard(state, onPickServer)
                     AnimatedVisibility(
                         visible = conn is ConnState.Connected,

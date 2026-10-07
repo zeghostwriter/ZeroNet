@@ -930,14 +930,43 @@ pub struct AmneziaWireguardConfig {
     pub route: WarpRoute,
     /// The account's MASQUE side, when it has one.
     pub masque: Option<Box<MasqueConfig>>,
-    /// Share links of servers to dial *through* the tunnel: the connection
-    /// goes to the tunnel first and to one of these from there, so the exit
-    /// is the server's address, and the server's own address is only ever
-    /// seen inside the tunnel (see `zero_runtime::warp`).
+    /// Share links of servers to take part in the connection, in whichever
+    /// order [`Self::hybrid`] asks for.
     pub exits: Vec<Arc<str>>,
-    /// Which path is tried first: the exits (with the tunnel alone as the
-    /// failsafe) or the tunnel alone (with the exits as the failsafe).
+    /// Which order the tunnel and the servers are brought up in.
+    pub hybrid: HybridMode,
+    /// Within [`HybridMode::WarpFirst`]: an exit carries traffic first, with
+    /// the tunnel alone as the failsafe, instead of the other way round.
+    /// Always false for [`HybridMode::ServerFirst`].
     pub prefer_exit: bool,
+}
+
+/// The order a WARP outbound brings its tunnel and its servers up in.
+///
+/// [`Self::ServerFirst`] (the UI's "hybrid") dials a listed server and reaches
+/// Cloudflare's edge *through* it, so the local network sees an ordinary
+/// connection to that server and never sees Cloudflare; only MASQUE over
+/// HTTP/2 can ride a server that way, and the servers must be reachable from
+/// here. [`Self::WarpFirst`] (the UI's "reverse hybrid") dials the tunnel
+/// directly over any route and reaches a listed server from inside it, which
+/// also reaches servers the local network blocks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum HybridMode {
+    /// A server first, then Cloudflare's tunnel through it.
+    ServerFirst,
+    /// Cloudflare's tunnel first, then a server from inside it.
+    #[default]
+    WarpFirst,
+}
+
+impl HybridMode {
+    /// The `mode` spelling in a `warp` outbound's settings.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::ServerFirst => "server-first",
+            Self::WarpFirst => "warp-first",
+        }
+    }
 }
 
 impl AmneziaWireguardConfig {

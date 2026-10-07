@@ -183,6 +183,11 @@ pub struct AppSettings {
     /// once LAN access is on. Made once and kept, so a phone or TV set up with
     /// it keeps working; empty until LAN access is first switched on.
     pub lan_password: String,
+    /// The answer to "may ZeroNet use Cloudflare WARP?": `""` (never asked),
+    /// `on`, or `off`. Read by `warp_bootstrap::Consent::parse`, which treats
+    /// anything else as "never asked" so a hand-edited file cannot opt
+    /// someone in silently.
+    pub warp_consent: String,
 }
 
 impl Default for AppSettings {
@@ -245,6 +250,7 @@ impl Default for AppSettings {
             finder_max_tier: 2,
             finder_keep: 40,
             lan_password: String::new(),
+            warp_consent: String::new(),
         }
     }
 }
@@ -252,6 +258,7 @@ impl Default for AppSettings {
 /// How long a statement waits on a lock held by another connection (a
 /// second client instance, or a backup tool) before failing with `BUSY`.
 const BUSY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
 /// Latency samples older than this are pruned; nothing reads further back.
 const METRICS_RETENTION_SECS: i64 = 7 * 24 * 60 * 60;
 /// Minimum spacing between two metrics prunes.
@@ -639,6 +646,17 @@ impl Database {
                         }
                     }
                     "lan_credential" => settings.lan_password = item.1,
+                    // Read back through the parser rather than stored as it
+                    // was written: the answer is one of three words, so this
+                    // is also what bounds it. A hand-edited file can hold
+                    // anything, and `Consent::parse` turns all of it into one
+                    // of the three — anything it does not recognise becomes
+                    // "never asked", which asks again instead of agreeing.
+                    "warp_consent" => {
+                        settings.warp_consent = crate::warp_bootstrap::Consent::parse(&item.1)
+                            .as_str()
+                            .to_string()
+                    }
                     _ => {}
                 }
             }
@@ -790,6 +808,7 @@ impl Database {
             ("finder_max_tier", &settings.finder_max_tier.to_string()),
             ("finder_keep", &settings.finder_keep.to_string()),
             ("lan_credential", &settings.lan_password),
+            ("warp_consent", &settings.warp_consent),
         ];
 
         for (k, v) in pairs {
@@ -1459,6 +1478,7 @@ mod tests {
             finder_max_tier: 3,
             finder_keep: 12,
             lan_password: "lan-secret".into(),
+            warp_consent: "on".into(),
         }
     }
 
@@ -1468,6 +1488,32 @@ mod tests {
         let wanted = all_non_default();
         db.save_settings(&wanted).expect("save");
         assert_eq!(db.load_settings(), wanted);
+    }
+
+    /// A hand-edited file may hold anything under this key, and it is the one
+    /// setting where the wrong value would opt somebody in, so it is read
+    /// back through the parser: whatever was stored comes out as one of the
+    /// three words, and anything unrecognised asks again rather than agreeing.
+    #[test]
+    fn a_hand_edited_cloudflare_answer_comes_back_as_one_of_the_three() {
+        let db = Database::open_temporary("settings-consent").expect("open");
+        for (stored, wanted) in [
+            ("on", "on"),
+            ("off", "off"),
+            ("OFF", "off"),
+            ("yes", "on"),
+            ("", ""),
+            ("maybe", ""),
+            ("1", ""),
+            // Not a word the parser knows, and long enough that leaving it in
+            // would be worth noticing: it must not survive as itself.
+            (&"x".repeat(4096), ""),
+        ] {
+            let mut settings = all_non_default();
+            settings.warp_consent = stored.to_string();
+            db.save_settings(&settings).expect("save");
+            assert_eq!(db.load_settings().warp_consent, wanted, "{stored:?}");
+        }
     }
 
     #[test]

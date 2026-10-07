@@ -78,6 +78,8 @@ class SettingsTest {
             appFilter = AppFilterMode.OnlySelected,
             filteredApps = setOf("org.telegram.messenger"),
             lanShare = true,
+            warpConsent = WarpConsent.Off,
+            warpOrder = WarpOrder.Reverse,
             socksPort = 20808,
             httpPort = 20809,
             lanUser = "u",
@@ -109,6 +111,34 @@ class SettingsTest {
     fun `missing and unknown values fall back to defaults`() {
         val decoded = Settings.fromJson(JSONObject("""{"mode":"Warp","mtu":"x","palette":"Nope"}"""))
         assertEquals(Settings(), decoded)
+    }
+
+    /**
+     * The Cloudflare answer is what a hand-edited file could most usefully
+     * change, so anything that is not one of the three words reads as "not
+     * answered yet" — which asks again rather than silently agreeing.
+     */
+    @Test
+    fun `an unrecognised Cloudflare answer asks again instead of agreeing`() {
+        assertEquals(WarpConsent.Ask, Settings().warpConsent)
+        assertEquals(WarpConsent.Ask, Settings.fromJson(JSONObject("""{"warpConsent":"on"}""")).warpConsent)
+        assertEquals(WarpConsent.Ask, Settings.fromJson(JSONObject("""{"warpConsent":"yes"}""")).warpConsent)
+        assertEquals(WarpConsent.Ask, Settings.fromJson(JSONObject("""{"warpConsent":""}""")).warpConsent)
+        for (answer in WarpConsent.entries) {
+            assertEquals(answer, Settings.fromJson(Settings(warpConsent = answer).toJson()).warpConsent)
+        }
+    }
+
+    @Test
+    fun `the WARP order defaults to hybrid and survives a round trip`() {
+        assertEquals(WarpOrder.Hybrid, Settings().warpOrder)
+        assertEquals(WarpOrder.Hybrid, Settings.fromJson(JSONObject("""{"warpOrder":"sideways"}""")).warpOrder)
+        for (order in WarpOrder.entries) {
+            assertEquals(order, Settings.fromJson(Settings(warpOrder = order).toJson()).warpOrder)
+        }
+        // The core's spelling, which `warp_order` and the WARP job both read.
+        assertEquals("server-first", WarpOrder.Hybrid.wire)
+        assertEquals("warp-first", WarpOrder.Reverse.wire)
     }
 
     @Test

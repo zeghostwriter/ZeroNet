@@ -72,12 +72,15 @@
 2. روی دکمه‌ی اتصال کلیک کنید. همه‌چیز با موس کار می‌کند، مثل یک برنامه‌ی معمولی.
 3. در تنظیمات، **System Proxy** را روی **SET SYSTEM** بگذارید (یا آن‌قدر **Ctrl+P** بزنید تا SET SYSTEM شود) تا بقیه‌ی برنامه‌ها هم از آن استفاده کنند.
 
-**اکانت رایگان WARP:** توی زیرونت کلید **W** را بزنید تا یک اکانت WARP از کلودفلر بگیرید. کلیدها روی دستگاه خودتان ساخته می‌شوند و فقط نیمه‌ی عمومی‌شان فرستاده می‌شود. هر سه راه (WireGuard و MASQUE روی HTTP/2 و روی HTTP/3) را با هم امتحان می‌کند و اولی را نگه می‌دارد که واقعاً ترافیک رد کند، و یادش می‌ماند کدام روی شبکه‌ی شما کار کرد. اگر API کلودفلر جایی که هستید فیلتر است، اول به یک سرور وصل شوید و دوباره **W** را بزنید.
+**اکانت رایگان WARP:** توی زیرونت کلید **W** را بزنید تا یک اکانت WARP از کلودفلر بگیرید. کلیدها روی دستگاه خودتان ساخته می‌شوند و فقط نیمه‌ی عمومی‌شان فرستاده می‌شود. هر سه راه (WireGuard و MASQUE روی HTTP/2 و روی HTTP/3) را با هم امتحان می‌کند و اولی را نگه می‌دارد که واقعاً ترافیک رد کند، و یادش می‌ماند کدام روی شبکه‌ی شما کار کرد. اولین بار که وصل می‌شوید، زیرونت می‌پرسد اجازه دارید از کلودفلر استفاده کند یا نه، و جواب شما یادش می‌ماند (از تنظیمات، بخش **Cloudflare WARP**) و عوض می‌شود. اگر API کلودفلر جایی که هستید فیلتر باشد، خودش اول یک سرور بالا می‌آورد، از راه آن اکانت را می‌سازد، آن سرور را رها می‌کند و بعد اکانت را با ترتیب WARP که انتخاب کرده‌اید وصل می‌کند. با **W** می‌توانید هر وقت خواستید دستی هم این کار را بکنید.
 
-**سه حالت اتصال** (روی صفحه‌ی اصلی اپ اندروید):
-- **معمولی:** فقط سرورهای رمزگذاری‌شده (TLS یا REALITY) که مثل HTTPS معمولی دیده می‌شوند، همراه چند سرور پشتیبان. بهترین انتخاب برای استفاده‌ی روزمره.
+**سبک اتصال** (در اپ اندروید، تنظیمات ← اتصال ← سبک اتصال):
+- **معمولی:** فقط سرورهای رمزگذاری‌شده (TLS یا REALITY) که مثل HTTPS معمولی دیده می‌شوند، همراه چند سرور پشتیبان، و اگر اجازه داده باشید، اکانت WARP خودتان کنار یک سرور پیدا‌شده. بهترین انتخاب برای استفاده‌ی روزمره.
 - **سریع:** به اولین سروری که کار کند وصل می‌شود، بدون جست‌وجوی اضافه. سریع‌ترین راه برای وصل شدن.
 - **گیمینگ:** کمترین پینگ، UDP روشن (برای بازی‌ها و تماس صوتی)، بدون سرورهای پشت CDN، و سرور وسط بازی عوض نمی‌شود. سایت‌ها و سرورهای بازی ایرانی مستقیم می‌روند.
+- **قدیمی:** همان روش قبلی حالت معمولی: سرورهای رمزگذاری‌شده، یک بار جست‌وجو.
+
+**ترتیب WARP** (تنظیمات ← اتصال): **هیبرید** اول یک سرور پیدا‌شده را وصل می‌کند و کلودفلر را از راه آن می‌رساند، پس شبکه‌ی شما فقط همان سرور را می‌بیند. **هیبرید برعکس** اول به کلودفلر وصل می‌شود و سرور را از داخل آن می‌رساند، پس به سرورهایی هم می‌رسد که شبکه‌ی شما بسته است. اگر در حالت هیبرید هیچ سروری کلودفلر را نرساند، خودش مستقیم وصل می‌شود.
 
 **برنامه‌های دیگر:**
 - **تلگرام:** Settings ←&rlm; Advanced ←&rlm; Connection type ←&rlm; **Use system proxy**. در لینوکس بعد از روشن‌کردن پروکسی، تلگرام را کامل ببندید و دوباره باز کنید.
@@ -160,12 +163,15 @@ On macOS it runs in Terminal.app, so double-clicking always works.
 3. In Settings, set **System Proxy** to **SET SYSTEM** (or press **Ctrl+P**
    until it shows SET SYSTEM) so other apps use it too.
 
-**Free WARP account:** press **W** in ZeroNet to get a Cloudflare WARP account. The keys are made on your device and only the public halves are sent. It tries all three ways (WireGuard, MASQUE over HTTP/2 and over HTTP/3) at once and keeps the first one that really carries traffic, and remembers which one worked on your network. If Cloudflare's API is filtered where you are, connect to a server first and press **W** again.
+**Free WARP account:** press **W** in ZeroNet to get a Cloudflare WARP account. The keys are made on your device and only the public halves are sent. It tries all three ways (WireGuard, MASQUE over HTTP/2 and over HTTP/3) at once and keeps the first one that really carries traffic, and remembers which one worked on your network. The first time you connect, ZeroNet asks whether it may use Cloudflare and remembers the answer (change it under Settings, Cloudflare WARP). If Cloudflare's API is filtered where you are, it brings a server up itself, makes the account through that tunnel, lets the server go again and then connects the account in the WARP order you picked. Press **W** to do it by hand at any time.
 
-**Three connection modes** (on the Android home screen):
-- **Normal:** encrypted servers only (TLS or REALITY, which look like ordinary HTTPS), with backups ready. The everyday choice.
+**Connection style** (in the Android app, Settings → Connection → Connection style):
+- **Normal:** encrypted servers only (TLS or REALITY, which look like ordinary HTTPS), with backups ready, and, if you allowed it, your own WARP account paired with a found server. The everyday choice.
 - **Fast:** connects to the first server that works, nothing more. The quickest way to get online.
 - **Gaming:** lowest ping, UDP allowed (games and voice need it), no CDN-fronted servers, and the server is never switched mid-match. Iranian sites and game servers still go direct.
+- **Legacy:** how Normal worked before: encrypted servers, one search.
+
+**WARP order** (Settings → Connection): **Hybrid** dials a found server first and reaches Cloudflare through it, so your network only sees that server. **Reverse hybrid** dials Cloudflare first and reaches the server from inside it, which also reaches servers your network blocks. If no server can carry Cloudflare in Hybrid, it dials Cloudflare directly instead.
 
 **Other apps:**
 - **Telegram:** Settings → Advanced → Connection type → **Use system proxy**.

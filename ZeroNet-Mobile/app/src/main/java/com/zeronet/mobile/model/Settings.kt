@@ -21,6 +21,26 @@ enum class ConnectionProfile { Normal, Fast, Gaming, Legacy }
 
 /** Whether the profile shapes servers and evasion the way the original Normal did. */
 val ConnectionProfile.classic: Boolean get() = this == ConnectionProfile.Normal || this == ConnectionProfile.Legacy
+/**
+ * The answer to "may ZeroNet use Cloudflare WARP?".
+ *
+ * [Ask] shows the question once, on the first Normal-mode connect; answering
+ * it moves the setting to [On] or [Off], so it is asked only the once.
+ * [On] sets the hybrid account up without asking again; [Off] never uses
+ * Cloudflare at all.
+ */
+enum class WarpConsent { Ask, On, Off }
+
+/**
+ * The order a WARP account and its servers are brought up in.
+ *
+ * [Hybrid] dials a found server first and reaches Cloudflare through it, so
+ * the network only ever sees that server. [Reverse] dials Cloudflare first
+ * and reaches a found server from inside it, which also reaches servers the
+ * network blocks. [wire] is the core's spelling (`warp_order`).
+ */
+enum class WarpOrder(val wire: String) { Hybrid("server-first"), Reverse("warp-first") }
+
 enum class AutoConnect { Off, OnAppStart, OnBoot }
 enum class AppFilterMode { All, OnlySelected, AllExceptSelected }
 /** How much ClientHello fragmenting to use. [Auto] tries each server as is
@@ -67,6 +87,10 @@ data class Settings(
     // Connection
     val mode: ConnectionMode = ConnectionMode.Vpn,
     val profile: ConnectionProfile = ConnectionProfile.Normal,
+    /** Whether ZeroNet may set up a Cloudflare WARP account (see [WarpConsent]). */
+    val warpConsent: WarpConsent = WarpConsent.Ask,
+    /** The order WARP accounts run in (see [WarpOrder]). */
+    val warpOrder: WarpOrder = WarpOrder.Hybrid,
     val autoConnect: AutoConnect = AutoConnect.Off,
     val autoSwitch: Boolean = true,
     /** Move off a server whose live download speed stays under this. */
@@ -165,6 +189,8 @@ data class Settings(
     fun toJson(): JSONObject = JSONObject()
         .put("mode", mode.name)
         .put("profile", profile.name)
+        .put("warpConsent", warpConsent.name)
+        .put("warpOrder", warpOrder.name)
         .put("autoConnect", autoConnect.name)
         .put("autoSwitch", autoSwitch)
         .put("speedFloor", speedFloor.name)
@@ -215,6 +241,8 @@ data class Settings(
             return Settings(
                 mode = o.enumOr("mode", d.mode),
                 profile = o.enumOr("profile", d.profile),
+                warpConsent = o.enumOr("warpConsent", d.warpConsent),
+                warpOrder = o.enumOr("warpOrder", d.warpOrder),
                 autoConnect = o.enumOr("autoConnect", d.autoConnect),
                 autoSwitch = o.optBoolean("autoSwitch", d.autoSwitch),
                 // Settings saved before Adaptive became the default never had a

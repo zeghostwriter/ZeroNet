@@ -74,12 +74,15 @@ import com.zeronet.mobile.model.AppLanguage
 import com.zeronet.mobile.model.AntiSanctionDns
 import com.zeronet.mobile.model.AutoConnect
 import com.zeronet.mobile.model.ConnectionMode
+import com.zeronet.mobile.model.ConnectionProfile
 import com.zeronet.mobile.model.EvasionLevel
 import com.zeronet.mobile.model.MotionLevel
 import com.zeronet.mobile.model.Palette
 import com.zeronet.mobile.model.RemoteDns
 import com.zeronet.mobile.model.Settings
 import com.zeronet.mobile.model.SpeedFloor
+import com.zeronet.mobile.model.WarpConsent
+import com.zeronet.mobile.model.WarpOrder
 import com.zeronet.mobile.model.ThemeMode
 import com.zeronet.mobile.ui.components.Hairline
 import com.zeronet.mobile.ui.components.IconAction
@@ -241,7 +244,9 @@ private val CONNECTION_KEYS = intArrayOf(
     R.string.settings_connection, R.string.settings_mode, R.string.settings_mode_vpn, R.string.settings_mode_proxy,
     R.string.settings_autoconnect, R.string.settings_autoswitch, R.string.settings_more_connection,
     R.string.settings_kill_switch, R.string.settings_kill_switch_app, R.string.trusted_title,
-    R.string.settings_ipv6, R.string.settings_mtu, R.string.kw_connection,
+    R.string.settings_ipv6, R.string.settings_mtu, R.string.settings_warp_consent, R.string.settings_warp_order,
+    R.string.settings_profile, R.string.profile_normal, R.string.profile_fast, R.string.profile_gaming,
+    R.string.profile_legacy, R.string.kw_connection,
 )
 private val SOURCES_KEYS = intArrayOf(
     R.string.settings_sources_card, R.string.settings_sources, R.string.settings_preferred_countries,
@@ -349,6 +354,54 @@ private fun ConnectionCard(s: Settings, q: SettingsQuery, reconnect: Boolean, ac
                 Segmented(
                     ConnectionMode.entries, s.mode, { m -> actions.onChange { it.copy(mode = m) } },
                     label = { stringResource(if (it == ConnectionMode.Vpn) R.string.settings_mode_vpn else R.string.settings_mode_proxy) },
+                )
+            }
+        }
+        if (f.show(R.string.settings_profile, R.string.profile_normal, R.string.profile_fast, R.string.profile_gaming, R.string.profile_legacy)) {
+            LabeledBlock(stringResource(R.string.settings_profile), subtitle = stringResource(s.profile.hintRes())) {
+                Segmented(
+                    ConnectionProfile.entries, s.profile, { p -> actions.onChange { it.copy(profile = p) } },
+                    label = { stringResource(it.labelRes()) },
+                )
+            }
+        }
+        if (f.show(R.string.settings_warp_consent)) {
+            LabeledBlock(
+                stringResource(R.string.settings_warp_consent),
+                subtitle = stringResource(
+                    when (s.warpConsent) {
+                        WarpConsent.Ask -> R.string.settings_warp_consent_ask_hint
+                        WarpConsent.On -> R.string.settings_warp_consent_on_hint
+                        WarpConsent.Off -> R.string.settings_warp_consent_off_hint
+                    },
+                ),
+            ) {
+                Segmented(
+                    WarpConsent.entries, s.warpConsent, { v -> actions.onChange { it.copy(warpConsent = v) } },
+                    label = {
+                        stringResource(
+                            when (it) {
+                                WarpConsent.Ask -> R.string.option_ask
+                                WarpConsent.On -> R.string.option_on
+                                WarpConsent.Off -> R.string.option_off
+                            },
+                        )
+                    },
+                )
+            }
+        }
+        if (s.warpConsent != WarpConsent.Off && f.show(R.string.settings_warp_order)) {
+            LabeledBlock(
+                stringResource(R.string.settings_warp_order),
+                subtitle = stringResource(
+                    if (s.warpOrder == WarpOrder.Hybrid) R.string.warp_order_hybrid_hint else R.string.warp_order_reverse_hint,
+                ),
+            ) {
+                Segmented(
+                    WarpOrder.entries, s.warpOrder, { o -> actions.onChange { it.copy(warpOrder = o) } },
+                    label = {
+                        stringResource(if (it == WarpOrder.Hybrid) R.string.warp_order_hybrid else R.string.warp_order_reverse)
+                    },
                 )
             }
         }
@@ -1007,4 +1060,18 @@ fun socksUri(ip: String, s: Settings): String {
         ""
     }
     return "socks5://$auth$ip:${s.socksPort}"
+}
+
+private fun ConnectionProfile.labelRes(): Int = when (this) {
+    ConnectionProfile.Normal -> R.string.profile_normal
+    ConnectionProfile.Fast -> R.string.profile_fast
+    ConnectionProfile.Gaming -> R.string.profile_gaming
+    ConnectionProfile.Legacy -> R.string.profile_legacy
+}
+
+private fun ConnectionProfile.hintRes(): Int = when (this) {
+    ConnectionProfile.Normal -> R.string.profile_normal_hint
+    ConnectionProfile.Fast -> R.string.profile_fast_hint
+    ConnectionProfile.Gaming -> R.string.profile_gaming_hint
+    ConnectionProfile.Legacy -> R.string.profile_legacy_hint
 }

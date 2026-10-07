@@ -106,6 +106,20 @@ impl ConnectionManager {
         }
     }
 
+    /// A profile the person never chose has been connected for a setup and
+    /// let go: forget that it was ever the target.
+    ///
+    /// [`Self::disconnect`] is not enough on its own. It clears the intent but
+    /// leaves the profile *selected*, and `connect()` dials whatever is
+    /// selected — so a connect that fires after this would put the person
+    /// straight back onto the server that was just let go. Nothing is dialled
+    /// here: the engine is already being torn down by the caller's action.
+    pub fn forget(&mut self) {
+        self.intent = Intent::Disconnected;
+        self.dialled = None;
+        self.selected = None;
+    }
+
     /// The user pressed connect.
     pub fn connect(&mut self) -> EngineAction {
         let Some(profile_id) = self.selected else {
@@ -191,6 +205,32 @@ impl ConnectionManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Forgetting a borrowed server has to be stronger than disconnecting.
+    ///
+    /// The setup dials a server the person never chose, lets it go, and then
+    /// runs the connect that was waiting behind it. A disconnect leaves the
+    /// profile selected, so that connect would dial it again — the promise the
+    /// consent dialog makes ("then let go again") quietly broken.
+    #[test]
+    fn a_forgotten_server_cannot_be_reconnected_by_a_waiting_connect() {
+        let mut cm = ConnectionManager::new();
+        cm.select(7);
+        assert_eq!(cm.connect(), EngineAction::Connect(7));
+
+        // What the release does: tear the engine down, then forget the target.
+        assert_eq!(cm.disconnect(), EngineAction::Disconnect);
+        cm.forget();
+
+        // The connect that was deferred behind the setup now runs.
+        assert_eq!(
+            cm.connect(),
+            EngineAction::None,
+            "the deferred connect dialled the borrowed server again"
+        );
+        assert_eq!(cm.selected(), None);
+        assert!(!cm.wants_connection());
+    }
 
     #[test]
     fn selecting_while_offline_never_dials() {

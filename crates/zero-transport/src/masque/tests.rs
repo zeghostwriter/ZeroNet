@@ -378,3 +378,112 @@ fn only_ip_packets_are_handed_to_the_stack() {
     assert_eq!(receive.try_recv().unwrap()[0], 0x60);
     assert!(receive.try_recv().is_err());
 }
+
+/// A `Spec` pointing at one loopback edge, for the carrying tests.
+fn spec_to(server: &MasqueKey, address: std::net::SocketAddr, http2: bool) -> Spec {
+    Spec {
+        endpoints: vec![Endpoint {
+            address,
+            http2,
+            sni: Arc::from("cloudflareaccess.com"),
+        }],
+        key: Arc::new(MasqueKey::from_der(server.pkcs8()).unwrap()),
+        server_point: Arc::from(point_of_spki(&server.spki_der()).unwrap().to_vec()),
+        authority: Arc::from("cloudflareaccess.com"),
+    }
+}
+
+/// A stand-in for the server the `hybrid` order goes through: a TCP splice to
+/// `edge` that counts the connections it carried, so a test can tell "went
+/// through the hop" from "dialled the edge directly".
+async fn relay_hop(edge: std::net::SocketAddr) -> (Opener, Arc<AtomicUsize>) {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let hop = listener.local_addr().unwrap();
+    let carried = Arc::new(AtomicUsize::new(0));
+    let counter = Arc::clone(&carried);
+    tokio::spawn(async move {
+        while let Ok((mut client, _)) = listener.accept().await {
+            counter.fetch_add(1, Ordering::SeqCst);
+            tokio::spawn(async move {
+                if let Ok(mut target) = tokio::net::TcpStream::connect(edge).await {
+                    let _ = tokio::io::copy_bidirectional(&mut client, &mut target).await;
+                }
+            });
+        }
+    });
+    let opener: Opener = Arc::new(move |_edge| {
+        Box::pin(async move {
+            tokio::net::TcpStream::connect(hop)
+                .await
+                .map(zero_core::boxed)
+                .map_err(|error| format!("hop: {error}"))
+        })
+    });
+    (opener, carried)
+}
+
+/// A packet the mock edge echoes back, with `tag` in it.
+fn probe(tag: u8) -> Vec<u8> {
+    vec![
+        0x45, 0, 0, 20, 9, 1, 7, 9, 1, 1, tag, 3, 4, 5, 6, 7, 8, 9, 0, 0,
+    ]
+}
+
+#[tokio::test]
+async fn a_tunnel_carried_by_another_server_carries_a_packet_through_it() {
+    let server = MasqueKey::generate().unwrap();
+    let (edge, _, _) = crate::masque::mock::h2_server(&server, false).await;
+    let (opener, carried) = relay_hop(edge).await;
+    let mut link = start_over(spec_to(&server, edge, true), opener)
+        .await
+        .expect("a carried tunnel");
+    let packet = probe(1);
+    link.up.send(packet.clone()).await.unwrap();
+    let mut back = tokio::time::timeout(Duration::from_secs(5), link.down.recv())
+        .await
+        .expect("an answer came back")
+        .expect("the link was open");
+    back.truncate(packet.len());
+    assert_eq!(back, packet);
+    assert!(carried.load(Ordering::SeqCst) >= 1, "the hop was bypassed");
+}
+
+#[tokio::test]
+async fn a_tunnel_that_would_need_http3_is_refused_before_it_dials() {
+    let server = MasqueKey::generate().unwrap();
+    let (edge, _, connections) = crate::masque::mock::h3_server(&server).await;
+    let (opener, _) = relay_hop(edge).await;
+    let Err(error) = start_over(spec_to(&server, edge, false), opener).await else {
+        panic!("HTTP/3 cannot be carried");
+    };
+    assert!(error.contains("HTTP/2"), "{error}");
+    assert_eq!(connections.load(Ordering::SeqCst), 0, "it dialled anyway");
+}
+
+/// `supervise` rebuilds a dropped session, and the rebuild must go through
+/// the hop again rather than reuse a dead stream or dial the edge directly.
+#[tokio::test]
+async fn a_carried_tunnel_that_ends_opens_a_new_connection_through_the_hop() {
+    let server = MasqueKey::generate().unwrap();
+    // The mock edge hangs up on its first session.
+    let (edge, _, connections) = crate::masque::mock::h2_server(&server, true).await;
+    let (opener, carried) = relay_hop(edge).await;
+    let mut link = start_over(spec_to(&server, edge, true), opener)
+        .await
+        .expect("a carried tunnel");
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
+    let mut tag = 1u8;
+    while connections.load(Ordering::SeqCst) < 2 && tokio::time::Instant::now() < deadline {
+        let _ = link.up.send(probe(tag)).await;
+        tag = tag.wrapping_add(1);
+        let _ = tokio::time::timeout(Duration::from_secs(2), link.down.recv()).await;
+    }
+    assert!(
+        connections.load(Ordering::SeqCst) >= 2,
+        "the tunnel did not come back"
+    );
+    assert!(
+        carried.load(Ordering::SeqCst) >= 2,
+        "the rebuild skipped the hop"
+    );
+}

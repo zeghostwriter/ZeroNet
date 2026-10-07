@@ -228,6 +228,8 @@
     <string name="settings_applies_next">در اتصال بعدی اعمال می‌شود</string>
     <string name="settings_reconnect_now">الان دوباره وصل شو</string>
     <string name="option_off">خاموش</string>
+    <string name="option_on">روشن</string>
+    <string name="option_ask">پرسیدن</string>
     <string name="option_auto">خودکار</string>
     <string name="option_system">پیش‌فرض سیستم</string>
 
@@ -522,6 +524,23 @@
     <string name="cdn_blocked">کانفیگ‌های CDN کلادفلر روی این شبکه کار نمی‌کنند و فعلاً استفاده نمی‌شوند.</string>
     <string name="warp_open">گرفتن حساب Cloudflare WARP</string>
     <string name="warp_title">Cloudflare WARP</string>
+    <string name="settings_profile">سبک اتصال</string>
+    <string name="settings_warp_order">ترتیب WARP</string>
+    <string name="warp_order_hybrid">هیبرید</string>
+    <string name="warp_order_reverse">هیبرید برعکس</string>
+    <string name="warp_order_hybrid_hint">اول یک سرور پیدا‌شده، بعد کلودفلر از راه آن. شبکه‌ی شما فقط همان سرور را می‌بیند.</string>
+    <string name="warp_order_reverse_hint">اول کلودفلر، بعد یک سرور پیدا‌شده از راه آن. به سرورهایی هم می‌رسد که شبکه‌ی شما بسته است.</string>
+    <string name="settings_warp_consent">Cloudflare WARP</string>
+    <string name="settings_warp_consent_ask_hint">یک بار، در اولین اتصال با حالت پیشنهادی پرسیده می‌شود.</string>
+    <string name="settings_warp_consent_on_hint">یک سرور پیدا‌شده را با Cloudflare WARP جفت می‌کند، به ترتیبی که پایین انتخاب می‌کنید. اگر Cloudflare در دسترس نباشد، برای ساختنش یک سرور قرض گرفته می‌شود.</string>
+    <string name="settings_warp_consent_off_hint">هیچ‌وقت از Cloudflare استفاده نمی‌شود.</string>
+    <string name="warp_consent_title">از Cloudflare WARP استفاده شود؟</string>
+    <string name="warp_consent_body">زیرونت یک حساب رایگان Cloudflare WARP می‌سازد و آن را با یک سرور پیدا‌شده جفت می‌کند، پس اتصال دو مرحله‌ای می‌شود و خیلی سخت‌تر بسته می‌شود.</string>
+    <string name="warp_consent_borrow">کلیدها روی همین گوشی ساخته می‌شوند و فقط نیمهٔ عمومی آن‌ها فرستاده می‌شود. اگر Cloudflare از اینجا در دسترس نباشد، اول یک سرور بالا می‌آید تا حساب از راه آن ساخته شود، بعد رها می‌شود.</string>
+    <string name="warp_consent_change">این جواب را بعدا می‌توانید از تنظیمات عوض کنید.</string>
+    <string name="warp_consent_terms">شرایط: cloudflare.com/application/terms</string>
+    <string name="warp_consent_agree">موافقم</string>
+    <string name="warp_consent_decline">نه، ممنون</string>
     <string name="warp_body">یک حساب رایگان WARP می‌سازد. کلیدها روی همین گوشی ساخته می‌شوند و فقط نیمهٔ عمومی آن‌ها برای Cloudflare فرستاده می‌شود.</string>
     <string name="warp_terms">این کار یک حساب در Cloudflare می‌سازد. با ادامه دادن، شرایط آن را می‌پذیرید: cloudflare.com/application/terms</string>
     <string name="warp_get">پذیرفتن و گرفتن حساب</string>
@@ -569,10 +588,6 @@
     <string name="path_do_sni">ZeroNet سرورهایی را ترجیح می‌دهد که نام را پنهان می‌کنند، پس همچنان رد می‌شوند.</string>
     <string name="profile_legacy">قدیمی</string>
     <string name="profile_legacy_hint">همان روش قبلی حالت معمولی: سرورهای رمزگذاری‌شده، یک بار جستجو</string>
-    <string name="profile_tag_normal">پیشنهادی</string>
-    <string name="profile_tag_fast">سریع‌ترین</string>
-    <string name="profile_tag_gaming">پینگ کم</string>
-    <string name="profile_tag_legacy">کلاسیک</string>
     <string name="way_warp">در حال امتحان حساب WARP شما…</string>
     <string name="way_disguise">دوباره با پنهان‌سازی اتصال امتحان می‌شود…</string>
     <string name="way_open">همهٔ روش‌های باقی‌مانده امتحان می‌شود…</string>

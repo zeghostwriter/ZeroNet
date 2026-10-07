@@ -94,6 +94,8 @@ pub enum ComponentId {
     SettingShareResultsToggle,
     /// How deep the config finder searches the public feeds.
     SettingFinderDepthCycle,
+    /// The answer to "may ZeroNet use Cloudflare WARP?" (ask / on / off).
+    SettingWarpConsentCycle,
     /// The update dialog's main button (update, restart, retry, open page).
     UpdatePrimary,
     /// The update dialog's second button (later, hide).

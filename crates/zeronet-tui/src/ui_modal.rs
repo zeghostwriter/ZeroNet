@@ -792,6 +792,7 @@ impl UiRenderer<'_> {
 
         let headline = match phase {
             WarpPhase::Offer => "Get a free Cloudflare WARP account".to_string(),
+            WarpPhase::Consent => "Use Cloudflare WARP?".to_string(),
             WarpPhase::Working { .. } => "Setting up WARP…".to_string(),
             WarpPhase::Done { headline, .. } => format!("✔  {headline}"),
             WarpPhase::Failed(_) => "✖  That did not work".to_string(),
@@ -833,6 +834,28 @@ impl UiRenderer<'_> {
             Line::from(Span::styled(text.to_string(), Style::default().fg(color)))
         };
         match phase {
+            WarpPhase::Consent => {
+                // The one thing that must be clear before agreeing: a device
+                // is registered with Cloudflare, and a server is borrowed for
+                // the trip when Cloudflare cannot be reached from here.
+                let lines = vec![
+                    plain(
+                        "This makes an anonymous Cloudflare WARP account and chains a found server through it, so the connection has two hops instead of one.",
+                        theme.text,
+                    ),
+                    Line::from(""),
+                    plain(
+                        "The keys are made on this device; only their public halves are sent. If Cloudflare cannot be reached from here, a server is brought up first to make the account through, then let go again.",
+                        theme.text,
+                    ),
+                    Line::from(""),
+                    plain(
+                        "You can change this answer in Settings. Terms: cloudflare.com/application/terms",
+                        theme.muted,
+                    ),
+                ];
+                frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: true }), body);
+            }
             WarpPhase::Offer => {
                 let lines = vec![
                     plain(
@@ -962,11 +985,13 @@ impl UiRenderer<'_> {
             }
             WarpPhase::Manage {
                 exits,
-                reverse,
+                hybrid,
+                prefer_exit,
                 route,
                 selected,
                 ..
             } => {
+                use zero_config::HybridMode;
                 let rows = Layout::default()
                     .direction(Direction::Vertical)
                     .constraints([
@@ -985,11 +1010,20 @@ impl UiRenderer<'_> {
                 frame.render_widget(
                     Paragraph::new(vec![
                         plain(&format!("Connects by: {route}  ·  {servers}"), theme.muted),
+                        // Which connection is made first, spelled out: it is
+                        // the whole difference between the two, and the person
+                        // is the one who has to be able to tell.
                         plain(
-                            if *reverse {
-                                "Servers go first; the tunnel alone is the failsafe."
-                            } else {
-                                "The tunnel alone goes first; servers are the failsafe."
+                            match hybrid {
+                                HybridMode::ServerFirst => {
+                                    "Hybrid: a server first, Cloudflare's tunnel through it."
+                                }
+                                HybridMode::WarpFirst if *prefer_exit => {
+                                    "Reverse hybrid: tunnel first, a server carries traffic."
+                                }
+                                HybridMode::WarpFirst => {
+                                    "Reverse hybrid: tunnel first, a server as failsafe."
+                                }
                             },
                             theme.muted,
                         ),
@@ -997,11 +1031,12 @@ impl UiRenderer<'_> {
                     rows[0],
                 );
                 let labels = [
-                    "Find servers that work through this account".to_string(),
-                    if *reverse {
-                        "Go through the tunnel alone first instead".to_string()
-                    } else {
-                        "Go through servers first instead".to_string()
+                    "Find servers for this account".to_string(),
+                    match hybrid {
+                        HybridMode::ServerFirst => {
+                            "Switch to reverse hybrid (the tunnel first)".to_string()
+                        }
+                        HybridMode::WarpFirst => "Switch to hybrid (a server first)".to_string(),
                     },
                     "Get a new account".to_string(),
                 ];
@@ -1032,8 +1067,11 @@ impl UiRenderer<'_> {
         }
 
         let (primary, primary_color, secondary) = match phase {
+            // "No, thanks" rather than "not now": the answer is kept, so the
+            // label says the permanent thing the button actually does.
+            WarpPhase::Consent => ("Agree (Enter)", theme.accent_bright, "No, thanks (Esc)"),
             WarpPhase::Offer => ("Get account (Enter)", theme.accent_bright, "Cancel (Esc)"),
-            WarpPhase::Working { .. } => ("Working…", theme.muted, "Hide (Esc)"),
+            WarpPhase::Working { .. } => ("Working…", theme.muted, "Cancel (Esc)"),
             WarpPhase::Done { .. } => ("Connect (Enter)", theme.ok, "Close (Esc)"),
             WarpPhase::Failed(_) => ("↻ Try again (Enter)", theme.accent_bright, "Close (Esc)"),
             WarpPhase::Manage { .. } => ("Choose (Enter)", theme.accent_bright, "Close (Esc)"),
@@ -1942,6 +1980,7 @@ fn warp_dialog_rect(area: Rect, phase: &crate::modal::WarpPhase) -> Rect {
     use crate::modal::WarpPhase;
     // Borders 2, breathing room and headline 3, buttons 3, and the body.
     let body = match phase {
+        WarpPhase::Consent => 10,
         WarpPhase::Offer => 9,
         WarpPhase::Working { .. } => 10,
         WarpPhase::Done {
