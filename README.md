@@ -80,7 +80,7 @@
 - **گیمینگ:** کمترین پینگ، UDP روشن (برای بازی‌ها و تماس صوتی)، بدون سرورهای پشت CDN، و سرور وسط بازی عوض نمی‌شود. سایت‌ها و سرورهای بازی ایرانی مستقیم می‌روند.
 - **قدیمی:** همان روش قبلی حالت معمولی: سرورهای رمزگذاری‌شده، یک بار جست‌وجو.
 
-**ترتیب WARP** (تنظیمات ← اتصال): **هیبرید** اول یک سرور پیدا‌شده را وصل می‌کند و کلودفلر را از راه آن می‌رساند، پس شبکه‌ی شما فقط همان سرور را می‌بیند. **هیبرید برعکس** اول به کلودفلر وصل می‌شود و سرور را از داخل آن می‌رساند، پس به سرورهایی هم می‌رسد که شبکه‌ی شما بسته است. اگر در حالت هیبرید هیچ سروری کلودفلر را نرساند، خودش مستقیم وصل می‌شود.
+**ترتیب WARP** (تنظیمات ← اتصال): **هیبرید** اول یک سرور پیدا‌شده را وصل می‌کند و کلودفلر را از راه آن می‌رساند، پس شبکه‌ی شما فقط همان سرور را می‌بیند. **هیبرید برعکس** اول به کلودفلر وصل می‌شود و سرور را از داخل آن می‌رساند، پس به سرورهایی هم می‌رسد که شبکه‌ی شما بسته است. اگر در حالت هیبرید هیچ سروری کلودفلر را نرساند، خودش مستقیم وصل می‌شود. در گوشی پیش‌فرض **خودکار** است: اول هیبرید برعکس امتحان می‌شود و اگر هیچ سروری از راه کلودفلر کار نکرد، هیبرید.
 
 **برنامه‌های دیگر:**
 - **تلگرام:** Settings ←&rlm; Advanced ←&rlm; Connection type ←&rlm; **Use system proxy**. در لینوکس بعد از روشن‌کردن پروکسی، تلگرام را کامل ببندید و دوباره باز کنید.
@@ -171,7 +171,7 @@ On macOS it runs in Terminal.app, so double-clicking always works.
 - **Gaming:** lowest ping, UDP allowed (games and voice need it), no CDN-fronted servers, and the server is never switched mid-match. Iranian sites and game servers still go direct.
 - **Legacy:** how Normal worked before: encrypted servers, one search.
 
-**WARP order** (Settings → Connection): **Hybrid** dials a found server first and reaches Cloudflare through it, so your network only sees that server. **Reverse hybrid** dials Cloudflare first and reaches the server from inside it, which also reaches servers your network blocks. If no server can carry Cloudflare in Hybrid, it dials Cloudflare directly instead.
+**WARP order** (Settings → Connection): **Hybrid** dials a found server first and reaches Cloudflare through it, so your network only sees that server. **Reverse hybrid** dials Cloudflare first and reaches the server from inside it, which also reaches servers your network blocks. If no server can carry Cloudflare in Hybrid, it dials Cloudflare directly instead. On the phone the default is **Auto**: reverse hybrid is tried first, and hybrid when no server works through Cloudflare.
 
 **Other apps:**
 - **Telegram:** Settings → Advanced → Connection type → **Use system proxy**.

@@ -34,12 +34,17 @@ enum class WarpConsent { Ask, On, Off }
 /**
  * The order a WARP account and its servers are brought up in.
  *
- * [Hybrid] dials a found server first and reaches Cloudflare through it, so
- * the network only ever sees that server. [Reverse] dials Cloudflare first
- * and reaches a found server from inside it, which also reaches servers the
- * network blocks. [wire] is the core's spelling (`warp_order`).
+ * [Reverse] dials Cloudflare first and reaches a found server from inside
+ * it, which also reaches servers the network blocks. [Hybrid] dials a found
+ * server first and reaches Cloudflare through it, so the network only ever
+ * sees that server. [Auto] lets the search decide: it tests servers the
+ * reverse way first, the hybrid way when that finds none, and the account
+ * runs in the order its servers were found in.
+ *
+ * The entries are in the order the picker shows them. [wire] is the core's
+ * spelling (`warp_order`, and `order` in the WARP job).
  */
-enum class WarpOrder(val wire: String) { Hybrid("server-first"), Reverse("warp-first") }
+enum class WarpOrder(val wire: String) { Auto("auto"), Reverse("warp-first"), Hybrid("server-first") }
 
 enum class AutoConnect { Off, OnAppStart, OnBoot }
 enum class AppFilterMode { All, OnlySelected, AllExceptSelected }
@@ -90,7 +95,7 @@ data class Settings(
     /** Whether ZeroNet may set up a Cloudflare WARP account (see [WarpConsent]). */
     val warpConsent: WarpConsent = WarpConsent.Ask,
     /** The order WARP accounts run in (see [WarpOrder]). */
-    val warpOrder: WarpOrder = WarpOrder.Hybrid,
+    val warpOrder: WarpOrder = WarpOrder.Auto,
     val autoConnect: AutoConnect = AutoConnect.Off,
     val autoSwitch: Boolean = true,
     /** Move off a server whose live download speed stays under this. */

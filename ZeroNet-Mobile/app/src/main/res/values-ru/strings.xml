@@ -589,6 +589,7 @@
     <string name="option_ask">Спросить</string>
     <string name="settings_profile">Стиль подключения</string>
     <string name="settings_warp_order">Порядок WARP</string>
+    <string name="warp_order_auto_hint">Сначала пробуется обратный гибрид. Если через Cloudflare не работает ни один сервер, используется гибрид.</string>
     <string name="warp_order_hybrid">Гибрид</string>
     <string name="warp_order_reverse">Обратный гибрид</string>
     <string name="warp_order_hybrid_hint">Сначала найденный сервер, затем Cloudflare через него. Сеть видит только сервер.</string>

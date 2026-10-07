@@ -599,6 +599,7 @@
     <string name="option_ask">اسأل</string>
     <string name="settings_profile">نمط الاتصال</string>
     <string name="settings_warp_order">ترتيب WARP</string>
+    <string name="warp_order_auto_hint">يُجرَّب الهجين المعكوس أولًا. إذا لم يعمل أي خادم عبر Cloudflare، يُستخدم الهجين بدلًا منه.</string>
     <string name="warp_order_hybrid">هجين</string>
     <string name="warp_order_reverse">هجين معكوس</string>
     <string name="warp_order_hybrid_hint">خادم تم العثور عليه أولًا، ثم Cloudflare عبره. شبكتك ترى الخادم فقط.</string>

@@ -574,6 +574,7 @@
     <string name="option_ask">询问</string>
     <string name="settings_profile">连接方式</string>
     <string name="settings_warp_order">WARP 顺序</string>
+    <string name="warp_order_auto_hint">先尝试反向混合。如果没有服务器能通过 Cloudflare 工作，则改用混合。</string>
     <string name="warp_order_hybrid">混合</string>
     <string name="warp_order_reverse">反向混合</string>
     <string name="warp_order_hybrid_hint">先连接找到的服务器，再通过它连接 Cloudflare。你的网络只能看到该服务器。</string>

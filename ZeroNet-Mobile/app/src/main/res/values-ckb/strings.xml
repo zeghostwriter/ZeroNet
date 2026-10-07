@@ -581,6 +581,7 @@
     <string name="option_ask">بپرسە</string>
     <string name="settings_profile">شێوازی پەیوەندی</string>
     <string name="settings_warp_order">ڕیزبەندی WARP</string>
+    <string name="warp_order_auto_hint">سەرەتا هایبریدی پێچەوانە تاقی دەکرێتەوە. ئەگەر هیچ ڕاژەکارێک لە ڕێگەی Cloudflare کاری نەکرد، هایبرید بەکاردێت.</string>
     <string name="warp_order_hybrid">هایبرید</string>
     <string name="warp_order_reverse">هایبریدی پێچەوانە</string>
     <string name="warp_order_hybrid_hint">سەرەتا ڕاژەکارێکی دۆزراوە، پاشان Cloudflare لە ڕێگەیەوە. تۆڕەکەت تەنها ڕاژەکارەکە دەبینێت.</string>

@@ -661,6 +661,59 @@ pub async fn gather_exits(
     Ok(good.into_iter().map(|(_, link)| link).collect())
 }
 
+/// The orders a search tries for a request's `order`, first to last.
+///
+/// `auto` is reverse hybrid first and hybrid second. Reverse goes first
+/// because its search tests servers from inside Cloudflare's network, which
+/// reaches servers the local network blocks; hybrid is the one left when
+/// Cloudflare's tunnel cannot be brought up from here at all. Anything
+/// unknown, and nothing, is hybrid alone, as it was before `auto` existed.
+pub fn search_orders(order: Option<&str>) -> &'static [zero_config::HybridMode] {
+    use zero_config::HybridMode::{ServerFirst, WarpFirst};
+    match order {
+        Some("auto") => &[WarpFirst, ServerFirst],
+        Some("warp-first") => &[WarpFirst],
+        _ => &[ServerFirst],
+    }
+}
+
+/// The share of the time left that an order gets when another one waits
+/// behind it. A search that fails early (the tunnel does not come up) hands
+/// everything it did not use to the next order.
+const TURN_SHARE: f32 = 0.6;
+
+/// Run [`gather_exits`] for each of `orders` in turn and stop at the first
+/// that finds a server. Returns that order with its servers, so the account
+/// is written with the order its servers were actually tested in.
+///
+/// `budget` covers all the turns together. When no order finds anything the
+/// answer is the first order and no servers. `orders` must not be empty.
+pub async fn gather_exits_in_turn(
+    link: &str,
+    orders: &[zero_config::HybridMode],
+    want: usize,
+    sample: usize,
+    budget: Duration,
+    progress: impl Fn(&str),
+) -> (zero_config::HybridMode, Vec<String>) {
+    let deadline = tokio::time::Instant::now() + budget;
+    for (index, &order) in orders.iter().enumerate() {
+        let left = deadline.saturating_duration_since(tokio::time::Instant::now());
+        let last = index + 1 == orders.len();
+        let turn = if last { left } else { left.mul_f32(TURN_SHARE) };
+        let exits = gather_exits(link, order, want, sample, turn, &progress)
+            .await
+            .unwrap_or_default();
+        if !exits.is_empty() {
+            return (order, exits);
+        }
+        if !last {
+            progress("No server worked that way, trying the other order…");
+        }
+    }
+    (orders[0], Vec::new())
+}
+
 /// Register an account through `api` and return its `warp://` link.
 ///
 /// This is the one place a device is registered, so `register_anywhere` and
@@ -738,7 +791,8 @@ pub struct WarpRequest {
     #[serde(default)]
     pub quick: bool,
     /// The order the account is written with and its servers searched for:
-    /// `server-first` (hybrid, the default) or `warp-first` (reverse hybrid).
+    /// `server-first` (hybrid, the default), `warp-first` (reverse hybrid),
+    /// or `auto`, which searches both ways (see [`search_orders`]).
     #[serde(default)]
     pub order: Option<String>,
     /// How many servers to look for, how many to try, and for how long.
@@ -792,22 +846,17 @@ pub async fn warp_job(
         } else {
             register_anywhere(tunnel, None, request.direct, &progress).await?
         };
-        let order = match request.order.as_deref() {
-            Some("warp-first") => zero_config::HybridMode::WarpFirst,
-            _ => zero_config::HybridMode::ServerFirst,
-        };
         // The account is useful without servers, so finding none is not a
         // failure.
-        let exits = gather_exits(
+        let (order, exits) = gather_exits_in_turn(
             &link,
-            order,
+            search_orders(request.order.as_deref()),
             request.want.clamp(1, 20),
             request.sample.clamp(1, 400),
             Duration::from_millis(request.budget_ms.clamp(1_000, 300_000)),
             &progress,
         )
-        .await
-        .unwrap_or_default();
+        .await;
         let link = if exits.is_empty() {
             link
         } else {
@@ -816,6 +865,7 @@ pub async fn warp_job(
         let route = summarize(&link).map_or("auto", |summary| summary.route);
         Ok::<_, String>(json!({
             "t": "done", "ok": true, "link": link, "exits": exits.len(),
+            "order": order.as_str(),
             "route": route, "fingerprint": fingerprint(&link),
         }))
     };
@@ -998,6 +1048,37 @@ pub fn summarize(link: &str) -> Option<LinkSummary> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn auto_searches_reverse_hybrid_first_and_hybrid_second() {
+        use zero_config::HybridMode::{ServerFirst, WarpFirst};
+        assert_eq!(search_orders(Some("auto")), [WarpFirst, ServerFirst]);
+        assert_eq!(search_orders(Some("warp-first")), [WarpFirst]);
+        assert_eq!(search_orders(Some("server-first")), [ServerFirst]);
+        // A request that names no order, or one nobody knows, is hybrid alone.
+        assert_eq!(search_orders(None), [ServerFirst]);
+        assert_eq!(search_orders(Some("sideways")), [ServerFirst]);
+    }
+
+    #[tokio::test]
+    async fn a_search_that_finds_nothing_answers_with_its_first_order() {
+        // Not a WARP link, so every turn fails at once without touching the
+        // network: what is left is the rule for an empty answer.
+        let lines = std::sync::Mutex::new(Vec::new());
+        let (order, exits) = gather_exits_in_turn(
+            "trojan://secret@203.0.113.9:8443?security=tls&sni=t.example.com#x",
+            search_orders(Some("auto")),
+            4,
+            10,
+            Duration::from_secs(5),
+            |line: &str| lines.lock().unwrap().push(line.to_string()),
+        )
+        .await;
+        assert_eq!(order, zero_config::HybridMode::WarpFirst);
+        assert!(exits.is_empty());
+        // It said once that it was moving on, between the two turns.
+        assert_eq!(lines.lock().unwrap().len(), 1);
+    }
+
     use super::*;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 

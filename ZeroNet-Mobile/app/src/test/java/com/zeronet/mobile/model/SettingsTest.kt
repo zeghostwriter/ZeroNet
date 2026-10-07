@@ -130,13 +130,16 @@ class SettingsTest {
     }
 
     @Test
-    fun `the WARP order defaults to hybrid and survives a round trip`() {
-        assertEquals(WarpOrder.Hybrid, Settings().warpOrder)
-        assertEquals(WarpOrder.Hybrid, Settings.fromJson(JSONObject("""{"warpOrder":"sideways"}""")).warpOrder)
+    fun `the WARP order defaults to auto and survives a round trip`() {
+        assertEquals(WarpOrder.Auto, Settings().warpOrder)
+        assertEquals(WarpOrder.Auto, Settings.fromJson(JSONObject("""{"warpOrder":"sideways"}""")).warpOrder)
         for (order in WarpOrder.entries) {
             assertEquals(order, Settings.fromJson(Settings(warpOrder = order).toJson()).warpOrder)
         }
+        // The picker shows them in this order: auto, then reverse hybrid ahead of hybrid.
+        assertEquals(listOf(WarpOrder.Auto, WarpOrder.Reverse, WarpOrder.Hybrid), WarpOrder.entries.toList())
         // The core's spelling, which `warp_order` and the WARP job both read.
+        assertEquals("auto", WarpOrder.Auto.wire)
         assertEquals("server-first", WarpOrder.Hybrid.wire)
         assertEquals("warp-first", WarpOrder.Reverse.wire)
     }

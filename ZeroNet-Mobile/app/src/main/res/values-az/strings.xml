@@ -580,6 +580,7 @@
     <string name="option_ask">Soruş</string>
     <string name="settings_profile">Bağlantı üslubu</string>
     <string name="settings_warp_order">WARP sırası</string>
+    <string name="warp_order_auto_hint">Əvvəl tərs hibrid yoxlanılır. Cloudflare üzərindən heç bir server işləməsə, hibrid istifadə olunur.</string>
     <string name="warp_order_hybrid">Hibrid</string>
     <string name="warp_order_reverse">Tərs hibrid</string>
     <string name="warp_order_hybrid_hint">Əvvəl tapılmış server, sonra onun üzərindən Cloudflare. Şəbəkəniz yalnız serveri görür.</string>

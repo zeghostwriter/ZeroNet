@@ -1904,8 +1904,9 @@ object Engine {
     private suspend fun registerAccount(quick: Boolean = false): WarpAccount = withContext(Dispatchers.IO) {
         val request = if (quick) JSONObject().put("quick", true) else
             JSONObject().put("direct", false).put("proxy", "127.0.0.1:${settings.httpPort}")
-        // The servers it looks for depend on the order: reachable from here
-        // for Hybrid, reachable through Cloudflare for Reverse.
+        // The servers it looks for depend on the order: reachable through
+        // Cloudflare for Reverse, reachable from here for Hybrid, and for
+        // Auto the first of those two ways that finds any.
         request.put("order", settings.warpOrder.wire)
         // Long enough for a registration and a search through the feeds, short
         // enough that a stuck job cannot hold a connect open for ever.

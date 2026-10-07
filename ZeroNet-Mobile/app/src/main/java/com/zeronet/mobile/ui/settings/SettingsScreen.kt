@@ -394,13 +394,23 @@ private fun ConnectionCard(s: Settings, q: SettingsQuery, reconnect: Boolean, ac
             LabeledBlock(
                 stringResource(R.string.settings_warp_order),
                 subtitle = stringResource(
-                    if (s.warpOrder == WarpOrder.Hybrid) R.string.warp_order_hybrid_hint else R.string.warp_order_reverse_hint,
+                    when (s.warpOrder) {
+                        WarpOrder.Auto -> R.string.warp_order_auto_hint
+                        WarpOrder.Reverse -> R.string.warp_order_reverse_hint
+                        WarpOrder.Hybrid -> R.string.warp_order_hybrid_hint
+                    },
                 ),
             ) {
                 Segmented(
                     WarpOrder.entries, s.warpOrder, { o -> actions.onChange { it.copy(warpOrder = o) } },
                     label = {
-                        stringResource(if (it == WarpOrder.Hybrid) R.string.warp_order_hybrid else R.string.warp_order_reverse)
+                        stringResource(
+                            when (it) {
+                                WarpOrder.Auto -> R.string.option_auto
+                                WarpOrder.Reverse -> R.string.warp_order_reverse
+                                WarpOrder.Hybrid -> R.string.warp_order_hybrid
+                            },
+                        )
                     },
                 )
             }

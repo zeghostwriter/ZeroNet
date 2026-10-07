@@ -526,6 +526,7 @@
     <string name="warp_title">Cloudflare WARP</string>
     <string name="settings_profile">سبک اتصال</string>
     <string name="settings_warp_order">ترتیب WARP</string>
+    <string name="warp_order_auto_hint">اول هیبرید برعکس امتحان می‌شود. اگر هیچ سروری از راه کلودفلر کار نکرد، هیبرید استفاده می‌شود.</string>
     <string name="warp_order_hybrid">هیبرید</string>
     <string name="warp_order_reverse">هیبرید برعکس</string>
     <string name="warp_order_hybrid_hint">اول یک سرور پیدا‌شده، بعد کلودفلر از راه آن. شبکه‌ی شما فقط همان سرور را می‌بیند.</string>

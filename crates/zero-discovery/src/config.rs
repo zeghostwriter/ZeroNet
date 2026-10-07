@@ -101,7 +101,7 @@ struct BuildRequest {
     assets_dir: Option<PathBuf>,
     /// The order every WARP account in `links` runs in, overriding what its
     /// link says: `server-first` (hybrid) or `warp-first` (reverse hybrid).
-    /// Unset keeps each link's own order.
+    /// Unset, or `auto`, keeps each link's own order.
     warp_order: Option<String>,
 }
 
@@ -300,13 +300,15 @@ pub fn build_config_with_assets(
     // Links: validated one by one so the error names the culprit, then passed
     // in link form so the preset's parser is the only mapping from link to
     // outbound.
+    // `auto` leaves an account in the order it was written with, which is the
+    // order its servers were found and tested in.
     let warp_order = match request.warp_order.as_deref() {
-        None | Some("") => None,
+        None | Some("") | Some("auto") => None,
         Some("server-first") => Some(zero_config::HybridMode::ServerFirst),
         Some("warp-first") => Some(zero_config::HybridMode::WarpFirst),
         Some(other) => {
             return Err(format!(
-                "warp_order must be server-first or warp-first, not {other:?}"
+                "warp_order must be auto, server-first or warp-first, not {other:?}"
             ))
         }
     };
@@ -1169,6 +1171,8 @@ mod tests {
             crate::warp::summarize(&link).unwrap().hybrid
         };
         assert_eq!(mode(None), zero_config::HybridMode::WarpFirst);
+        // Auto keeps the order the account was written with.
+        assert_eq!(mode(Some("auto")), zero_config::HybridMode::WarpFirst);
         assert_eq!(
             mode(Some("server-first")),
             zero_config::HybridMode::ServerFirst
