@@ -6,11 +6,13 @@
 
 pub mod amnezia;
 pub mod anytls;
+pub mod first_flight;
 mod io_util;
 pub mod mux;
 pub mod shadowsocks;
 pub mod shadowsocks2022;
 pub mod socks;
+pub mod tide;
 pub mod trojan;
 pub mod vision;
 pub mod vless;

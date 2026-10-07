@@ -239,9 +239,54 @@ fn socket_options(stream: &StreamSettings) -> SocketOptions {
     }
 }
 
-fn fragment_policy(stream: &StreamSettings) -> Option<FragmentPolicy> {
-    let f = stream.evasion.tcp_fragment.as_ref()?;
-    Some(FragmentPolicy {
+/// `tcp` as a boxed stream, with whatever the outbound asks to be done to its
+/// first write: a decoy ClientHello in front of it (`sniSpoof`), or its
+/// fragment mask. A plain connection gets neither wrapper.
+///
+/// `injected` says a raw-socket decoy already went out for this connection,
+/// which is the cheaper way where the process may open one. Otherwise the
+/// name is hidden from the socket itself, by the method the configuration
+/// names (`zero_config::SniMethod`): a decoy (`zero_evasion::decoy`) or an
+/// urgent byte (`zero_evasion::urgent`). Left to the device, it is the decoy
+/// where the kernel can send one and the urgent byte where it cannot. A
+/// system that can do neither leaves the fragment mask, as before. These
+/// and the mask are not stacked: the mask would cut the hello into pieces
+/// that neither of them can read a name out of.
+fn shaped(tcp: TcpStream, stream: &StreamSettings, injected: bool) -> BoxStream {
+    use zero_config::SniMethod;
+    if let Some(spoof) = stream.evasion.sni_desync.as_ref().filter(|_| !injected) {
+        let decoy = zero_evasion::decoy::supported();
+        let urgent = zero_evasion::urgent::supported();
+        match spoof.method {
+            SniMethod::Decoy | SniMethod::Auto if decoy => {
+                return boxed(zero_evasion::DecoyStream::new(tcp, &spoof.fake_sni))
+            }
+            SniMethod::Urgent | SniMethod::Auto if urgent => {
+                return boxed(zero_evasion::UrgentStream::new(tcp))
+            }
+            _ => {}
+        }
+    }
+    // Two masks stack as they do in Xray: the one underneath cuts up what
+    // the one on top writes (an empty record and a re-framed hello in one
+    // write, then split across TCP segments, is the pairing in use).
+    let evasion = &stream.evasion;
+    match (&evasion.tcp_fragment, &evasion.tcp_fragment_under) {
+        (Some(top), Some(under)) => boxed(FragmentStream::new(
+            FragmentStream::new(tcp, fragment_policy(under)),
+            fragment_policy(top),
+        )),
+        (Some(only), None) | (None, Some(only)) => {
+            boxed(FragmentStream::new(tcp, fragment_policy(only)))
+        }
+        (None, None) => boxed(tcp),
+    }
+}
+
+fn fragment_policy(f: &zero_config::FragmentConfig) -> FragmentPolicy {
+    let millis =
+        |d: &zero_config::RangeDuration| (d.min.as_millis() as i64, d.max.as_millis() as i64);
+    FragmentPolicy {
         packets: match f.packets {
             FragmentPackets::TlsHello => Packets::TlsHello,
             FragmentPackets::Range { from, to } => Packets::Range {
@@ -255,7 +300,14 @@ fn fragment_policy(stream: &StreamSettings) -> Option<FragmentPolicy> {
         interval_max_ms: f.delay.max.as_millis() as i64,
         max_split_min: f.max_split.min as i64,
         max_split_max: f.max_split.max as i64,
-    })
+        empty_records: f.empty_records,
+        lead_lengths: f
+            .lead_lengths
+            .iter()
+            .map(|l| (i64::from(l.min), i64::from(l.max)))
+            .collect(),
+        lead_delays: f.lead_delays.iter().map(millis).collect(),
+    }
 }
 
 /// The keepalive shape for this stream, if the planner or the operator asked
@@ -502,6 +554,9 @@ async fn connect_resolved(
             return connect_mux_pooled(outbound, destination, address, addrs, resolver).await;
         }
     }
+    if let OutboundProtocol::Tide(tide) = &outbound.protocol {
+        return connect_tide(outbound, tide, destination, &address, addrs).await;
+    }
     if let OutboundProtocol::AmneziaWireguard(wireguard) = &outbound.protocol {
         // Streams ride a user-space TCP stack inside the tunnel, which the
         // outbound's UDP datagrams share (one WireGuard session per peer).
@@ -658,6 +713,100 @@ async fn materialize_ech<'a>(
     Ok(std::borrow::Cow::Owned(compiled))
 }
 
+type TideClients = Mutex<HashMap<String, Arc<zero_transport::tide::Client>>>;
+static TIDE_CLIENTS: OnceLock<TideClients> = OnceLock::new();
+
+/// Open a stream through a Tide server.
+///
+/// One client is kept per server (and per set of addresses it resolved to):
+/// it holds the session and the HTTP/2 connections under it, so every stream
+/// after the first costs no handshake at all. The client closes its own
+/// connections when idle and reconnects when they break; all this function
+/// does is find it or make it.
+async fn connect_tide(
+    outbound: &Outbound,
+    tide: &zero_config::TideConfig,
+    destination: &Destination,
+    address: &Address,
+    addrs: Vec<SocketAddr>,
+) -> Result<BoxStream, Failure> {
+    if destination.network != zero_core::Network::Tcp {
+        return Err(Failure::new(FailureKind::LocalPolicy, Stage::RequestSent)
+            .with_detail("Tide carries TCP streams only for now"));
+    }
+    let key = mux_pool_key(outbound, address, &addrs);
+    let existing = {
+        let clients = TIDE_CLIENTS.get_or_init(Default::default);
+        let clients = clients.lock().unwrap_or_else(|p| p.into_inner());
+        clients.get(&key).cloned()
+    };
+    let client = match existing {
+        Some(client) => client,
+        None => {
+            let host = address.host_string();
+            // Tide is HTTP/2 whatever the profile says about ALPN.
+            let mut shaped = outbound.clone();
+            if let Security::Tls(tls) = &mut shaped.stream.security {
+                tls.alpn = vec!["h2".into()];
+            }
+            let shaped = Arc::new(shaped);
+            let dial: zero_transport::tide::Dialer = {
+                let host = host.clone();
+                Arc::new(move || {
+                    let (outbound, addrs, host) = (shaped.clone(), addrs.clone(), host.clone());
+                    Box::pin(async move {
+                        let tcp = dial_tcp(
+                            &addrs,
+                            &race_policy(&outbound.stream),
+                            &socket_options(&outbound.stream),
+                        )
+                        .await
+                        .map_err(|failure| std::io::Error::other(failure.to_string()))?;
+                        protect_socket(&outbound, tcp.stream, &host)
+                            .await
+                            .map_err(|failure| std::io::Error::other(failure.to_string()))
+                    })
+                })
+            };
+            let client = zero_transport::tide::Client::new(
+                zero_transport::tide::ClientConfig {
+                    host: match &outbound.stream.security {
+                        Security::Tls(tls) => tls
+                            .server_name
+                            .as_deref()
+                            .map_or_else(|| host.clone(), str::to_string),
+                        _ => host.clone(),
+                    },
+                    path: tide.path.to_string(),
+                    server_public: tide.server_key,
+                    user: tide.user,
+                    split: tide.split,
+                    linger: if tide.packet_upload {
+                        std::time::Duration::ZERO
+                    } else {
+                        std::time::Duration::from_secs(2)
+                    },
+                },
+                dial,
+            );
+            let clients = TIDE_CLIENTS.get_or_init(Default::default);
+            let mut clients = clients.lock().unwrap_or_else(|p| p.into_inner());
+            // Profiles come and go; keep the map from growing with them.
+            if clients.len() >= 64 {
+                clients.clear();
+            }
+            clients.entry(key).or_insert(client).clone()
+        }
+    };
+    client
+        .open(destination.clone())
+        .await
+        .map(boxed)
+        .map_err(|error| {
+            Failure::from_io(&error, Stage::RequestSent).with_detail(format!("Tide: {error}"))
+        })
+}
+
 async fn connect_mux_pooled(
     outbound: &Outbound,
     destination: &Destination,
@@ -792,28 +941,31 @@ async fn protect_socket(
     fallback_host: &str,
 ) -> Result<BoxStream, Failure> {
     let stream = &outbound.stream;
-    if let Some(config) = &stream.evasion.sni_desync {
+    let mut injected = false;
+    // A raw decoy is a decoy: the urgent-byte method sends none.
+    let wants_decoy =
+        |config: &&zero_config::SniDesyncConfig| config.method != zero_config::SniMethod::Urgent;
+    if let Some(config) = stream.evasion.sni_desync.as_ref().filter(wants_decoy) {
         let config = zero_evasion::SniDesyncConfig {
             fake_sni: config.fake_sni.to_string(),
             sequence: config.sequence,
         };
         match zero_evasion::inject_fake_client_hello(&tcp, &config) {
             Ok(true) => {
+                injected = true;
                 tracing::debug!(fake_sni = %config.fake_sni, "injected fake SNI ClientHello")
             }
-            Ok(false) => tracing::debug!(
-                "raw SNI desync unavailable; using ClientHello fragmentation fallback"
-            ),
+            Ok(false) => {
+                tracing::debug!(
+                    "no raw socket for the SNI decoy; sending it from the socket itself"
+                )
+            }
             Err(error) => {
-                tracing::debug!(%error, "raw SNI desync failed; using ClientHello fragmentation fallback")
+                tracing::debug!(%error, "raw SNI decoy failed; sending it from the socket itself")
             }
         }
     }
-    let base: BoxStream = match fragment_policy(stream) {
-        Some(policy) => boxed(FragmentStream::new(tcp, policy)),
-        None => boxed(tcp),
-    };
-    secure(outbound, base, fallback_host).await
+    secure(outbound, shaped(tcp, stream, injected), fallback_host).await
 }
 
 /// TLS or REALITY over an already open byte stream: a TCP socket, or a
@@ -961,7 +1113,7 @@ async fn connect_xhttp_split(
         &download_fallback,
         &download_settings.security,
     );
-    let mut carrier = match (settings.xhttp_http_version, settings.xhttp_mode) {
+    let carrier = match (settings.xhttp_http_version, settings.xhttp_mode) {
         (XhttpHttpVersion::Http2, XhttpMode::StreamUp) => {
             let upload = dial_tcp(
                 addrs,
@@ -1035,15 +1187,7 @@ async fn connect_xhttp_split(
             return send_vless(boxed(carrier), v, destination, &header).await;
         }
     }
-    carrier
-        .write_all(&header)
-        .await
-        .map_err(|error| Failure::from_io(&error, Stage::RequestSent))?;
-    carrier
-        .flush()
-        .await
-        .map_err(|error| Failure::from_io(&error, Stage::RequestSent))?;
-    Ok(carrier)
+    Ok(with_header(carrier, header))
 }
 
 async fn connect_xhttp_h3(
@@ -1080,7 +1224,7 @@ async fn connect_xhttp_h3(
                 Failure::new(FailureKind::HttpMalformed, Stage::RequestSent).with_detail(error)
             });
     }
-    let mut carrier = xhttp::connect_h3(addrs, &config, &params)
+    let carrier = xhttp::connect_h3(addrs, &config, &params)
         .await
         .map_err(|error| {
             Failure::new(FailureKind::TlsHandshakeMalformed, Stage::TlsStarted).with_detail(error)
@@ -1094,15 +1238,7 @@ async fn connect_xhttp_h3(
             return send_vless(boxed(carrier), v, destination, &header).await;
         }
     }
-    carrier
-        .write_all(&header)
-        .await
-        .map_err(|error| Failure::from_io(&error, Stage::RequestSent))?;
-    carrier
-        .flush()
-        .await
-        .map_err(|error| Failure::from_io(&error, Stage::RequestSent))?;
-    Ok(carrier)
+    Ok(with_header(carrier, header))
 }
 
 fn xhttp_ws_config(
@@ -1357,19 +1493,11 @@ pub(crate) async fn open_carrier(
 /// stream ([`strip_response`]).
 pub(crate) async fn finish_carrier(
     outbound: &Outbound,
-    mut carrier: BoxStream,
+    carrier: BoxStream,
     destination: &Destination,
 ) -> Result<BoxStream, Failure> {
     let header = protocol_header(outbound, destination)?;
-    carrier
-        .write_all(&header)
-        .await
-        .map_err(|e| Failure::from_io(&e, Stage::RequestSent))?;
-    carrier
-        .flush()
-        .await
-        .map_err(|e| Failure::from_io(&e, Stage::RequestSent))?;
-    Ok(carrier)
+    Ok(with_header(carrier, header))
 }
 
 /// Whether `outbound` is a byte-stream protocol over a plain stream
@@ -1412,7 +1540,7 @@ async fn finish_stack(
 
     match &stream.transport {
         Transport::Raw => {
-            let mut s = secured;
+            let s = secured;
             if let OutboundProtocol::Vmess(v) = &outbound.protocol {
                 return wrap_vmess(s, v, destination).await;
             }
@@ -1431,30 +1559,22 @@ async fn finish_stack(
                     })?;
                     return Ok(boxed(stream));
                 }
-                let mut shadowsocks = zero_protocol::shadowsocks::Stream::new_client(
+                let shadowsocks = zero_protocol::shadowsocks::Stream::new_client(
                     s,
                     shadowsocks_method(config.method),
                     config.password.as_bytes(),
-                );
-                shadowsocks
-                    .write_destination(destination)
-                    .await
-                    .map_err(|error| {
-                        Failure::new(FailureKind::ProtocolRejected, Stage::RequestSent)
-                            .with_detail(error.to_string())
-                    })?;
+                )
+                .with_destination(destination)
+                .map_err(|error| {
+                    Failure::new(FailureKind::ProtocolRejected, Stage::RequestSent)
+                        .with_detail(error.to_string())
+                })?;
                 return Ok(boxed(shadowsocks));
             }
             if let OutboundProtocol::Vless(v) = &outbound.protocol {
                 return send_vless(s, v, destination, &header).await;
             }
-            s.write_all(&header)
-                .await
-                .map_err(|e| Failure::from_io(&e, Stage::RequestSent))?;
-            s.flush()
-                .await
-                .map_err(|e| Failure::from_io(&e, Stage::RequestSent))?;
-            Ok(s)
+            Ok(with_header(s, header))
         }
         Transport::WebSocket(w) => {
             let cfg = WsConfig {
@@ -1527,7 +1647,7 @@ async fn finish_stack(
                 xhttp: Default::default(),
                 secure: false,
             };
-            let mut s = httpupgrade::connect(secured, &cfg).await.map_err(|error| {
+            let s = httpupgrade::connect(secured, &cfg).await.map_err(|error| {
                 Failure::new(FailureKind::WebsocketRejected, Stage::RequestSent).with_detail(error)
             })?;
             // VMess carries its own request header inside its cipher state.
@@ -1541,17 +1661,9 @@ async fn finish_stack(
             }
             // Everything else states its destination in a protocol header that
             // must be the first thing on the carrier. HTTPUpgrade has no
-            // early-data channel to fold it into, so it is written immediately
-            // after the 101, exactly as the gRPC carrier does.
-            if !header.is_empty() {
-                s.write_all(&header)
-                    .await
-                    .map_err(|e| Failure::from_io(&e, Stage::RequestSent))?;
-                s.flush()
-                    .await
-                    .map_err(|e| Failure::from_io(&e, Stage::RequestSent))?;
-            }
-            Ok(s)
+            // early-data channel to fold it into, so it rides in front of the
+            // first payload after the 101, exactly as on the gRPC carrier.
+            Ok(with_header(s, header))
         }
         Transport::Grpc(w) => {
             let cfg = WsConfig {
@@ -1566,7 +1678,7 @@ async fn finish_stack(
                 xhttp: Default::default(),
                 secure: false,
             };
-            let mut carrier = grpc::connect(secured, &cfg).await.map_err(|error| {
+            let carrier = grpc::connect(secured, &cfg).await.map_err(|error| {
                 Failure::new(FailureKind::HttpMalformed, Stage::RequestSent).with_detail(error)
             })?;
             if let OutboundProtocol::Vmess(v) = &outbound.protocol {
@@ -1577,15 +1689,7 @@ async fn finish_stack(
                     return send_vless(boxed(carrier), v, destination, &header).await;
                 }
             }
-            carrier
-                .write_all(&header)
-                .await
-                .map_err(|error| Failure::from_io(&error, Stage::RequestSent))?;
-            carrier
-                .flush()
-                .await
-                .map_err(|error| Failure::from_io(&error, Stage::RequestSent))?;
-            Ok(carrier)
+            Ok(with_header(carrier, header))
         }
         Transport::Xhttp(w) => {
             let cfg = xhttp_ws_config(w, fallback_host, &outbound.stream.security);
@@ -1598,7 +1702,7 @@ async fn finish_stack(
             }
             match w.xhttp_http_version {
                 XhttpHttpVersion::Http1 => {
-                    let mut carrier = xhttp::connect(secured, &cfg).await.map_err(|error| {
+                    let carrier = xhttp::connect(secured, &cfg).await.map_err(|error| {
                         Failure::new(FailureKind::HttpMalformed, Stage::RequestSent)
                             .with_detail(error)
                     })?;
@@ -1610,18 +1714,10 @@ async fn finish_stack(
                             return send_vless(boxed(carrier), v, destination, &header).await;
                         }
                     }
-                    carrier
-                        .write_all(&header)
-                        .await
-                        .map_err(|error| Failure::from_io(&error, Stage::RequestSent))?;
-                    carrier
-                        .flush()
-                        .await
-                        .map_err(|error| Failure::from_io(&error, Stage::RequestSent))?;
-                    Ok(carrier)
+                    Ok(with_header(carrier, header))
                 }
                 XhttpHttpVersion::Http2 => {
-                    let mut carrier = xhttp::connect_h2(secured, &cfg).await.map_err(|error| {
+                    let carrier = xhttp::connect_h2(secured, &cfg).await.map_err(|error| {
                         Failure::new(FailureKind::HttpMalformed, Stage::RequestSent)
                             .with_detail(error)
                     })?;
@@ -1633,15 +1729,7 @@ async fn finish_stack(
                             return send_vless(boxed(carrier), v, destination, &header).await;
                         }
                     }
-                    carrier
-                        .write_all(&header)
-                        .await
-                        .map_err(|error| Failure::from_io(&error, Stage::RequestSent))?;
-                    carrier
-                        .flush()
-                        .await
-                        .map_err(|error| Failure::from_io(&error, Stage::RequestSent))?;
-                    Ok(carrier)
+                    Ok(with_header(carrier, header))
                 }
                 XhttpHttpVersion::Http3 => {
                     Err(Failure::new(FailureKind::LocalPolicy, Stage::RequestSent)
@@ -1687,7 +1775,7 @@ async fn send_vless(
     destination: &Destination,
     header: &[u8],
 ) -> Result<BoxStream, Failure> {
-    let mut s = if v.encrypted() {
+    let s = if v.encrypted() {
         let client = vless_encryption_client(v)?;
         let t = std::time::Instant::now();
         let stream = client.handshake(s).await.map_err(|error| {
@@ -1704,13 +1792,8 @@ async fn send_vless(
             return Err(Failure::new(FailureKind::LocalPolicy, Stage::RequestSent)
                 .with_detail("Vision TCP flow cannot carry UDP without XUDP"));
         }
-        s.write_all(header)
-            .await
-            .map_err(|e| Failure::from_io(&e, Stage::RequestSent))?;
-        s.flush()
-            .await
-            .map_err(|e| Failure::from_io(&e, Stage::RequestSent))?;
-        let mut vision = zero_protocol::vision::VisionStream::new_client(s, v.uuid)
+        let vision = zero_protocol::vision::VisionStream::new_client(s, v.uuid)
+            .with_request_header(header)
             .with_direct_read_switch(|carrier| {
                 let carrier = carrier.as_mut().get_mut().as_any_mut();
                 // With VLESS Encryption the server's raw stream starts under
@@ -1726,19 +1809,20 @@ async fn send_vless(
                     reality.enter_direct_mode();
                 }
             });
-        vision
-            .send_initial_frame()
-            .await
-            .map_err(|e| Failure::from_io(&e, Stage::RequestSent))?;
         return Ok(boxed(vision));
     }
-    s.write_all(header)
-        .await
-        .map_err(|e| Failure::from_io(&e, Stage::RequestSent))?;
-    s.flush()
-        .await
-        .map_err(|e| Failure::from_io(&e, Stage::RequestSent))?;
-    Ok(s)
+    Ok(with_header(s, header.to_vec()))
+}
+
+/// Put a protocol's request header at the front of `s` without writing it
+/// yet: it leaves in the same write as the first payload, so the connection
+/// does not open with a short packet of a recognisable size. See
+/// [`zero_protocol::first_flight`] for the rule and its one exception.
+fn with_header(s: BoxStream, header: Vec<u8>) -> BoxStream {
+    if header.is_empty() {
+        return s;
+    }
+    boxed(zero_protocol::first_flight::HeaderFirst::new(s, header))
 }
 
 fn reality_fingerprint(f: &zero_config::Fingerprint) -> FingerprintProfile {
@@ -1780,6 +1864,7 @@ fn protocol_header(outbound: &Outbound, destination: &Destination) -> Result<Vec
         OutboundProtocol::Shadowsocks(_) => Ok(Vec::new()),
         OutboundProtocol::Vmess(_) => Ok(Vec::new()),
         OutboundProtocol::AnyTls(_) => Ok(Vec::new()),
+        OutboundProtocol::Tide(_) => Ok(Vec::new()),
         OutboundProtocol::Hysteria2(_) => Ok(Vec::new()),
         OutboundProtocol::Tuic(_) => Ok(Vec::new()),
         OutboundProtocol::AmneziaWireguard(_) => Ok(Vec::new()),
@@ -1895,7 +1980,7 @@ pub async fn connect_direct(
         return dial_via_env_proxy(proxy, destination, stream).await;
     }
     let dialed = dial_tcp(&addrs, &race_policy(stream), &socket_options(stream)).await?;
-    Ok(boxed(dialed.stream))
+    Ok(shaped(dialed.stream, stream, false))
 }
 
 /// Direct connection using the compiled, leak-aware DNS resolver.
@@ -1926,7 +2011,7 @@ pub async fn connect_direct_with_resolver(
         return dial_via_env_proxy(proxy, destination, stream).await;
     }
     let dialed = dial_tcp(&addrs, &race_policy(stream), &socket_options(stream)).await?;
-    Ok(boxed(dialed.stream))
+    Ok(shaped(dialed.stream, stream, false))
 }
 
 async fn dial_via_env_proxy(
@@ -2088,31 +2173,93 @@ mod tests {
 
     #[test]
     fn fragment_policy_maps_from_config() {
-        use zero_config::{Evasion, FragmentConfig, RangeDuration, RangeU32};
-        let s = StreamSettings {
-            evasion: Evasion {
-                tcp_fragment: Some(FragmentConfig {
-                    packets: FragmentPackets::TlsHello,
-                    length: RangeU32::new(100, 200),
-                    delay: RangeDuration::millis(1, 1),
-                    max_split: RangeU32::new(0, 0),
-                }),
-                udp_noise: vec![],
-                keepalive: None,
-                sni_desync: None,
-            },
-            ..Default::default()
-        };
-        let p = fragment_policy(&s).unwrap();
+        use zero_config::{FragmentConfig, RangeDuration, RangeU32};
+        let p = fragment_policy(&FragmentConfig {
+            packets: FragmentPackets::TlsHello,
+            length: RangeU32::new(100, 200),
+            delay: RangeDuration::millis(1, 1),
+            lead_lengths: vec![RangeU32::new(104, 104)],
+            lead_delays: vec![RangeDuration::millis(2, 3)],
+            ..FragmentConfig::empty_record()
+        });
         assert_eq!(p.packets, Packets::TlsHello);
         assert_eq!(p.length_min, 100);
         assert_eq!(p.length_max, 200);
         assert_eq!(p.interval_min_ms, 1);
+        assert_eq!(p.empty_records, 1);
+        assert_eq!(p.lead_lengths, [(104, 104)]);
+        assert_eq!(p.lead_delays, [(2, 3)]);
     }
 
-    #[test]
-    fn no_evasion_means_no_fragment_layer() {
-        assert!(fragment_policy(&StreamSettings::default()).is_none());
+    /// Two masks, as the recipes passed around in Iran pair them: the top
+    /// one puts an empty record and a re-framed hello in one write, the one
+    /// underneath cuts that write into TCP segments. What arrives is the
+    /// top mask's bytes, whole and in order.
+    #[tokio::test]
+    async fn two_stacked_masks_deliver_the_top_masks_bytes() {
+        use tokio::io::AsyncReadExt;
+        use zero_config::{FragmentConfig, RangeDuration, RangeU32};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let mut settings = StreamSettings::default();
+        settings.evasion.tcp_fragment = Some(FragmentConfig {
+            length: RangeU32::new(1, 1),
+            lead_lengths: vec![RangeU32::new(10, 10)],
+            max_split: RangeU32::new(4, 4),
+            ..FragmentConfig::empty_record()
+        });
+        settings.evasion.tcp_fragment_under = Some(FragmentConfig {
+            packets: FragmentPackets::Range { from: 1, to: 1 },
+            length: RangeU32::new(1, 1),
+            lead_lengths: vec![RangeU32::new(20, 20)],
+            delay: RangeDuration::millis(1, 1),
+            max_split: RangeU32::new(5, 5),
+            ..FragmentConfig::default()
+        });
+        let resolver = zero_dns::Resolver::new(zero_config::dns::DnsSettings::default());
+        let destination = Destination::tcp(Address::Ip(std::net::Ipv4Addr::LOCALHOST.into()), port);
+        let mut stream = connect_direct_with_resolver(&destination, &settings, &resolver)
+            .await
+            .unwrap();
+        let body: Vec<u8> = (0..40).collect();
+        let hello = [&[0x16, 3, 1, 0, 40][..], &body].concat();
+        stream.write_all(&hello).await.unwrap();
+        stream.flush().await.unwrap();
+        let (mut accepted, _) = listener.accept().await.unwrap();
+        // Empty, ten bytes, one byte, and the fourth piece takes the rest.
+        let mut expected = vec![0x16, 3, 1, 0, 0];
+        for piece in [&body[..10], &body[10..11], &body[11..]] {
+            expected.extend_from_slice(&[0x16, 3, 1, 0, piece.len() as u8]);
+            expected.extend_from_slice(piece);
+        }
+        let mut seen = vec![0u8; expected.len()];
+        accepted.read_exact(&mut seen).await.unwrap();
+        assert_eq!(seen, expected);
+    }
+
+    /// A direct (`freedom`) connection shapes its first write like any other
+    /// outbound: the mask is on the stream settings, not on a protocol.
+    #[tokio::test]
+    async fn a_direct_connection_applies_its_fragment_mask() {
+        use tokio::io::AsyncReadExt;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let mut settings = StreamSettings::default();
+        settings.evasion.tcp_fragment = Some(zero_config::FragmentConfig::empty_record());
+        let resolver = zero_dns::Resolver::new(zero_config::dns::DnsSettings::default());
+        let destination = Destination::tcp(Address::Ip(std::net::Ipv4Addr::LOCALHOST.into()), port);
+        let mut stream = connect_direct_with_resolver(&destination, &settings, &resolver)
+            .await
+            .unwrap();
+        // A ClientHello-shaped record, as a browser behind the proxy sends it.
+        let hello = [&[0x16, 3, 1, 0, 4][..], b"helo"].concat();
+        stream.write_all(&hello).await.unwrap();
+        stream.flush().await.unwrap();
+        let (mut accepted, _) = listener.accept().await.unwrap();
+        let mut seen = [0u8; 14];
+        accepted.read_exact(&mut seen).await.unwrap();
+        assert_eq!(seen[..5], [0x16, 3, 1, 0, 0], "the empty record leads");
+        assert_eq!(seen[5..], hello[..]);
     }
 
     #[test]

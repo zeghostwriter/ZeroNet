@@ -244,7 +244,7 @@ where
         stream
             .write_all(
                 b"HTTP/1.1 407 Proxy Authentication Required\r\n\
-Proxy-Authenticate: Basic realm=\"zeronet\"\r\n\
+Proxy-Authenticate: Basic realm=\"proxy\"\r\n\
 Content-Length: 0\r\nConnection: close\r\n\r\n",
             )
             .await

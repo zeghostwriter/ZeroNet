@@ -1,5 +1,10 @@
 package com.zeronet.mobile.ui.settings
 
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import org.json.JSONObject
+import com.zeronet.mobile.core.ZrayNative
 import android.os.Build
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
@@ -45,6 +50,7 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -75,6 +81,7 @@ import com.zeronet.mobile.model.AntiSanctionDns
 import com.zeronet.mobile.model.AutoConnect
 import com.zeronet.mobile.model.ConnectionMode
 import com.zeronet.mobile.model.ConnectionProfile
+import com.zeronet.mobile.model.DecoyMode
 import com.zeronet.mobile.model.EvasionLevel
 import com.zeronet.mobile.model.MotionLevel
 import com.zeronet.mobile.model.Palette
@@ -257,7 +264,7 @@ private val SPLIT_KEYS = intArrayOf(
 )
 private val SHARE_KEYS = intArrayOf(R.string.settings_share, R.string.settings_share_toggle, R.string.settings_share_auth, R.string.kw_share)
 private val EVASION_KEYS = intArrayOf(
-    R.string.settings_evasion, R.string.settings_evasion_level, R.string.settings_block_quic,
+    R.string.settings_evasion, R.string.settings_evasion_level, R.string.settings_decoy, R.string.settings_block_quic,
     R.string.settings_remote_dns, R.string.settings_block_ads, R.string.kw_evasion,
 )
 private val APPEARANCE_KEYS = intArrayOf(
@@ -693,6 +700,54 @@ private fun EndpointLine(label: String, port: String, copyValue: String, onCopy:
     }
 }
 
+/**
+ * The "does the decoy work here" button and its answer.
+ *
+ * The core does the checking ([ZrayNative.decoyCheck]): whether this phone's
+ * system can send a decoy, whether one sent to the phone itself arrives
+ * right, and whether a name this network cuts off gets through behind one.
+ * The answer is one sentence saying which of those happened. It is not kept:
+ * a network changes, so an old answer would be a wrong one.
+ */
+@Composable
+private fun DecoyTest() {
+    val scope = rememberCoroutineScope()
+    var running by remember { mutableStateOf(false) }
+    var answer by remember { mutableStateOf<Int?>(null) }
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Start) {
+        ZeroChip(
+            stringResource(if (running) R.string.decoy_test_running else R.string.settings_decoy_test),
+            onClick = {
+                if (!running) {
+                    running = true
+                    answer = null
+                    scope.launch {
+                        answer = withContext(Dispatchers.IO) { decoyAnswer(runCatching { ZrayNative.decoyCheck() }.getOrNull()) }
+                        running = false
+                    }
+                }
+            },
+            icon = ZeroIcons.Shield,
+        )
+    }
+    answer?.let { Note(stringResource(it)) }
+}
+
+/** The sentence for what the core's decoy check found (`null`: it never ran). */
+private fun decoyAnswer(json: String?): Int {
+    val o = runCatching { JSONObject(json ?: "") }.getOrNull() ?: return R.string.decoy_test_unsupported
+    return when {
+        !o.optBoolean("supported") -> R.string.decoy_test_unsupported
+        !o.optBoolean("local") -> R.string.decoy_test_broken
+        else -> when (o.optString("network")) {
+            "works" -> R.string.decoy_test_works
+            "blocked" -> R.string.decoy_test_blocked
+            "offline" -> R.string.decoy_test_offline
+            else -> R.string.decoy_test_not_needed
+        }
+    }
+}
+
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun EvasionCard(s: Settings, q: SettingsQuery, reconnect: Boolean, actions: SettingsActions) {
@@ -721,6 +776,33 @@ private fun EvasionCard(s: Settings, q: SettingsQuery, reconnect: Boolean, actio
                         )
                     },
                 )
+            }
+        }
+        if (f.show(R.string.settings_decoy)) {
+            LabeledBlock(
+                stringResource(R.string.settings_decoy),
+                subtitle = stringResource(
+                    when (s.sniDecoy) {
+                        DecoyMode.Off -> R.string.settings_decoy_off_hint
+                        DecoyMode.Auto -> R.string.settings_decoy_auto_hint
+                        DecoyMode.Always -> R.string.settings_decoy_always_hint
+                    },
+                ),
+            ) {
+                Segmented(
+                    DecoyMode.entries, s.sniDecoy, { v -> actions.onChange { it.copy(sniDecoy = v) } },
+                    label = {
+                        stringResource(
+                            when (it) {
+                                DecoyMode.Off -> R.string.option_off
+                                DecoyMode.Auto -> R.string.option_auto
+                                DecoyMode.Always -> R.string.option_always
+                            },
+                        )
+                    },
+                )
+                Spacer(Modifier.height(8.dp))
+                DecoyTest()
             }
         }
         if (f.show(R.string.settings_block_quic)) {

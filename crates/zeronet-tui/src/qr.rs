@@ -214,7 +214,7 @@ pub fn config_payloads(result: &ScanResult) -> Vec<String> {
 
 /// Whether a string is plausibly a proxy config.
 pub fn looks_like_config(text: &str) -> bool {
-    const SCHEMES: [&str; 8] = [
+    const SCHEMES: [&str; 10] = [
         "vless://",
         "vmess://",
         "trojan://",
@@ -223,6 +223,8 @@ pub fn looks_like_config(text: &str) -> bool {
         "hysteria2://",
         "tuic://",
         "anytls://",
+        "zerov1://",
+        "tide://",
     ];
     let t = text.trim();
     SCHEMES.iter().any(|s| t.starts_with(s))

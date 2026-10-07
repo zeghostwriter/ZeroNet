@@ -6,6 +6,19 @@
 //! logical stream first, and add a session manager without changing these
 //! bytes.
 //!
+//! How padding works: the first few writes of a session are where a TLS
+//! handshake travelling inside the tunnel shows its sizes (a ClientHello, a
+//! short Finished), and an observer can recognise a proxy by them. Mux.cool
+//! has a frame both Xray ends read and throw away, a keep-alive that carries
+//! data, so the carrier writer adds one behind a small early write to bring it
+//! up to the next multiple of [`PAD_STEP`] bytes plus a small random extra.
+//! An observer then learns which step a size fell in and nothing finer, and
+//! no two carriers show the same exact numbers. Random padding alone can be
+//! averaged away by someone who knows its range; a step cannot. It costs at
+//! most a step and a bit for each of a session's first [`EARLY_FRAMES`]
+//! writes and nothing after; writes of a kilobyte or more are left alone.
+//! See [`Padder`].
+//!
 //! Neither read nor write goes through a scratch buffer: a payload is read
 //! into its own spare capacity, and a chunk is read straight into the frame
 //! that will carry it. `bench/hotpath` counts what that saves.
@@ -422,20 +435,136 @@ const MAX_SERVER_SESSIONS: usize = 1024;
 /// Frames buffered per logical session in each direction.
 const SESSION_QUEUE: usize = 32;
 
+/// How many of a session's first data frames count as early. A TLS 1.3
+/// handshake inside the tunnel is over within three writes each way.
+const EARLY_FRAMES: u8 = 3;
+/// A carrier write holding an early frame and shorter than [`PAD_BELOW`] is
+/// padded up to the next multiple of this, plus a random extra below
+/// [`PAD_JITTER`]. The largest result still fits one packet under the outer
+/// TLS record.
+///
+/// The step is 640 and not a rounder 512 for a reason the shape benchmark
+/// showed: 512 plus the extra lands a small write between 161 and 600 bytes
+/// on the wire about half the time, which is exactly the size class of a TLS
+/// ClientHello, the very thing this is meant not to look like. From 640 up
+/// every padded write is larger than that class.
+const PAD_STEP: usize = 640;
+const PAD_JITTER: usize = 128;
+const PAD_BELOW: usize = 1024;
+/// Sessions a [`Padder`] remembers at once. A carrier rarely has this many
+/// alive; past it the memory is dropped and a few writes are padded again.
+const EARLY_TRACKED: usize = 1024;
+/// Bytes of a padding frame before its filler: metadata length, session id,
+/// status, option, data length.
+const PAD_HEADER: usize = 8;
+
+/// Which end of the carrier a writer serves. It decides the session id a
+/// padding frame carries, because the two ends of older builds are strict in
+/// different ways: a server refuses id 0, and a client used to hand a
+/// keep-alive's data to the session it named. So a client pads under the
+/// padded session's own id and a server pads under id 0, which no session has.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Role {
+    Client,
+    Server,
+}
+
+/// Decides which carrier writes get a padding frame.
+///
+/// It counts each session's data frames as they pass and calls the first
+/// [`EARLY_FRAMES`] of them early. The count is dropped when the session's
+/// END frame passes, so the map holds live sessions only.
+struct Padder {
+    role: Role,
+    /// Early frames still to come for each session seen; 0 once it has had
+    /// its share, kept so the session is not taken for a new one.
+    remaining: HashMap<u16, u8>,
+}
+
+impl Padder {
+    fn new(role: Role) -> Self {
+        Self {
+            role,
+            remaining: HashMap::new(),
+        }
+    }
+
+    /// Record `frame` passing; true when it is one of its session's early
+    /// data frames.
+    fn is_early(&mut self, frame: &Frame) -> bool {
+        match frame.status {
+            STATUS_END => {
+                self.remaining.remove(&frame.session_id);
+                false
+            }
+            STATUS_NEW | STATUS_KEEP if frame.option & OPTION_DATA != 0 => {
+                if self.remaining.len() >= EARLY_TRACKED
+                    && !self.remaining.contains_key(&frame.session_id)
+                {
+                    self.remaining.clear();
+                }
+                let left = self
+                    .remaining
+                    .entry(frame.session_id)
+                    .or_insert(EARLY_FRAMES);
+                let early = *left > 0;
+                *left = left.saturating_sub(1);
+                early
+            }
+            _ => false,
+        }
+    }
+
+    /// Append a padding frame so `out` reaches the next size step plus a
+    /// random extra. `session_id` is the early session this write carries.
+    fn pad(&self, out: &mut Vec<u8>, session_id: u16) {
+        use rand::RngCore;
+        let jitter = rand::rngs::OsRng.next_u32() as usize % PAD_JITTER;
+        let target = (out.len() / PAD_STEP + 1) * PAD_STEP + jitter;
+        // A data frame may not be empty, so there is always one filler byte.
+        let filler = target.saturating_sub(out.len() + PAD_HEADER).max(1);
+        let id = match self.role {
+            Role::Client => session_id,
+            Role::Server => 0,
+        };
+        out.extend_from_slice(&[0, 4]);
+        out.extend_from_slice(&id.to_be_bytes());
+        out.extend_from_slice(&[STATUS_KEEP_ALIVE, OPTION_DATA]);
+        out.extend_from_slice(&(filler as u16).to_be_bytes());
+        // Zeros: the carrier encrypts them, and they cost no randomness.
+        out.resize(out.len() + filler, 0);
+    }
+}
+
 /// Sole writer of a carrier: encodes queued frames into one reusable buffer,
-/// coalescing whatever is already queued, then writes and flushes once.
+/// coalescing whatever is already queued, pads the write if it is a small
+/// early one, then writes and flushes once.
 async fn run_carrier_writer<W: AsyncWrite + Unpin>(
     writer: &mut W,
     frames: &mut mpsc::Receiver<Frame>,
+    role: Role,
 ) -> io::Result<()> {
     let mut out = Vec::with_capacity(WRITE_COALESCE_LIMIT);
-    while let Some(frame) = frames.recv().await {
+    let mut padder = Padder::new(role);
+    while let Some(mut frame) = frames.recv().await {
         out.clear();
-        encode_frame_into(&frame, &mut out)?;
-        while out.len() < WRITE_COALESCE_LIMIT {
+        let mut early = None;
+        loop {
+            if padder.is_early(&frame) {
+                early = Some(frame.session_id);
+            }
+            encode_frame_into(&frame, &mut out)?;
+            if out.len() >= WRITE_COALESCE_LIMIT {
+                break;
+            }
             match frames.try_recv() {
-                Ok(frame) => encode_frame_into(&frame, &mut out)?,
+                Ok(next) => frame = next,
                 Err(_) => break,
+            }
+        }
+        if let Some(session_id) = early {
+            if out.len() < PAD_BELOW {
+                padder.pad(&mut out, session_id);
             }
         }
         writer.write_all(&out).await?;
@@ -579,7 +708,7 @@ impl ClientPool {
         let mut writer_shutdown = state.shutdown.subscribe();
         tokio::spawn(async move {
             let closing = tokio::select! {
-                _ = run_carrier_writer(&mut writer, &mut frame_rx) => false,
+                _ = run_carrier_writer(&mut writer, &mut frame_rx, Role::Client) => false,
                 _ = writer_shutdown.wait_for(|closing| *closing) => true,
             };
             close_client_sessions(&writer_state);
@@ -744,7 +873,10 @@ async fn run_client_reader<R: AsyncRead + Unpin>(
     loop {
         let frame = read_frame(reader).await?;
         match frame.status {
-            STATUS_KEEP | STATUS_NEW | STATUS_KEEP_ALIVE => {
+            // A keep-alive's data is padding or liveness, never a stream's
+            // bytes; Xray's client discards it too.
+            STATUS_KEEP_ALIVE => {}
+            STATUS_KEEP | STATUS_NEW => {
                 if frame.option & OPTION_DATA == 0 {
                     continue;
                 }
@@ -763,12 +895,11 @@ async fn run_client_reader<R: AsyncRead + Unpin>(
                             let _ = state.frames.send(Frame::end(frame.session_id, true)).await;
                         }
                     }
-                    None if frame.status != STATUS_KEEP_ALIVE => {
+                    None => {
                         // Data for a session we no longer have: ask the server
                         // to stop, as Xray's client does.
                         let _ = state.frames.send(Frame::end(frame.session_id, true)).await;
                     }
-                    None => {}
                 }
             }
             STATUS_END => {
@@ -856,6 +987,7 @@ where
                     remote_write.shutdown().await?;
                     return Ok::<(), io::Error>(());
                 }
+                STATUS_KEEP_ALIVE => {}
                 other => return Err(invalid(format!("unexpected client mux status {other}"))),
             }
         }
@@ -946,8 +1078,9 @@ where
     let sessions: ServerSessions = Arc::new(Mutex::new(HashMap::new()));
     let (outer_read, mut outer_write) = tokio::io::split(outer);
     let mut outer_read = BufReader::with_capacity(CARRIER_READ_BUFFER, outer_read);
-    let writer_task =
-        tokio::spawn(async move { run_carrier_writer(&mut outer_write, &mut frame_rx).await });
+    let writer_task = tokio::spawn(async move {
+        run_carrier_writer(&mut outer_write, &mut frame_rx, Role::Server).await
+    });
     let mut tasks = JoinSet::new();
 
     start_server_session(
@@ -1206,6 +1339,98 @@ mod tests {
             vec![],
         );
         assert!(encode_frame(&frame).is_err() || encode_frame(&frame).unwrap().len() <= 516);
+    }
+
+    /// Run a carrier writer over `frames` and return each write it made.
+    async fn written(role: Role, frames: Vec<Frame>) -> Vec<Vec<u8>> {
+        let mut carrier = crate::first_flight::tests::Chunks::default();
+        for frame in frames {
+            // One frame per channel so nothing coalesces: one write each.
+            let (tx, mut rx) = mpsc::channel(1);
+            tx.send(frame).await.unwrap();
+            drop(tx);
+            run_carrier_writer(&mut carrier, &mut rx, role)
+                .await
+                .unwrap();
+        }
+        carrier.writes
+    }
+
+    /// Split one carrier write back into its frames.
+    fn frames_of(mut wire: &[u8]) -> Vec<Frame> {
+        let mut frames = Vec::new();
+        while !wire.is_empty() {
+            let (frame, used) = decode_frame(wire).unwrap();
+            frames.push(frame);
+            wire = &wire[used..];
+        }
+        frames
+    }
+
+    #[tokio::test]
+    async fn a_small_early_write_is_padded_into_the_range_and_a_large_one_is_not() {
+        let small = Frame::new(7, destination(), vec![1; 100]);
+        let large = Frame::new(8, destination(), vec![2; 2000]);
+        let writes = written(Role::Client, vec![small.clone(), large.clone()]).await;
+
+        // 100 bytes of payload plus its frame is under one step: it lands
+        // in the first step, somewhere in the random extra above it.
+        assert!((PAD_STEP..PAD_STEP + PAD_JITTER + 9).contains(&writes[0].len()));
+        let frames = frames_of(&writes[0]);
+        assert_eq!(frames[0], small, "the real frame is untouched and first");
+        assert_eq!(frames.len(), 2);
+        assert_eq!(frames[1].status, STATUS_KEEP_ALIVE);
+        assert_eq!(frames[1].option, OPTION_DATA);
+        assert_eq!(frames[1].session_id, 7, "a client pads under the session");
+
+        assert_eq!(writes[1], encode_frame(&large).unwrap());
+    }
+
+    #[tokio::test]
+    async fn only_a_sessions_first_frames_are_padded() {
+        let mut carrier = crate::first_flight::tests::Chunks::default();
+        let (tx, mut rx) = mpsc::channel(1);
+        let writer = run_carrier_writer(&mut carrier, &mut rx, Role::Server);
+        let feed = async {
+            for _ in 0..EARLY_FRAMES + 2 {
+                tx.send(Frame::keep(9, vec![3; 50])).await.unwrap();
+                tokio::task::yield_now().await;
+            }
+            tx.send(Frame::end(9, false)).await.unwrap();
+            tokio::task::yield_now().await;
+            // The id is free again, so the next session on it starts afresh.
+            tx.send(Frame::keep(9, vec![4; 50])).await.unwrap();
+            drop(tx);
+        };
+        let (result, ()) = tokio::join!(writer, feed);
+        result.unwrap();
+
+        let plain = encode_frame(&Frame::keep(9, vec![3; 50])).unwrap().len();
+        let padded: Vec<bool> = carrier.writes.iter().map(|w| w.len() > plain).collect();
+        assert_eq!(padded, [true, true, true, false, false, false, true]);
+        let padding = &frames_of(&carrier.writes[0])[1];
+        assert_eq!(padding.session_id, 0, "a server pads under no session");
+    }
+
+    #[tokio::test]
+    async fn a_client_throws_away_keep_alive_data_even_for_a_live_session() {
+        let (mut peer, carrier) = tokio::io::duplex(4096);
+        let pool = ClientPool::new(carrier, 4);
+        let mut stream = pool.open(destination()).unwrap();
+        stream.write_all(b"hello").await.unwrap();
+        let first = read_frame(&mut peer).await.unwrap();
+
+        let mut padding = Frame::keep(first.session_id, b"padding".to_vec());
+        padding.status = STATUS_KEEP_ALIVE;
+        peer.write_all(&[0, 0]).await.unwrap();
+        write_frame(&mut peer, &padding).await.unwrap();
+        write_frame(&mut peer, &Frame::keep(first.session_id, b"real".to_vec()))
+            .await
+            .unwrap();
+
+        let mut got = [0u8; 4];
+        stream.read_exact(&mut got).await.unwrap();
+        assert_eq!(&got, b"real");
     }
 
     #[tokio::test]

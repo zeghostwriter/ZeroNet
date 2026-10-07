@@ -337,6 +337,19 @@
     <string name="settings_evasion_off_hint">اتصال ساده. سریع‌ترین، ولی راحت‌تر مسدود می‌شود.</string>
     <string name="settings_evasion_auto_hint">عادی وصل می‌شود و اگر سروری مسدود شد، دست‌دهی را تکه‌تکه می‌فرستد. از همان روشی شروع می‌کند که برای دیگران روی شبکه‌ی شما جواب داده.</string>
     <string name="settings_evasion_strong_hint">ترافیک همیشه پنهان می‌شود. کمی کندتر، ولی خیلی سخت‌تر مسدود می‌شود.</string>
+    <string name="settings_decoy">پنهان کردن نام سرور (SNI)</string>
+    <string name="settings_decoy_off_hint">نام سرور هیچ‌وقت پنهان نمی‌شود.</string>
+    <string name="settings_decoy_auto_hint">فقط وقتی اتصالی به‌خاطر نامش قطع شود، نام سرور از فیلتر پنهان می‌شود.</string>
+    <string name="settings_decoy_always_hint">هر اتصال نام سرورش را از فیلتر پنهان می‌کند. روی بعضی گوشی‌ها هر اتصال حدود نیم ثانیه دیرتر شروع می‌شود.</string>
+    <string name="option_always">همیشه</string>
+    <string name="settings_decoy_test">آزمایش روی این گوشی</string>
+    <string name="decoy_test_running">در حال آزمایش…</string>
+    <string name="decoy_test_unsupported">این گوشی نمی‌تواند نام سرور را پنهان کند؛ سیستمش اجازه نمی‌دهد. ZeroNet به‌جایش از روش‌های دیگرش استفاده می‌کند.</string>
+    <string name="decoy_test_broken">این گوشی سعی کرد نام را پنهان کند، ولی در آزمایش داخل خود گوشی اتصال درست نرسید، پس اینجا نمی‌شود به آن تکیه کرد.</string>
+    <string name="decoy_test_works">کار می‌کند: این شبکه یک نام فیلترشده را قطع کرد و همان نام به‌صورت پنهان رد شد.</string>
+    <string name="decoy_test_not_needed">پنهان کردن نام روی این گوشی کار می‌کند. این شبکه الان نام‌های آزمایشی را قطع نکرد، پس چیزی برای رد شدن نبود.</string>
+    <string name="decoy_test_blocked">پنهان کردن نام روی این گوشی کار می‌کند، ولی این شبکه باز هم نام‌های آزمایشی را قطع کرد.</string>
+    <string name="decoy_test_offline">پنهان کردن نام روی این گوشی کار می‌کند. سایت‌های آزمایشی در دسترس نبودند، پس بخش شبکه بررسی نشد.</string>
     <string name="settings_block_quic">مسدود کردن QUIC</string>
     <string name="settings_block_quic_hint">برنامه‌ها به جای گیر کردن، سراغ TCP می‌روند</string>
     <string name="settings_remote_dns">DNS برای سایت‌های مسدود</string>
@@ -521,6 +534,7 @@
     <string name="settings_speed_floor_adaptive_hint">سرعت شما را یاد می‌گیرد و سروری را که خیلی کندتر از سرورهای اخیر است کنار می‌گذارد</string>
     <string name="cdn_throttled_split">کلادفلر روی این شبکه محدود شده؛ برای عبور، دست‌دهی تکه‌تکه فرستاده می‌شود.</string>
     <string name="cdn_throttled_ech">کلادفلر روی این شبکه محدود شده؛ برای عبور، نام سرور پنهان می‌شود.</string>
+    <string name="cdn_decoy">کلادفلر روی این شبکه با نام فیلتر شده؛ برای عبور، نام سرور از فیلتر پنهان می‌شود.</string>
     <string name="cdn_blocked">کانفیگ‌های CDN کلادفلر روی این شبکه کار نمی‌کنند و فعلاً استفاده نمی‌شوند.</string>
     <string name="warp_open">گرفتن حساب Cloudflare WARP</string>
     <string name="warp_title">Cloudflare WARP</string>

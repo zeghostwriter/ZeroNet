@@ -243,3 +243,18 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       - name: allocation counts and bit-identity
         run: cargo run --release -p hotpath-bench
+
+  # The shape benchmark replays one proxied page load through each client
+  # framing and prints the packet sizes and directions an observer would see.
+  # It runs on scripted traffic with paused time, so its numbers are the same
+  # everywhere; it fails when a connection opens with a small packet again or
+  # a framing starts costing more upload than it did.
+  shape:
+    name: traffic shape
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - name: packet sizes of a proxied page load
+        run: cargo run --release -p shape-bench

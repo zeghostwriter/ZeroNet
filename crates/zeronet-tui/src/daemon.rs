@@ -141,7 +141,8 @@ pub struct EngineOptions {
     /// Split the ClientHello across packets.
     pub fragment_enabled: bool,
     /// Inject a decoy allow-listed SNI on TLS/REALITY outbounds (raw fake-SNI
-    /// desync). Needs `CAP_NET_RAW`; without it the engine skips the decoy
+    /// desync). Sent with a raw socket or from the connection itself; where
+    /// the system allows neither the engine skips the decoy
     /// and the connection goes out unchanged.
     pub sni_spoof: bool,
     /// Bytes per fragment. Clamped into a range the engine accepts at the
@@ -869,6 +870,8 @@ pub fn prepare_runnable_config_with(raw_config: &str, options: &EngineOptions) -
         "hysteria2://",
         "tuic://",
         "anytls://",
+        "zerov1://",
+        "tide://",
     ]
     .iter()
     .any(|scheme| trimmed.starts_with(scheme));

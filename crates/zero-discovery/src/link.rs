@@ -382,7 +382,7 @@ pub fn guess_country(remark: &str) -> String {
 
 // ------------------------------------------------------------ text to links
 
-const SCHEMES: [&str; 9] = [
+const SCHEMES: [&str; 11] = [
     "vless://",
     "vmess://",
     "trojan://",
@@ -391,6 +391,8 @@ const SCHEMES: [&str; 9] = [
     "hy2://",
     "tuic://",
     "anytls://",
+    "zerov1://",
+    "tide://",
     "warp://",
 ];
 

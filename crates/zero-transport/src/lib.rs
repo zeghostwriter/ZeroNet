@@ -12,6 +12,7 @@ pub mod masque;
 pub mod quic_pool;
 mod relay;
 pub mod tcp_header;
+pub mod tide;
 pub mod tuic;
 pub mod ws;
 pub mod xhttp;

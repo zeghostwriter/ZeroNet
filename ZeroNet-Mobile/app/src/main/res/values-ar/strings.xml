@@ -351,6 +351,19 @@
     <string name="settings_evasion_off_hint">اتصالات عادية. الأسرع، لكن أسهل في الحجب.</string>
     <string name="settings_evasion_auto_hint">يتصل بشكل عادي، ويقسّم المصافحة عندما يُحظر خادم. يبدأ بما نجح للآخرين على شبكتك.</string>
     <string name="settings_evasion_strong_hint">يخفي حركة البيانات دائمًا. أبطأ قليلًا، لكن أصعب بكثير في الحجب.</string>
+    <string name="settings_decoy">إخفاء اسم الخادم (SNI)</string>
+    <string name="settings_decoy_off_hint">لا يُخفى اسم الخادم أبدًا.</string>
+    <string name="settings_decoy_auto_hint">يُخفى اسم الخادم عن الحجب فقط عندما يُقطع اتصال بسبب اسمه.</string>
+    <string name="settings_decoy_always_hint">كل اتصال يُخفي اسم خادمه عن الحجب. على بعض الهواتف يبدأ كل اتصال أبطأ بنحو نصف ثانية.</string>
+    <string name="option_always">دائمًا</string>
+    <string name="settings_decoy_test">اختبار على هذا الهاتف</string>
+    <string name="decoy_test_running">جارٍ الاختبار…</string>
+    <string name="decoy_test_unsupported">هذا الهاتف لا يستطيع إخفاء اسم الخادم؛ نظامه لا يسمح بذلك. يستخدم ZeroNet طرقه الأخرى بدلًا منه.</string>
+    <string name="decoy_test_broken">حاول هذا الهاتف إخفاء الاسم، لكن الاتصال لم يصل صحيحًا في اختبار داخل الهاتف، فلا يمكن الاعتماد عليه هنا.</string>
+    <string name="decoy_test_works">يعمل: قطعت هذه الشبكة اسمًا محجوبًا، ومرّ الاسم نفسه وهو مخفي.</string>
+    <string name="decoy_test_not_needed">إخفاء الاسم يعمل على هذا الهاتف. لم تقطع هذه الشبكة أسماء الاختبار الآن، فلم يكن هناك ما يُتجاوز.</string>
+    <string name="decoy_test_blocked">إخفاء الاسم يعمل على هذا الهاتف، لكن هذه الشبكة قطعت أسماء الاختبار مع ذلك.</string>
+    <string name="decoy_test_offline">إخفاء الاسم يعمل على هذا الهاتف. تعذّر الوصول إلى مواقع الاختبار، فلم يُفحص جانب الشبكة.</string>
     <string name="settings_block_quic">حظر QUIC</string>
     <string name="settings_block_quic_hint">تلجأ التطبيقات إلى TCP بدل التعطّل</string>
     <string name="settings_remote_dns">DNS للمواقع المحجوبة</string>
@@ -539,6 +552,7 @@
     <string name="settings_speed_floor_adaptive_hint">يتعلم سرعتك ويترك الخادم الأبطأ كثيرًا من خوادمك الأخيرة</string>
     <string name="cdn_throttled_split">Cloudflare مقيّد على هذه الشبكة؛ يُقسَّم الاتصال الأولي لتجاوز ذلك.</string>
     <string name="cdn_throttled_ech">Cloudflare مقيّد على هذه الشبكة؛ يُخفى اسم الخادم لتجاوز ذلك.</string>
+    <string name="cdn_decoy">Cloudflare محجوب بالاسم على هذه الشبكة؛ يُخفى اسم الخادم عن الحجب لتجاوز ذلك.</string>
     <string name="cdn_blocked">إعدادات CDN من Cloudflare لا تعمل على هذه الشبكة، لذا يتم تخطيها.</string>
     <string name="warp_open">الحصول على حساب Cloudflare WARP</string>
     <string name="warp_title">Cloudflare WARP</string>

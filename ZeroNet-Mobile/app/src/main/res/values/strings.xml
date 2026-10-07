@@ -352,6 +352,19 @@
     <string name="settings_evasion_off_hint">Plain connections. Fastest, but easier to block.</string>
     <string name="settings_evasion_auto_hint">Connects normally, and splits the handshake when a server gets blocked. Starts with what worked for others on your network.</string>
     <string name="settings_evasion_strong_hint">Always disguises traffic. A little slower, much harder to block.</string>
+    <string name="settings_decoy">Hide the server name (SNI)</string>
+    <string name="settings_decoy_off_hint">The server name is never hidden.</string>
+    <string name="settings_decoy_auto_hint">Hides the server name from the filter only when a connection gets cut off by its name.</string>
+    <string name="settings_decoy_always_hint">Every connection hides its server name from the filter. On some phones each one starts about half a second slower.</string>
+    <string name="option_always">Always</string>
+    <string name="settings_decoy_test">Test on this phone</string>
+    <string name="decoy_test_running">Testing…</string>
+    <string name="decoy_test_unsupported">This phone can\'t hide the server name; its system doesn\'t allow it. ZeroNet uses its other methods instead.</string>
+    <string name="decoy_test_broken">This phone tried to hide the name, but the connection didn\'t arrive right in a test inside the phone, so it can\'t be relied on here.</string>
+    <string name="decoy_test_works">It works: this network cut off a filtered name, and the same name got through hidden.</string>
+    <string name="decoy_test_not_needed">Hiding the name works on this phone. This network didn\'t cut off the test names just now, so there was nothing to get past.</string>
+    <string name="decoy_test_blocked">Hiding the name works on this phone, but this network still cut off the test names.</string>
+    <string name="decoy_test_offline">Hiding the name works on this phone. The test sites couldn\'t be reached, so the network part wasn\'t checked.</string>
     <string name="settings_block_quic">Block QUIC</string>
     <string name="settings_block_quic_hint">Apps fall back to TCP instead of stalling</string>
     <string name="settings_remote_dns">DNS for blocked sites</string>
@@ -534,6 +547,7 @@
     <string name="badge_skipped">Skipped</string>
     <string name="cdn_throttled_split">Cloudflare is throttled on this network; splitting the handshake to get through.</string>
     <string name="cdn_throttled_ech">Cloudflare is throttled on this network; hiding the server name to get through.</string>
+    <string name="cdn_decoy">Cloudflare is filtered by name on this network; hiding the server name from the filter to get through.</string>
     <string name="cdn_blocked">Cloudflare CDN configs don\'t work on this network, so they\'re skipped.</string>
     <string name="warp_open">Get a Cloudflare WARP account</string>
     <string name="warp_title">Cloudflare WARP</string>

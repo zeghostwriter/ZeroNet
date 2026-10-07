@@ -244,14 +244,17 @@ impl<S> Stream<S> {
         }
     }
 
-    pub async fn write_destination(&mut self, destination: &Destination) -> Result<(), Error>
-    where
-        S: AsyncWrite + Unpin,
-    {
+    /// Aim the client stream at `destination`. Nothing is written yet: the
+    /// address leaves sealed in the same chunk as the first payload, so the
+    /// connection does not open with a short packet whose length is the salt
+    /// plus the address. A caller that reads before writing gets it sent
+    /// alone after a short wait (see [`crate::first_flight`]).
+    pub fn with_destination(
+        self,
+        destination: &Destination,
+    ) -> Result<crate::first_flight::HeaderFirst<Self>, Error> {
         let address = encode_address(destination)?;
-        tokio::io::AsyncWriteExt::write_all(self, &address).await?;
-        tokio::io::AsyncWriteExt::flush(self).await?;
-        Ok(())
+        Ok(crate::first_flight::HeaderFirst::new(self, address))
     }
 
     pub async fn read_destination(&mut self) -> Result<(Destination, Vec<u8>), Error>
@@ -546,6 +549,27 @@ mod tests {
     use super::*;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+    #[tokio::test]
+    async fn the_address_is_sealed_into_the_first_payloads_chunk() {
+        use crate::first_flight::tests::Chunks;
+        let destination = Destination::tcp(Address::parse_host("example.com"), 443);
+        let mut client = Stream::new_client(Chunks::default(), Method::Aes256Gcm, "secret")
+            .with_destination(&destination)
+            .unwrap();
+        client.write_all(&[7u8; 300]).await.unwrap();
+        client.flush().await.unwrap();
+        let (stream, held) = client.parts();
+        assert!(held.is_empty());
+        let address = encode_address(&destination).unwrap();
+        // One carrier write holding the salt and one chunk: an encrypted
+        // length with its tag, then the address and payload with theirs.
+        assert_eq!(stream.inner.writes.len(), 1);
+        assert_eq!(
+            stream.inner.writes[0].len(),
+            SALT_LEN + (2 + 16) + (address.len() + 300 + 16)
+        );
+    }
+
     #[test]
     fn the_nonce_is_a_little_endian_counter() {
         let master = evp_bytes_to_key(b"password", Method::Aes256Gcm.key_len());
@@ -579,12 +603,12 @@ mod tests {
             Method::Chacha20Poly1305,
         ] {
             let (client, server) = tokio::io::duplex(128 * 1024);
-            let mut client = Stream::new_client(client, method, "secret");
+            let client = Stream::new_client(client, method, "secret");
             let mut server = Stream::new_server(server, method, "secret");
             let destination = Destination::tcp(Address::parse_host("example.com"), 443);
             let expected = destination.clone();
             let writer = tokio::spawn(async move {
-                client.write_destination(&destination).await.unwrap();
+                let mut client = client.with_destination(&destination).unwrap();
                 client.write_all(b"payload").await.unwrap();
                 client.flush().await.unwrap();
             });

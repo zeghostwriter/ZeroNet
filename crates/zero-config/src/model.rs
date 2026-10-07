@@ -354,6 +354,11 @@ const REALITY_UNSUPPORTED_PROFILE_NAMES: &[&str] = &[
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Evasion {
     pub tcp_fragment: Option<FragmentConfig>,
+    /// A second fragment mask underneath the first: it cuts up what the
+    /// first one writes. Xray stacks the masks of `finalmask.tcp` this way,
+    /// the later entry on top, and the recipes that pair an empty record
+    /// with a TCP split need both. Never set without `tcp_fragment`.
+    pub tcp_fragment_under: Option<FragmentConfig>,
     pub udp_noise: Vec<NoiseConfig>,
     /// Optional Linux raw-packet fake-SNI injection selected by the planner.
     pub sni_desync: Option<SniDesyncConfig>,
@@ -365,6 +370,7 @@ pub struct Evasion {
 impl Evasion {
     pub fn is_empty(&self) -> bool {
         self.tcp_fragment.is_none()
+            && self.tcp_fragment_under.is_none()
             && self.udp_noise.is_empty()
             && self.sni_desync.is_none()
             && self.keepalive.is_none()
@@ -402,6 +408,45 @@ impl Default for KeepaliveConfig {
 pub struct SniDesyncConfig {
     pub fake_sni: Box<str>,
     pub sequence: u32,
+    /// Which way the name is kept from the filter.
+    pub method: SniMethod,
+}
+
+/// The ways of keeping a server name from a filter that reads it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SniMethod {
+    /// A decoy ClientHello where this device can send one, and the urgent
+    /// byte where it cannot. What a configuration gets when it names none.
+    #[default]
+    Auto,
+    /// A decoy ClientHello naming `fake_sni`, sent ahead of the real one
+    /// (`zero_evasion::decoy`, or a raw packet where the process may send
+    /// one). Works against the most filters; adds a resend to every
+    /// connection and needs a kernel feature or a raw socket.
+    Decoy,
+    /// One byte of TCP urgent data in the middle of the name
+    /// (`zero_evasion::urgent`). No delay and no kernel feature; `fake_sni`
+    /// is not used.
+    Urgent,
+}
+
+impl SniDesyncConfig {
+    /// The urgent-byte method, for the callers that try it as a way of its
+    /// own (the CDN check, the server test).
+    pub fn urgent() -> Self {
+        Self {
+            method: SniMethod::Urgent,
+            ..Self::default()
+        }
+    }
+
+    /// The decoy method and nothing else.
+    pub fn decoy() -> Self {
+        Self {
+            method: SniMethod::Decoy,
+            ..Self::default()
+        }
+    }
 }
 
 impl Default for SniDesyncConfig {
@@ -409,6 +454,7 @@ impl Default for SniDesyncConfig {
         Self {
             fake_sni: "www.microsoft.com".into(),
             sequence: 0,
+            method: SniMethod::Auto,
         }
     }
 }
@@ -422,6 +468,45 @@ pub struct FragmentConfig {
     pub delay: RangeDuration,
     /// Upper bound on fragment count; `0` means unlimited.
     pub max_split: RangeU32,
+    /// Zero-length TLS records put in front of the ClientHello. Only
+    /// [`FragmentPackets::TlsHello`] can do this; see [`Self::empty_record`].
+    pub empty_records: u8,
+    /// Sizes for the first pieces after any empty records, one entry per
+    /// piece; `length` sizes the pieces after them. Together with the
+    /// leading zeros counted in `empty_records` this is Xray's `lengths`.
+    pub lead_lengths: Vec<RangeU32>,
+    /// Delays after the first pieces, counted from the very first one, one
+    /// entry per piece; `delay` follows the pieces after them. Xray's
+    /// `delays`. With any entry here the records are never merged into one
+    /// write, as in Xray.
+    pub lead_delays: Vec<RangeDuration>,
+}
+
+impl FragmentConfig {
+    /// One empty TLS record, then the ClientHello whole, in a single write.
+    ///
+    /// A filter that reads the server name out of the first record of a
+    /// connection finds a record with nothing in it and lets the rest go.
+    /// Measured 2026-10-07 from Tehran (Zi-Tel) against Cloudflare's edge:
+    /// names that are dropped as is (`api.cloudflareclient.com`,
+    /// `*.pages.dev`) completed the handshake 2 of 2 this way, while TCP
+    /// segments of 40 bytes and plain record re-framing got 0 of 2. It costs
+    /// five bytes and no delay. Cloudflare accepts the empty record; not
+    /// every server does, so it is something to try, not to assume.
+    pub fn empty_record() -> Self {
+        Self {
+            packets: FragmentPackets::TlsHello,
+            // Larger than any ClientHello, so the hello stays one record.
+            length: RangeU32::new(16_384, 16_384),
+            // No delay keeps both records in one write, which is what works:
+            // the empty record sent on its own got 0 of 2.
+            delay: RangeDuration::millis(0, 0),
+            max_split: RangeU32::new(0, 0),
+            empty_records: 1,
+            lead_lengths: Vec::new(),
+            lead_delays: Vec::new(),
+        }
+    }
 }
 
 impl Default for FragmentConfig {
@@ -436,6 +521,9 @@ impl Default for FragmentConfig {
             length: RangeU32::new(40, 80),
             delay: RangeDuration::millis(1, 1),
             max_split: RangeU32::new(0, 0),
+            empty_records: 0,
+            lead_lengths: Vec::new(),
+            lead_delays: Vec::new(),
         }
     }
 }
@@ -669,6 +757,9 @@ pub enum OutboundProtocol {
     Vmess(VmessConfig),
     /// AnyTLS v2 over ordinary certificate TLS.
     AnyTls(AnyTlsConfig),
+    /// ZeroV1 (code name Tide): sessions carried in HTTP/2 request and
+    /// response bodies.
+    Tide(TideConfig),
     /// Hysteria2 TCP over QUIC/HTTP3.
     Hysteria2(Hysteria2Config),
     /// TUIC v5 over authenticated QUIC.
@@ -690,6 +781,7 @@ impl OutboundProtocol {
             OutboundProtocol::Shadowsocks(_) => "shadowsocks",
             OutboundProtocol::Vmess(_) => "vmess",
             OutboundProtocol::AnyTls(_) => "anytls",
+            OutboundProtocol::Tide(_) => "zerov1",
             OutboundProtocol::Hysteria2(_) => "hysteria2",
             OutboundProtocol::Tuic(_) => "tuic",
             OutboundProtocol::AmneziaWireguard(_) => "amnezia-wg",
@@ -705,6 +797,7 @@ impl OutboundProtocol {
                 | OutboundProtocol::Shadowsocks(_)
                 | OutboundProtocol::Vmess(_)
                 | OutboundProtocol::AnyTls(_)
+                | OutboundProtocol::Tide(_)
                 | OutboundProtocol::Hysteria2(_)
                 | OutboundProtocol::Tuic(_)
                 | OutboundProtocol::AmneziaWireguard(_)
@@ -876,6 +969,25 @@ pub struct AnyTlsConfig {
     pub address: Address,
     pub port: u16,
     pub password: Box<str>,
+}
+
+/// A Tide server to connect to. The keys are the raw bytes; links and JSON
+/// write them as unpadded URL-safe base64.
+#[derive(Clone, PartialEq, Eq)]
+pub struct TideConfig {
+    pub address: Address,
+    pub port: u16,
+    /// The path prefix the server answers Tide requests under.
+    pub path: Box<str>,
+    /// The server's public key, which the handshake is made against.
+    pub server_key: [u8; 32],
+    /// This user's id on that server.
+    pub user: [u8; 16],
+    /// Uploads on a connection of their own, apart from downloads.
+    pub split: bool,
+    /// End each upload request as soon as nothing is waiting, for a server
+    /// behind a proxy that collects a whole request before passing it on.
+    pub packet_upload: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1133,8 +1245,11 @@ impl Outbound {
             ));
         }
 
+        // A direct outbound has no TLS of its own, but it carries the TLS of
+        // whatever is behind the proxy, and that hello can take a decoy.
         if self.stream.evasion.sni_desync.is_some()
             && matches!(self.stream.security, Security::None)
+            && !matches!(self.protocol, OutboundProtocol::Freedom { .. })
         {
             return Err(format!(
                 "outbound {}: SNI desync requires a TLS or REALITY carrier",
@@ -1460,6 +1575,7 @@ impl Outbound {
             OutboundProtocol::Shadowsocks(s) => Some((s.address.clone(), s.port)),
             OutboundProtocol::Vmess(v) => Some((v.address.clone(), v.port)),
             OutboundProtocol::AnyTls(a) => Some((a.address.clone(), a.port)),
+            OutboundProtocol::Tide(t) => Some((t.address.clone(), t.port)),
             OutboundProtocol::Hysteria2(h) => Some((h.address.clone(), h.port)),
             OutboundProtocol::Tuic(t) => Some((t.address.clone(), t.port)),
             OutboundProtocol::AmneziaWireguard(w) => Some((w.address.clone(), w.port)),
@@ -1488,6 +1604,8 @@ pub enum InboundProtocol {
     Shadowsocks(ShadowsocksInboundConfig),
     /// AnyTLS v2 over ordinary certificate TLS.
     AnyTls(AnyTlsInboundConfig),
+    /// Tide server: HTTP/2, with certificate TLS here or in a proxy in front.
+    Tide(TideInboundConfig),
     /// Hysteria2 TCP-over-QUIC inbound.
     Hysteria2(Hysteria2InboundConfig),
     /// TUIC v5 authenticated QUIC inbound.
@@ -1504,6 +1622,10 @@ pub enum InboundProtocol {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct VlessInboundConfig {
     pub users: Box<[VlessInboundUser]>,
+    /// Where a connection that is not a valid VLESS request is sent instead
+    /// of being closed (Xray's `fallbacks`): usually a web server, so that a
+    /// prober is answered by a real site.
+    pub fallback: Option<(Address, u16)>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1515,6 +1637,9 @@ pub struct VlessInboundUser {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct TrojanInboundConfig {
     pub password_hashes: Box<[[u8; 56]]>,
+    /// Where a connection without a valid password is sent instead of being
+    /// closed (Xray's `fallbacks`).
+    pub fallback: Option<(Address, u16)>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -1537,6 +1662,79 @@ pub struct ShadowsocksInboundConfig {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct AnyTlsInboundConfig {
     pub passwords: Box<[Box<str>]>,
+}
+
+#[derive(Clone, PartialEq, Eq, Default)]
+pub struct TideInboundConfig {
+    /// The path prefix Tide requests are answered under; everything else
+    /// gets the decoy page.
+    pub path: Box<str>,
+    /// The server's secret key. Its public half is what links carry.
+    pub secret: [u8; 32],
+    /// Users written in the config itself.
+    pub users: Box<[TideUser]>,
+    /// A file of more users that the control panel adds to and removes from.
+    pub users_file: Option<Box<str>>,
+    /// The name and port clients reach this server by, for the links the
+    /// control panel makes. Without a name there are no links to show.
+    pub public_host: Option<Box<str>>,
+    pub public_port: u16,
+    /// The secret path the control panel is served under; none, no panel.
+    pub admin_path: Option<Box<str>>,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub struct TideUser {
+    pub id: [u8; 16],
+    pub name: Box<str>,
+}
+
+// The user id is this client's password on the server: never in a log. The
+// whole value still has to tell two servers or two users apart where it is
+// hashed into a cache key, so a short digest of the id stands in for it.
+impl std::fmt::Debug for TideConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mark = self
+            .user
+            .iter()
+            .zip(&self.server_key)
+            .fold(0u64, |mark, (a, b)| {
+                mark.wrapping_mul(0x100_0000_01b3) ^ u64::from(*a) ^ (u64::from(*b) << 8)
+            });
+        f.debug_struct("TideConfig")
+            .field("address", &self.address)
+            .field("port", &self.port)
+            .field("path", &self.path)
+            .field("split", &self.split)
+            .field("packet_upload", &self.packet_upload)
+            .field("identity", &format_args!("{mark:016x}"))
+            .finish()
+    }
+}
+
+// Configs are logged whole when a listener starts. A Tide config holds the
+// server's secret key, every user's id (which is that user's password) and
+// the control panel's secret path, so its debug form names them and shows
+// none of them.
+impl std::fmt::Debug for TideInboundConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TideInboundConfig")
+            .field("path", &self.path)
+            .field("users", &self.users.len())
+            .field("users_file", &self.users_file)
+            .field("public_host", &self.public_host)
+            .field("public_port", &self.public_port)
+            .field("panel", &self.admin_path.is_some())
+            .finish_non_exhaustive()
+    }
+}
+
+impl std::fmt::Debug for TideUser {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TideUser")
+            .field("name", &self.name)
+            .finish_non_exhaustive()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]

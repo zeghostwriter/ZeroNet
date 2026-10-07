@@ -275,11 +275,109 @@ fn alternate_target(target: &ProbeTarget) -> ProbeTarget {
     }
 }
 
-/// The real test: a plain-HTTP request as a cheap filter, then a verified
-/// HTTPS confirmation. Only a config that passes both is alive. The reported
-/// delay is the plain request's, so it stays comparable across protocols and
-/// excludes the extra TLS handshake the confirmation adds.
+/// The real test of one server, as the finder and the "test" buttons run it:
+/// the server as its link describes it, and when that dies in the handshake
+/// on a server that does answer, again with its name hidden from the filter
+/// (an urgent byte in the name, then a decoy ClientHello).
+///
+/// Why the second try: where the network filters by server name, every TLS
+/// server with a filtered name fails the plain test, so automatic selection
+/// would never pick one, although the tunnel itself gets it through with a
+/// decoy (auto mode adds that variant, and the planner turns to it after a
+/// failed handshake). A server that only works behind the decoy is alive
+/// here, and its delay is the decoy's, which is what the user will get.
+///
+/// The further tries are only made when they can help: the device can hide
+/// a name, the link has a name to hide (`sni_spoofable`), and the failure was
+/// a handshake cut off, not an address that does not answer at all.
 pub async fn real_test(
+    outbound: &zero_config::Outbound,
+    target: &ProbeTarget,
+    timeout: Duration,
+    confirm: Option<Duration>,
+) -> Result<u64, String> {
+    let plain = real_test_as_is(outbound, target, timeout, confirm).await;
+    let Err(error) = &plain else {
+        return plain;
+    };
+    if outbound.stream.evasion.sni_desync.is_some()
+        || !crate::config::sni_spoofable(outbound)
+        || !zero_evasion::decoy::any_available()
+        || !cut_off_in_the_handshake(outbound, error).await
+    {
+        return plain;
+    }
+    // The urgent byte first (it costs nothing), then the decoy where this
+    // device can send one. Every failure is reported when none gets through:
+    // the later ones say how far the server got once its name was out of the
+    // filter's sight.
+    let mut failures = error.clone();
+    let ways = [
+        (
+            zero_evasion::urgent::supported(),
+            zero_config::SniDesyncConfig::urgent(),
+            "with the name hidden",
+        ),
+        (
+            zero_evasion::decoy::available(),
+            zero_config::SniDesyncConfig {
+                fake_sni: crate::config::SPOOF_DECOY_SNI.into(),
+                ..zero_config::SniDesyncConfig::decoy()
+            },
+            "behind a decoy",
+        ),
+    ];
+    for (possible, way, label) in ways {
+        if !possible {
+            continue;
+        }
+        let mut hidden = outbound.clone();
+        hidden.stream.evasion.sni_desync = Some(way);
+        match real_test_as_is(&hidden, target, timeout, confirm).await {
+            Ok(delay) => return Ok(delay),
+            Err(second) => failures = format!("{failures}; {label}: {second}"),
+        }
+    }
+    Err(failures)
+}
+
+/// How long the server gets to accept a TCP connection when a test timed out
+/// and the question is whether it is there at all.
+const REACHABLE_WITHIN: Duration = Duration::from_millis(1000);
+
+/// Whether `error`, from a failed test of `outbound`, reads as a handshake
+/// that was cut off after the TCP connection opened: a reset or a TLS
+/// failure says so by itself, and a bare timeout is settled by asking the
+/// server for a TCP connection.
+async fn cut_off_in_the_handshake(outbound: &zero_config::Outbound, error: &str) -> bool {
+    // A reset shows up under either name, depending on whether it landed
+    // before or inside the TLS exchange. A certificate error or an alert is
+    // the server speaking, which no decoy changes.
+    const CUT_OFF: [&str; 3] = [
+        "connect: TCP_RST",
+        "connect: TLS_TIMEOUT",
+        "connect: TLS_HANDSHAKE_MALFORMED",
+    ];
+    if CUT_OFF.iter().any(|kind| error.starts_with(kind)) {
+        return true;
+    }
+    if !error.contains("timed out") && !error.contains("TIMEOUT") {
+        return false;
+    }
+    match outbound.endpoint() {
+        Some((address, port)) => tcp_ping(&address.to_string(), port, REACHABLE_WITHIN)
+            .await
+            .is_ok(),
+        None => false,
+    }
+}
+
+/// One real test of `outbound` exactly as given: a plain-HTTP request as a
+/// cheap filter, then a verified HTTPS confirmation. Only a config that
+/// passes both is alive. The reported delay is the plain request's, so it
+/// stays comparable across protocols and excludes the extra TLS handshake
+/// the confirmation adds.
+async fn real_test_as_is(
     outbound: &zero_config::Outbound,
     target: &ProbeTarget,
     timeout: Duration,

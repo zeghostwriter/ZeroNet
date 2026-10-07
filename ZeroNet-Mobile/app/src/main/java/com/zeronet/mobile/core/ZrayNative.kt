@@ -30,6 +30,12 @@ object ZrayNative {
     @JvmStatic external fun networkChanged(): String?
 
     @JvmStatic external fun buildConfig(requestJson: String): String
+    /** The user's switch for the decoy server name: off stops the core from
+     *  turning to it by itself. Takes effect on the next connection. */
+    @JvmStatic external fun setDecoy(enabled: Boolean)
+    /** `{"supported", "local", "network"}`: whether the decoy works on this
+     *  phone and on this network. Blocks for seconds; call off the main thread. */
+    @JvmStatic external fun decoyCheck(): String
     @JvmStatic external fun parseLinks(text: String): String
     @JvmStatic external fun subscriptionFetchUrl(address: String): String
     /** `{"links": [...], "seed": n, "max": n}` → `{"links": [...]}`: CDN-fronted

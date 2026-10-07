@@ -5,11 +5,13 @@ import android.os.ParcelFileDescriptor
 import android.os.PowerManager
 import android.telephony.TelephonyManager
 import android.util.Log
+import com.zeronet.mobile.core.LocalProxyAuth
 import com.zeronet.mobile.core.ZrayNative
 import com.zeronet.mobile.data.NetworkIdentity
 import com.zeronet.mobile.data.ServerStore
 import com.zeronet.mobile.data.Sources
 import com.zeronet.mobile.data.Subscription
+import com.zeronet.mobile.model.DecoyMode
 import com.zeronet.mobile.model.CheckStatus
 import com.zeronet.mobile.model.ConnState
 import com.zeronet.mobile.model.DiagCheck
@@ -359,6 +361,9 @@ object Engine {
         nativeError = runCatching { ZrayNative.init(app.filesDir.absolutePath, coreLogLevel(settings)) }
             .fold({ it }, { "native library failed to load: ${it.message}" })
         if (nativeError != null) EngineLog.e("native init: $nativeError")
+        // The finder tests servers before any config is built, so the core
+        // hears about the decoy switch as soon as it is loaded.
+        else runCatching { ZrayNative.setDecoy(settings.sniDecoy != DecoyMode.Off) }
     }
 
     /** Warnings are always kept for the Diagnostics screen; "detailed logs" adds the core's info lines. */
@@ -614,7 +619,7 @@ object Engine {
     private fun topology(s: Settings) = listOf(s.lanShare, s.lanUser, s.lanPass, s.socksPort, s.httpPort)
 
     private fun routing(s: Settings) = listOf(
-        s.iranDirect, s.blockQuic, s.evasion, s.fragmentPackets, s.remoteDns, s.customDns,
+        s.iranDirect, s.blockQuic, s.evasion, s.sniDecoy, s.fragmentPackets, s.remoteDns, s.customDns,
         s.antiSanctionDns, s.customAntiSanction, s.blockAds, s.logs,
     )
 
@@ -1172,18 +1177,25 @@ object Engine {
     private fun buildConfig(failOnError: Boolean = true): String? {
         val s = settings
         val links = usablePool().take(linksInConfig(s.profile))
+        runCatching { ZrayNative.setDecoy(s.sniDecoy != DecoyMode.Off) }
         val request = JSONObject()
             .put("links", JSONArray(links.map { it.server.link }))
             .put("mode", if (s.mode == ConnectionMode.Vpn) "vpn" else "proxy")
             .put("tun", JSONObject().put("mtu", s.mtu).put("ipv6", s.ipv6))
             .put("socks_port", s.socksPort).put("http_port", s.httpPort)
             .put("lan", JSONObject().put("enabled", s.lanShare).put("listen", "0.0.0.0").put("user", s.lanUser).put("pass", s.lanPass))
+            // Keeps other apps on the phone out of the local proxy in VPN mode.
+            .put("local_auth", JSONObject().put("user", LocalProxyAuth.user).put("pass", LocalProxyAuth.pass))
             // Games and voice run over UDP: Gaming never blocks it.
             .put("iran_direct", s.iranDirect).put("block_ads", s.blockAds)
             .put("block_quic", s.blockQuic && s.profile != ConnectionProfile.Gaming && rung?.allowQuic != true)
             // Fragmenting the ClientHello costs round trips; Fast and Gaming skip it.
             .put("evasion", if (!s.profile.classic) "off" else when (rung?.evasion ?: s.evasion) { EvasionLevel.Off -> "off"; EvasionLevel.Auto -> "auto"; EvasionLevel.Strong -> "strong" })
             .put("fragment_first", crowdFragmentFirst)
+            // The decoy server name: on every connection, or never as a variant.
+            // Left to the core under Auto.
+            .put("sni_spoof", s.sniDecoy == DecoyMode.Always)
+            .apply { if (s.sniDecoy == DecoyMode.Off) put("auto_decoy", false) }
             .put("fragment_packets", s.fragmentPackets.trim().ifEmpty { "1-1" })
             .put("dns", JSONObject().put("remote", s.remoteDns.name.lowercase()).put("custom", s.customDns.trim()).put("local", "google").put("anti_sanction", s.antiSanctionDns.name.lowercase()).put("custom_anti_sanction", s.customAntiSanction.trim()).put("fakedns", s.fakeDns))
             // The user's own scan first, then what others found on this network.
@@ -1634,7 +1646,7 @@ object Engine {
         warpJob = scope.launch(Dispatchers.IO) {
             try {
                 val request = JSONObject().put("direct", true).put("order", settings.warpOrder.wire)
-                if (running) request.put("proxy", "127.0.0.1:${settings.httpPort}")
+                if (running) request.put("proxy", "127.0.0.1:${settings.httpPort}").put("proxyAuth", LocalProxyAuth.userPass)
                 var steps = emptyList<String>()
                 var finished = false
                 nativeJob { ZrayNative.warpRegister(request.toString(), it) }.collect { e ->
@@ -1904,6 +1916,7 @@ object Engine {
     private suspend fun registerAccount(quick: Boolean = false): WarpAccount = withContext(Dispatchers.IO) {
         val request = if (quick) JSONObject().put("quick", true) else
             JSONObject().put("direct", false).put("proxy", "127.0.0.1:${settings.httpPort}")
+                .put("proxyAuth", LocalProxyAuth.userPass)
         // The servers it looks for depend on the order: reachable through
         // Cloudflare for Reverse, reachable from here for Hybrid, and for
         // Auto the first of those two ways that finds any.

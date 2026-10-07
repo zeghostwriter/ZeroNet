@@ -129,17 +129,12 @@ fn parse_link_inner(link: &str) -> Result<ShareLink, String> {
         "ss" => parse_shadowsocks(rest),
         "vmess" => parse_vmess(rest),
         "anytls" => parse_anytls(rest),
+        "zerov1" | "tide" => parse_tide(rest),
         // `hy2://` is the short form the Hysteria project itself documents.
         "hysteria2" | "hy2" => parse_hysteria2(rest),
         "tuic" => parse_tuic(rest),
         "wireguard" | "wg" => parse_wireguard(rest),
         "warp" => parse_warp_link(rest),
-        // Reserved for ZeroNet's own share format, which is not released
-        // yet. Refused by name so such a link is not mistaken for a typo.
-        "zerov1" => Err(
-            "zerov1:// links are reserved for a future ZeroNet format and are not supported yet"
-                .into(),
-        ),
         _ => Err(format!("unsupported share link scheme {scheme:?}")),
     }
 }
@@ -497,6 +492,67 @@ fn parse_anytls(rest: &str) -> Result<ShareLink, String> {
             address: Address::parse_host(p.host),
             port: p.port,
             password: p.credential.into(),
+        }),
+        stream,
+        mux: MuxConfig::default(),
+    };
+    outbound.validate()?;
+    Ok(ShareLink {
+        link: String::new(),
+        remark: p.remark,
+        outbound,
+    })
+}
+
+/// `zerov1://<user>@host:port?key=<server key>&path=/prefix&...#name`
+/// (`tide://` is read too; it is the name the protocol was built under).
+///
+/// The user id and server key are unpadded URL-safe base64. Tide always
+/// runs over HTTP/2 in TLS, so a link that says nothing about security gets
+/// TLS for its host with `h2`, which is what every Tide server speaks.
+fn parse_tide(rest: &str) -> Result<ShareLink, String> {
+    use base64::Engine as _;
+    let p = split_link(rest)?;
+    let decode = |text: &str| {
+        base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(text.trim())
+            .ok()
+    };
+    let user: [u8; 16] = decode(&p.credential)
+        .and_then(|bytes| bytes.try_into().ok())
+        .ok_or_else(|| "Tide link has no valid user id".to_string())?;
+    let server_key: [u8; 32] = p
+        .query
+        .get("key")
+        .and_then(|key| decode(key))
+        .and_then(|bytes| bytes.try_into().ok())
+        .ok_or_else(|| "Tide link has no valid server key".to_string())?;
+    let path = p.query.get("path").map(String::as_str).unwrap_or("");
+    let plain = path
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'/' | b'-' | b'_' | b'.'));
+    if path.len() < 2 || !path.starts_with('/') || path.ends_with('/') || !plain {
+        return Err("Tide link has no valid path".into());
+    }
+    let mut query = p.query.clone();
+    query
+        .entry("security".into())
+        .or_insert_with(|| "tls".into());
+    query.insert("alpn".into(), "h2".into());
+    // The path is Tide's own; the stream below is plain TLS over TCP.
+    query.remove("path");
+    query.remove("type");
+    let stream = build_stream(&query, p.host)?;
+    let outbound = Outbound {
+        tag: Arc::from("proxy"),
+        protocol: OutboundProtocol::Tide(TideConfig {
+            address: Address::parse_host(p.host),
+            port: p.port,
+            path: path.into(),
+            server_key,
+            user,
+            split: query.get("split").map(String::as_str) != Some("0"),
+            packet_upload: query.get("upload").map(String::as_str) == Some("packet"),
         }),
         stream,
         mux: MuxConfig::default(),

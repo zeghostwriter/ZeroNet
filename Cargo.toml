@@ -22,6 +22,9 @@ members = [
     # resolves the same dependency versions as the code it measures, and so its
     # release profile is the shipped one.
     "bench/hotpath",
+    # What a proxied page load looks like from outside the tunnel: packet
+    # sizes and directions, scored the way a traffic classifier would.
+    "bench/shape",
 ]
 
 [workspace.package]

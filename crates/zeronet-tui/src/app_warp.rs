@@ -838,7 +838,8 @@ impl App<'_> {
                     .ok()
                     .zip(std::env::var("ZERONET_WARP_RELAY_AUTH").ok());
                 let link =
-                    zero_discovery::warp::register_anywhere(tunnel, relay, true, &progress).await?;
+                    zero_discovery::warp::register_anywhere(tunnel, None, relay, true, &progress)
+                        .await?;
                 Ok(with_servers(link, &progress).await)
             }
             .await;

@@ -23,6 +23,7 @@ pub mod cloudflare;
 pub mod config;
 pub mod crowd;
 pub mod crowd_client;
+pub mod decoy_check;
 pub mod discover;
 pub mod events;
 pub mod feed;
@@ -46,6 +47,7 @@ pub(crate) mod testing;
 
 pub use cloudflare::{front_link, front_via_edges};
 pub use config::{build_config, build_config_with_assets};
+pub use decoy_check::{decoy_check, set_decoy_enabled};
 pub use discover::{discover, DiscoverRequest, EndReason};
 pub use events::{batching_sink, EventCallback, EventSink};
 pub use link::{link_key, parse_links, LinkClass, LinkInfo, ParseReport};

@@ -11,6 +11,7 @@ pub mod quic_sniff;
 pub mod relay;
 pub mod sanction_dns;
 pub mod server;
+pub mod tide_users;
 pub mod warm;
 pub mod warp;
 

@@ -5006,11 +5006,16 @@ impl App<'_> {
             }
             ComponentId::SettingSniSpoofToggle => {
                 self.settings.sni_spoof = !self.settings.sni_spoof;
-                // The decoy is a raw packet, so it only goes out when the
-                // engine runs with root/CAP_NET_RAW; say so rather than let
-                // the toggle look like it did nothing.
+                // Sending the decoy needs a kernel feature (or root); say so
+                // when it is missing rather than let the toggle look like it
+                // did nothing.
                 self.save_and_report(if self.settings.sni_spoof {
-                    "SNI spoofing on (needs root; skipped without it)".to_string()
+                    if zero_evasion::decoy::any_available() {
+                        "SNI spoofing on (connections start a little slower)".to_string()
+                    } else {
+                        "SNI spoofing on, but this system cannot send the decoy; nothing changes"
+                            .to_string()
+                    }
                 } else {
                     "SNI spoofing off".to_string()
                 });

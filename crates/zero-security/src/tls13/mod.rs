@@ -22,6 +22,7 @@ pub mod cert;
 pub mod client;
 pub mod hello;
 pub mod kdf;
+pub mod post_handshake;
 pub mod record;
 pub mod server;
 

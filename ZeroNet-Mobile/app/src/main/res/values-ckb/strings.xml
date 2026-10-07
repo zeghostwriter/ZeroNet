@@ -337,6 +337,19 @@
     <string name="settings_evasion_off_hint">پەیوەندی ساکار. خێراترین، بەڵام ئاسانتر بلۆک دەکرێت.</string>
     <string name="settings_evasion_auto_hint">بە ئاسایی پەیوەست دەبێت، و کاتێک سێرڤەرێک بلۆک کرا دەستپێکی پەیوەندی دابەش دەکات. بەو ڕێگایە دەست پێدەکات کە بۆ کەسانی تر لەسەر تۆڕەکەت کاری کردووە.</string>
     <string name="settings_evasion_strong_hint">هەمیشە ترافیک دەشارێتەوە. کەمێک خاوتر، بەڵام زۆر سەختتر بلۆک دەکرێت.</string>
+    <string name="settings_decoy">شاردنەوەی ناوی سێرڤەر (SNI)</string>
+    <string name="settings_decoy_off_hint">ناوی سێرڤەر هەرگیز ناشاردرێتەوە.</string>
+    <string name="settings_decoy_auto_hint">تەنها کاتێک پەیوەندییەک بەهۆی ناوەکەیەوە دەبڕدرێت، ناوی سێرڤەر لە فلتەرەکە دەشاردرێتەوە.</string>
+    <string name="settings_decoy_always_hint">هەموو پەیوەندییەک ناوی سێرڤەرەکەی لە فلتەرەکە دەشارێتەوە. لە هەندێک مۆبایلدا هەر یەکێکیان نزیکەی نیو چرکە درەنگتر دەست پێدەکات.</string>
+    <string name="option_always">هەمیشە</string>
+    <string name="settings_decoy_test">تاقیکردنەوە لەسەر ئەم مۆبایلە</string>
+    <string name="decoy_test_running">تاقیکردنەوە…</string>
+    <string name="decoy_test_unsupported">ئەم مۆبایلە ناتوانێت ناوی سێرڤەر بشارێتەوە؛ سیستەمەکەی ڕێگە نادات. ZeroNet لە جیاتی ئەوە ڕێگاکانی تری بەکاردەهێنێت.</string>
+    <string name="decoy_test_broken">ئەم مۆبایلە هەوڵی دا ناوەکە بشارێتەوە، بەڵام لە تاقیکردنەوەیەکی ناو مۆبایلەکەدا پەیوەندییەکە بە دروستی نەگەیشت، بۆیە لێرە پشتی پێ نابەسترێت.</string>
+    <string name="decoy_test_works">کار دەکات: ئەم تۆڕە ناوێکی فلتەرکراوی بڕی، و هەمان ناو بە شاراوەیی تێپەڕی.</string>
+    <string name="decoy_test_not_needed">شاردنەوەی ناو لەسەر ئەم مۆبایلە کار دەکات. ئەم تۆڕە ئێستا ناوە تاقیکارییەکانی نەبڕی، بۆیە هیچ شتێک نەبوو لێی تێپەڕێت.</string>
+    <string name="decoy_test_blocked">شاردنەوەی ناو لەسەر ئەم مۆبایلە کار دەکات، بەڵام ئەم تۆڕە هێشتا ناوە تاقیکارییەکانی بڕی.</string>
+    <string name="decoy_test_offline">شاردنەوەی ناو لەسەر ئەم مۆبایلە کار دەکات. ماڵپەڕە تاقیکارییەکان بەردەست نەبوون، بۆیە بەشی تۆڕ نەپشکنرا.</string>
     <string name="settings_block_quic">بلۆککردنی QUIC</string>
     <string name="settings_block_quic_hint">ئەپەکان لەبری گیرکردن، دەگەڕێنەوە بۆ TCP</string>
     <string name="settings_remote_dns">DNS بۆ ماڵپەڕە بلۆککراوەکان</string>
@@ -521,6 +534,7 @@
     <string name="settings_speed_floor_adaptive_hint">خێرایییەکەت فێر دەبێت و ڕاژەکارێک کە زۆر لە ڕاژەکارە تازەکانت خاوترە وازی لێدەهێنێت</string>
     <string name="cdn_throttled_split">Cloudflare لەم تۆڕەدا سنووردار کراوە؛ بۆ تێپەڕین، دەستپێکی پەیوەندی دابەش دەکرێت.</string>
     <string name="cdn_throttled_ech">Cloudflare لەم تۆڕەدا سنووردار کراوە؛ بۆ تێپەڕین، ناوی سێرڤەر دەشاردرێتەوە.</string>
+    <string name="cdn_decoy">Cloudflare لەم تۆڕەدا بە ناو فلتەر کراوە؛ بۆ تێپەڕین، ناوی سێرڤەر لە فلتەرەکە دەشاردرێتەوە.</string>
     <string name="cdn_blocked">ڕێکخستنەکانی CDNی Cloudflare لەم تۆڕەدا کار ناکەن، بۆیە بەکارناهێنرێن.</string>
     <string name="warp_open">وەرگرتنی هەژماری Cloudflare WARP</string>
     <string name="warp_title">Cloudflare WARP</string>

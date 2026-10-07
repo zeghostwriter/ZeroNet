@@ -54,6 +54,8 @@ pub struct Api {
     /// An HTTP proxy to reach the service through (`CONNECT`), such as the
     /// app's own listener while a tunnel is up.
     pub proxy: Option<std::net::SocketAddr>,
+    /// `user:pass` for that proxy, when it asks for one.
+    pub proxy_auth: Option<String>,
 }
 
 impl Api {
@@ -63,6 +65,7 @@ impl Api {
             headers: Vec::new(),
             timeout: Duration::from_secs(20),
             proxy: None,
+            proxy_auth: None,
         }
     }
 
@@ -74,6 +77,12 @@ impl Api {
         }
     }
 
+    /// The same API, giving the proxy this `user:pass` when it has one.
+    pub fn with_proxy_auth(mut self, credentials: Option<String>) -> Self {
+        self.proxy_auth = credentials;
+        self
+    }
+
     /// A relay at `base` (`https://<worker>/<path>/warp`) that wants
     /// `X-Zray-Auth: <credential>`.
     pub fn relay(base: &str, credential: &str) -> Self {
@@ -82,6 +91,7 @@ impl Api {
             headers: vec![("X-Zray-Auth".into(), credential.into())],
             timeout: Duration::from_secs(20),
             proxy: None,
+            proxy_auth: None,
         }
     }
 
@@ -186,17 +196,7 @@ async fn call(
 ) -> Result<Value, String> {
     let url = format!("{}{path}", api.base);
     let sent = match api.proxy {
-        None => {
-            send_with_headers(
-                method,
-                &url,
-                "application/json; charset=UTF-8",
-                &headers(api, bearer),
-                body.as_bytes(),
-                &limits(api),
-            )
-            .await
-        }
+        None => send_direct(method, &url, api, bearer, body).await,
         Some(proxy) => send_through(proxy, method, &url, api, bearer, body).await,
     };
     let response = sent.map_err(|error| match error {
@@ -251,9 +251,15 @@ async fn send_through(
         .await
         .map_err(|_| FetchError::Timeout(api.timeout))?
         .map_err(|error| failure(error.to_string()))?;
+    let authorization = api.proxy_auth.as_deref().map_or_else(String::new, |pair| {
+        use base64::Engine as _;
+        let encoded = base64::engine::general_purpose::STANDARD.encode(pair);
+        format!("Proxy-Authorization: Basic {encoded}\r\n")
+    });
     stream
         .write_all(
-            format!("CONNECT {host}:{port} HTTP/1.1\r\nHost: {host}:{port}\r\n\r\n").as_bytes(),
+            format!("CONNECT {host}:{port} HTTP/1.1\r\nHost: {host}:{port}\r\n{authorization}\r\n")
+                .as_bytes(),
         )
         .await
         .map_err(|error| failure(error.to_string()))?;
@@ -274,12 +280,92 @@ async fn send_through(
     if !head.starts_with(b"HTTP/1.1 200") && !head.starts_with(b"HTTP/1.0 200") {
         return Err(failure("it refused the connection".into()));
     }
+    send_tls(stream, host, method, url, api, bearer, body).await
+}
+
+/// One API call straight from this device.
+///
+/// The service's name is filtered in Iran: a ClientHello that names it is
+/// dropped. So the hello goes out behind one empty TLS record
+/// (`FragmentPolicy::empty_record`), which Cloudflare's edge accepts and
+/// which got the handshake through on 6 of 6 addresses where the plain one
+/// got 0 of 6 (Tehran, 2026-10-07). The relay's `workers.dev` name is
+/// throttled the same way and is served by the same edge, so it takes the
+/// same path.
+async fn send_direct(
+    method: &str,
+    url: &str,
+    api: &Api,
+    bearer: Option<&str>,
+    body: &str,
+) -> Result<Vec<u8>, FetchError> {
+    let parsed = url::Url::parse(url).map_err(|error| FetchError::Url(error.to_string()))?;
+    if parsed.scheme() != "https" {
+        // Nothing to hide a name in; only tests point this at plain HTTP.
+        return send_with_headers(
+            method,
+            url,
+            "application/json; charset=UTF-8",
+            &headers(api, bearer),
+            body.as_bytes(),
+            &limits(api),
+        )
+        .await;
+    }
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| FetchError::Url("no host".into()))?
+        .to_string();
+    let unreachable = |source: std::io::Error| FetchError::Connect {
+        host: host.clone(),
+        source,
+    };
+    let dial = async {
+        let addresses: Vec<std::net::SocketAddr> =
+            tokio::net::lookup_host((host.as_str(), parsed.port().unwrap_or(443)))
+                .await?
+                .collect();
+        // Raced, on sockets the host has exempted from its own tunnel.
+        zero_net::dial_tcp(
+            &addresses,
+            &zero_net::RacePolicy::default(),
+            &zero_net::SocketOptions::default(),
+        )
+        .await
+        .map_err(|failure| std::io::Error::other(failure.to_string()))
+    };
+    let tcp = tokio::time::timeout(api.timeout, dial)
+        .await
+        .map_err(|_| FetchError::Timeout(api.timeout))?
+        .map_err(unreachable)?
+        .stream;
+    let stream =
+        zero_evasion::FragmentStream::new(tcp, zero_evasion::FragmentPolicy::empty_record());
+    send_tls(stream, host, method, url, api, bearer, body).await
+}
+
+/// TLS to `host` over `stream`, then the one request.
+async fn send_tls<S>(
+    stream: S,
+    host: String,
+    method: &str,
+    url: &str,
+    api: &Api,
+    bearer: Option<&str>,
+    body: &str,
+) -> Result<Vec<u8>, FetchError>
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
     let name = rustls_pki_types::ServerName::try_from(host.clone())
         .map_err(|error| FetchError::Url(error.to_string()))?;
-    let tls = tokio_rustls::TlsConnector::from(tls_config())
-        .connect(name, stream)
-        .await
-        .map_err(|source| FetchError::Tls { host, source })?;
+    let tls = tokio::time::timeout(
+        api.timeout,
+        tokio_rustls::TlsConnector::from(tls_config()).connect(name, stream),
+    )
+    .await
+    .map_err(|_| FetchError::Timeout(api.timeout))?
+    .map_err(|source| FetchError::Tls { host, source })?;
     zero_net::fetch::send_over(
         tls,
         method,
@@ -730,15 +816,17 @@ pub async fn register_with(api: &Api, progress: &impl Fn(&str)) -> Result<String
 /// name on some networks, and a tunnel is the one path there that always
 /// works), then a relay the person set up, then straight out when `direct`.
 /// Returns the account's `warp://` link. `progress` hears what is happening.
+/// `tunnel_auth` is the `user:pass` the tunnel's proxy wants, if any.
 pub async fn register_anywhere(
     tunnel: Option<std::net::SocketAddr>,
+    tunnel_auth: Option<String>,
     relay: Option<(String, String)>,
     direct: bool,
     progress: &impl Fn(&str),
 ) -> Result<String, String> {
     let mut ways = Vec::new();
     if let Some(proxy) = tunnel {
-        ways.push(Api::through(proxy));
+        ways.push(Api::through(proxy).with_proxy_auth(tunnel_auth));
     }
     if let Some((base, auth)) = relay {
         ways.push(Api::relay(&base, &auth));
@@ -781,6 +869,9 @@ pub struct WarpRequest {
     /// through.
     #[serde(default)]
     pub proxy: Option<String>,
+    /// `user:pass` for that proxy, when the host protects it.
+    #[serde(default, rename = "proxyAuth")]
+    pub proxy_auth: Option<String>,
     /// Try the service directly, too. On unless a host says otherwise.
     #[serde(default = "yes")]
     pub direct: bool,
@@ -844,7 +935,14 @@ pub async fn warp_job(
             progress("Asking Cloudflare for an account…");
             register_with(&Api::direct().with_timeout(DIRECT_PROBE), &progress).await?
         } else {
-            register_anywhere(tunnel, None, request.direct, &progress).await?
+            register_anywhere(
+                tunnel,
+                request.proxy_auth.clone(),
+                None,
+                request.direct,
+                &progress,
+            )
+            .await?
         };
         // The account is useful without servers, so finding none is not a
         // failure.
@@ -1212,6 +1310,7 @@ mod tests {
             headers: vec![("X-Zray-Auth".into(), "credential".into())],
             timeout: Duration::from_secs(5),
             proxy: None,
+            proxy_auth: None,
         };
         let account = register(&api).await.unwrap();
         assert_eq!(account.reserved, [9, 8, 7]);
@@ -1248,6 +1347,7 @@ mod tests {
             headers: Vec::new(),
             timeout: Duration::from_secs(5),
             proxy: None,
+            proxy_auth: None,
         };
         let account = register(&api).await.unwrap();
         assert!(account.masque.is_none());
@@ -1277,6 +1377,7 @@ mod tests {
             headers: Vec::new(),
             timeout: Duration::from_secs(5),
             proxy: None,
+            proxy_auth: None,
         };
         let error = register(&api).await.err().unwrap();
         assert!(error.contains("try again in a minute"), "{error}");
@@ -1315,14 +1416,16 @@ mod tests {
             while let Ok((mut socket, _)) = listener.accept().await {
                 let mut sink = [0u8; 4096];
                 let _ = socket.read(&mut sink).await;
-                assert!(String::from_utf8_lossy(&sink)
-                    .starts_with("CONNECT api.cloudflareclient.com:443"));
+                let request = String::from_utf8_lossy(&sink);
+                assert!(request.starts_with("CONNECT api.cloudflareclient.com:443"));
+                // "u:p" in Basic form: the proxy's password goes with the CONNECT.
+                assert!(request.contains("\r\nProxy-Authorization: Basic dTpw\r\n"));
                 let _ = socket
                     .write_all(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n")
                     .await;
             }
         });
-        let mut api = Api::through(proxy);
+        let mut api = Api::through(proxy).with_proxy_auth(Some("u:p".into()));
         api.timeout = Duration::from_secs(5);
         let error = register(&api).await.err().unwrap();
         assert!(error.contains("local proxy"), "{error}");

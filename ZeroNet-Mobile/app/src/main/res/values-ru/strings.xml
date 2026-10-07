@@ -343,6 +343,19 @@
     <string name="settings_evasion_off_hint">Обычные соединения. Быстрее всего, но легче заблокировать.</string>
     <string name="settings_evasion_auto_hint">Подключается обычно, а если сервер заблокирован, разбивает рукопожатие. Начинает с того, что сработало у других в вашей сети.</string>
     <string name="settings_evasion_strong_hint">Всегда маскирует трафик. Немного медленнее, но заблокировать гораздо сложнее.</string>
+    <string name="settings_decoy">Скрывать имя сервера (SNI)</string>
+    <string name="settings_decoy_off_hint">Имя сервера не скрывается никогда.</string>
+    <string name="settings_decoy_auto_hint">Имя сервера скрывается от фильтра, только когда соединение обрывают из-за имени.</string>
+    <string name="settings_decoy_always_hint">Каждое соединение скрывает имя сервера от фильтра. На некоторых телефонах каждое начинается примерно на полсекунды позже.</string>
+    <string name="option_always">Всегда</string>
+    <string name="settings_decoy_test">Проверить на этом телефоне</string>
+    <string name="decoy_test_running">Проверка…</string>
+    <string name="decoy_test_unsupported">Этот телефон не может скрыть имя сервера: система этого не позволяет. ZeroNet использует другие способы.</string>
+    <string name="decoy_test_broken">Телефон попытался скрыть имя, но в проверке внутри телефона соединение дошло неверно, поэтому полагаться на это здесь нельзя.</string>
+    <string name="decoy_test_works">Работает: эта сеть оборвала соединение с фильтруемым именем, а со скрытым именем оно прошло.</string>
+    <string name="decoy_test_not_needed">Скрытие имени на этом телефоне работает. Сейчас эта сеть не оборвала проверочные имена, так что обходить было нечего.</string>
+    <string name="decoy_test_blocked">Скрытие имени на этом телефоне работает, но эта сеть всё равно оборвала проверочные имена.</string>
+    <string name="decoy_test_offline">Скрытие имени на этом телефоне работает. Проверочные сайты недоступны, поэтому сеть не проверена.</string>
     <string name="settings_block_quic">Блокировать QUIC</string>
     <string name="settings_block_quic_hint">Приложения переходят на TCP вместо зависаний</string>
     <string name="settings_remote_dns">DNS для заблокированных сайтов</string>
@@ -529,6 +542,7 @@
     <string name="settings_speed_floor_adaptive_hint">Запоминает вашу скорость и уходит с сервера, который намного медленнее недавних</string>
     <string name="cdn_throttled_split">Cloudflare в этой сети ограничен; рукопожатие разбивается, чтобы пройти.</string>
     <string name="cdn_throttled_ech">Cloudflare в этой сети ограничен; имя сервера скрывается, чтобы пройти.</string>
+    <string name="cdn_decoy">Cloudflare в этой сети фильтруется по имени; имя сервера скрывается от фильтра, чтобы пройти.</string>
     <string name="cdn_blocked">Конфигурации Cloudflare CDN в этой сети не работают, поэтому пропускаются.</string>
     <string name="warp_open">Получить аккаунт Cloudflare WARP</string>
     <string name="warp_title">Cloudflare WARP</string>

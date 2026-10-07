@@ -23,7 +23,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use aes_gcm::{aead::AeadInPlace, Aes128Gcm, Aes256Gcm, KeyInit, Nonce};
 use rand::{Rng, RngCore};
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, ReadBuf};
 
 use zero_core::{Address, Destination, Network};
 
@@ -376,14 +376,22 @@ impl<S> Stream<S>
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
-    /// Open a client session: derive the request subkey, then write
+    /// Open a client session: derive the request subkey and prepare
     /// `salt || AEAD(fixed) || AEAD(variable)` carrying the destination.
+    ///
+    /// The request is not written here. It leaves in the same carrier write
+    /// as the first payload chunk, so the connection opens with one packet
+    /// rather than a header-only one followed by the data; a caller that
+    /// reads first gets it sent alone after a short wait (see
+    /// [`crate::first_flight`]). The header keeps its random padding either
+    /// way, so the size of that first packet still does not give away the
+    /// destination's length.
     pub async fn client(
-        mut inner: S,
+        inner: S,
         method: Method,
         password: &str,
         destination: &Destination,
-    ) -> Result<Self, Error> {
+    ) -> Result<Stream<crate::first_flight::HeaderFirst<S>>, Error> {
         let psk = decode_user_key(password, method)?;
         let salt = random_salt(method);
         let subkey = session_subkey(&psk, &salt, method.key_len());
@@ -407,11 +415,9 @@ where
         out.extend_from_slice(&salt);
         send.seal_into(&fixed, &mut out)?;
         send.seal_into(&variable, &mut out)?;
-        inner.write_all(&out).await?;
-        inner.flush().await?;
 
-        Ok(Self::assemble(
-            inner,
+        Ok(Stream::assemble(
+            crate::first_flight::HeaderFirst::new(inner, out),
             method,
             Role::Client,
             psk,
@@ -764,6 +770,27 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncWrite for Stream<S> {
 mod tests {
     use super::*;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    #[tokio::test]
+    async fn the_request_header_and_the_first_chunk_are_one_carrier_write() {
+        use crate::first_flight::tests::Chunks;
+        let destination = Destination::tcp(Address::domain("example.com"), 443);
+        let password = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=";
+        let mut client =
+            Stream::client(Chunks::default(), Method::Aes256Gcm, password, &destination)
+                .await
+                .unwrap();
+        assert!(
+            client.inner.parts().0.writes.is_empty(),
+            "nothing at connect"
+        );
+        client.write_all(&[7u8; 300]).await.unwrap();
+        client.flush().await.unwrap();
+        let (carrier, held) = client.inner.parts();
+        assert!(held.is_empty());
+        assert_eq!(carrier.writes.len(), 1);
+        assert!(carrier.writes[0].len() > 300);
+    }
 
     #[test]
     fn accepts_base64_and_raw_keys_of_the_right_length() {

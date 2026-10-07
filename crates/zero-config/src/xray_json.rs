@@ -157,6 +157,8 @@ fn parse_inbound(v: &Value, idx: usize, _out: &mut ParseOutput) -> R<Inbound> {
             InboundProtocol::Shadowsocks(parse_shadowsocks_inbound(v.get("settings"), &path)?)
         }
         "anytls" => InboundProtocol::AnyTls(parse_anytls_inbound(v.get("settings"), &path)?),
+        // "tide" is the name the protocol was built under.
+        "zerov1" | "tide" => InboundProtocol::Tide(parse_tide_inbound(v.get("settings"), &path)?),
         "hysteria2" => {
             InboundProtocol::Hysteria2(parse_hysteria2_inbound(v.get("settings"), &path)?)
         }
@@ -231,6 +233,23 @@ fn parse_inbound(v: &Value, idx: usize, _out: &mut ParseOutput) -> R<Inbound> {
             return Err(format!(
                 "{path}.streamSettings.security: AnyTLS, Hysteria2, and TUIC require certificate TLS"
             ));
+        }
+    }
+    if matches!(protocol, InboundProtocol::Tide(_)) {
+        if !matches!(transport, Transport::Raw) {
+            return Err(format!(
+                "{path}.streamSettings.network: Tide speaks HTTP/2 itself and needs the raw carrier"
+            ));
+        }
+        match &mut security {
+            // Tide is HTTP/2 whatever the config says about ALPN.
+            InboundSecurity::Tls(tls) => tls.alpn = vec![Box::from("h2")].into_boxed_slice(),
+            InboundSecurity::Reality(_) => {
+                return Err(format!(
+                    "{path}.streamSettings.security: Tide uses certificate TLS, or none behind a web server"
+                ))
+            }
+            InboundSecurity::None => {}
         }
     }
     if matches!(protocol, InboundProtocol::Tun(_))
@@ -653,7 +672,64 @@ fn parse_vless_inbound(settings: Option<&Value>, path: &str) -> R<VlessInboundCo
     }
     Ok(VlessInboundConfig {
         users: users.into_boxed_slice(),
+        fallback: parse_fallback(settings, path)?,
     })
+}
+
+/// The catch-all entry of an inbound's `fallbacks`: where to send a
+/// connection that did not authenticate.
+///
+/// Xray lets a fallback be chosen by TLS name, ALPN or request path; only an
+/// entry with none of those conditions is honoured here, and it applies to
+/// every failed connection. `dest` is a port on this machine (`80`), or
+/// `host:port`. A Unix socket is refused rather than silently ignored, since
+/// a fallback that does not work leaves the server recognisable.
+fn parse_fallback(settings: Option<&Value>, path: &str) -> R<Option<(Address, u16)>> {
+    let Some(entries) = settings
+        .and_then(|s| s.get("fallbacks"))
+        .and_then(Value::as_array)
+    else {
+        return Ok(None);
+    };
+    for (index, entry) in entries.iter().enumerate() {
+        let conditional = ["name", "alpn", "path"].iter().any(|key| {
+            entry
+                .get(*key)
+                .and_then(Value::as_str)
+                .is_some_and(|value| !value.is_empty())
+        });
+        if conditional {
+            continue;
+        }
+        let what = format!("{path}.settings.fallbacks[{index}].dest");
+        let port = |value: u64| {
+            u16::try_from(value)
+                .ok()
+                .filter(|port| *port > 0)
+                .ok_or_else(|| format!("{what} is not a valid port"))
+        };
+        return match entry.get("dest") {
+            Some(Value::Number(number)) => Ok(Some((
+                Address::parse_host("127.0.0.1"),
+                port(number.as_u64().unwrap_or(0))?,
+            ))),
+            Some(Value::String(text)) if text.starts_with('/') || text.starts_with('@') => Err(
+                format!("{what}: Unix socket fallbacks are not supported; use a port"),
+            ),
+            Some(Value::String(text)) => match text.rsplit_once(':') {
+                Some((host, number)) => Ok(Some((
+                    Address::parse_host(host.trim_matches(|c| c == '[' || c == ']')),
+                    port(number.parse().unwrap_or(0))?,
+                ))),
+                None => Ok(Some((
+                    Address::parse_host("127.0.0.1"),
+                    port(text.parse().unwrap_or(0))?,
+                ))),
+            },
+            _ => Err(format!("{what} is required")),
+        };
+    }
+    Ok(None)
 }
 
 fn parse_trojan_inbound(settings: Option<&Value>, path: &str) -> R<TrojanInboundConfig> {
@@ -675,6 +751,7 @@ fn parse_trojan_inbound(settings: Option<&Value>, path: &str) -> R<TrojanInbound
     }
     Ok(TrojanInboundConfig {
         password_hashes: password_hashes.into_boxed_slice(),
+        fallback: parse_fallback(settings, path)?,
     })
 }
 
@@ -833,6 +910,7 @@ fn parse_outbound(v: &Value, idx: usize, out: &mut ParseOutput) -> R<Outbound> {
         "shadowsocks" => parse_shadowsocks(settings, &path)?,
         "vmess" => parse_vmess(settings, &path)?,
         "anytls" => parse_anytls(settings, &path)?,
+        "zerov1" | "tide" => parse_tide(settings, &path)?,
         "hysteria2" => parse_hysteria2(settings, &path)?,
         "tuic" => parse_tuic(settings, &path)?,
         "wireguard" | "amnezia-wg" | "amneziawg" => parse_amnezia_wireguard(settings, &path)?,
@@ -1144,6 +1222,115 @@ fn parse_anytls(settings: Option<&Value>, path: &str) -> R<OutboundProtocol> {
         port,
         password: password.into(),
     }))
+}
+
+/// A Tide key or user id: unpadded URL-safe base64 of exactly `N` bytes.
+fn tide_key<const N: usize>(value: Option<&Value>, what: &str) -> R<[u8; N]> {
+    use base64::Engine as _;
+    value
+        .and_then(Value::as_str)
+        .and_then(|text| {
+            base64::engine::general_purpose::URL_SAFE_NO_PAD
+                .decode(text.trim())
+                .ok()
+        })
+        .and_then(|bytes| bytes.try_into().ok())
+        .ok_or_else(|| format!("{what} must be {N} bytes of URL-safe base64"))
+}
+
+/// A Tide path prefix: starts with a slash, does not end with one, and has
+/// only characters that need no escaping in a request path.
+fn tide_path(value: Option<&Value>, what: &str) -> R<Box<str>> {
+    let path = value.and_then(Value::as_str).unwrap_or("");
+    let plain = path
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'/' | b'-' | b'_' | b'.'));
+    if path.len() < 2 || !path.starts_with('/') || path.ends_with('/') || !plain {
+        return Err(format!(
+            "{what} must look like \"/some/path\": a leading slash, no trailing one"
+        ));
+    }
+    Ok(path.into())
+}
+
+fn parse_tide(settings: Option<&Value>, path: &str) -> R<OutboundProtocol> {
+    let settings = settings.ok_or_else(|| format!("{path}.settings is required for tide"))?;
+    let address = settings
+        .get("address")
+        .and_then(Value::as_str)
+        .filter(|address| !address.is_empty())
+        .ok_or_else(|| format!("{path}.settings.address is required for tide"))?;
+    let port = settings
+        .get("port")
+        .and_then(Value::as_u64)
+        .filter(|port| *port > 0 && *port <= u16::MAX as u64)
+        .ok_or_else(|| format!("{path}.settings.port is invalid for tide"))? as u16;
+    Ok(OutboundProtocol::Tide(TideConfig {
+        address: Address::parse_host(address),
+        port,
+        path: tide_path(settings.get("path"), &format!("{path}.settings.path"))?,
+        server_key: tide_key(
+            settings.get("serverKey"),
+            &format!("{path}.settings.serverKey"),
+        )?,
+        user: tide_key(settings.get("user"), &format!("{path}.settings.user"))?,
+        split: settings
+            .get("split")
+            .and_then(Value::as_bool)
+            .unwrap_or(true),
+        packet_upload: settings.get("upload").and_then(Value::as_str) == Some("packet"),
+    }))
+}
+
+fn parse_tide_inbound(settings: Option<&Value>, path: &str) -> R<TideInboundConfig> {
+    let settings = settings.ok_or_else(|| format!("{path}.settings is required for tide"))?;
+    let mut users = Vec::new();
+    for (index, user) in settings
+        .get("users")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .enumerate()
+    {
+        users.push(TideUser {
+            id: tide_key(
+                user.get("id"),
+                &format!("{path}.settings.users[{index}].id"),
+            )?,
+            name: user
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .into(),
+        });
+    }
+    let text = |key: &str| {
+        settings
+            .get(key)
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty())
+            .map(Box::<str>::from)
+    };
+    let admin_path = match settings.get("adminPath") {
+        None | Some(Value::Null) => None,
+        some => Some(tide_path(some, &format!("{path}.settings.adminPath"))?),
+    };
+    Ok(TideInboundConfig {
+        path: tide_path(settings.get("path"), &format!("{path}.settings.path"))?,
+        secret: tide_key(
+            settings.get("secretKey"),
+            &format!("{path}.settings.secretKey"),
+        )?,
+        users: users.into_boxed_slice(),
+        users_file: text("usersFile"),
+        public_host: text("publicHost"),
+        public_port: settings
+            .get("publicPort")
+            .and_then(Value::as_u64)
+            .filter(|port| *port > 0 && *port <= u16::MAX as u64)
+            .unwrap_or(443) as u16,
+        admin_path,
+    })
 }
 
 fn parse_anytls_inbound(settings: Option<&Value>, path: &str) -> R<AnyTlsInboundConfig> {
@@ -2129,7 +2316,16 @@ fn parse_ech_config(settings: Option<&Value>, path: &str) -> R<Option<EchConfig>
         ));
     }
 
-    let Some(encoded) = encoded.and_then(Value::as_str) else {
+    // Xray also takes a DNS query here in place of the list itself, such as
+    // `cloudflare-ech.com+udp://1.1.1.1` or `https://1.1.1.1/dns-query`: look
+    // the list up instead of carrying it. That is the same request as leaving
+    // the list out, and it is answered the same way, by this core's own
+    // resolver rather than the server the string names, so the lookup follows
+    // the DNS settings and cannot leak around them.
+    let encoded = encoded
+        .and_then(Value::as_str)
+        .filter(|value| !value.contains("://"));
+    let Some(encoded) = encoded else {
         // Xray also permits discovery from the HTTPS/SVCB record of the
         // configured public name. The runtime fills this bounded marker from
         // its managed resolver before constructing Rustls.
@@ -2548,9 +2744,17 @@ fn parse_finalmask(v: &Value, path: &str) -> R<Evasion> {
             let ty = entry.get("type").and_then(Value::as_str).unwrap_or("");
             let s = entry.get("settings");
             match ty {
+                // Xray wraps the connection in each mask in turn, so a later
+                // entry sits on top of an earlier one and sees the writes
+                // first; the earlier one cuts up what it lets through.
                 "fragment" => {
-                    ev.tcp_fragment =
-                        Some(parse_fragment(s, &format!("{path}.finalmask.tcp[{i}]"))?)
+                    let mask = parse_fragment(s, &format!("{path}.finalmask.tcp[{i}]"))?;
+                    if ev.tcp_fragment_under.is_some() {
+                        return Err(format!(
+                            "{path}.finalmask.tcp[{i}]: at most two fragment masks can be stacked"
+                        ));
+                    }
+                    ev.tcp_fragment_under = ev.tcp_fragment.replace(mask);
                 }
                 "keepalive" => {
                     ev.keepalive = Some(parse_keepalive(s, &format!("{path}.finalmask.tcp[{i}]"))?)
@@ -2625,14 +2829,31 @@ fn parse_legacy_freedom_evasion(settings: Option<&Value>, path: &str) -> R<Evasi
     Ok(evasion)
 }
 
-/// `{"fakeSni": "www.example.com", "sequence": 0}` — the decoy SNI (and the
-/// optional out-of-window sequence) for raw fake-ClientHello injection.
+/// `{"fakeSni": "www.example.com", "sequence": 0, "method": "decoy"}` — the
+/// decoy SNI (and the optional out-of-window sequence) for a fake
+/// ClientHello, or `{"method": "urgent"}` for the urgent-byte method, which
+/// has no decoy and so needs no `fakeSni`. Without `method` the device
+/// decides (`SniMethod::Auto`).
 fn parse_sni_spoof(value: &Value, path: &str) -> R<SniDesyncConfig> {
-    let fake_sni = value
+    let method = match value.get("method").and_then(Value::as_str) {
+        None | Some("auto") => crate::model::SniMethod::Auto,
+        Some("decoy") => crate::model::SniMethod::Decoy,
+        Some("urgent") => crate::model::SniMethod::Urgent,
+        Some(other) => {
+            return Err(format!(
+                "{path}.method must be auto, decoy or urgent, not {other:?}"
+            ))
+        }
+    };
+    let fake_sni = match value
         .get("fakeSni")
         .or_else(|| value.get("fake_sni"))
         .and_then(Value::as_str)
-        .ok_or_else(|| format!("{path}.fakeSni is required"))?;
+    {
+        Some(name) => name,
+        None if method == crate::model::SniMethod::Urgent => "www.microsoft.com",
+        None => return Err(format!("{path}.fakeSni is required")),
+    };
     // Match the injector's own bound (zero_evasion::build_fake_client_hello):
     // 1..=219 visible bytes, so the decoy hello stays a fixed 517-byte packet.
     if fake_sni.is_empty() || fake_sni.len() > 219 || !fake_sni.bytes().all(|b| b > 0x20) {
@@ -2646,6 +2867,7 @@ fn parse_sni_spoof(value: &Value, path: &str) -> R<SniDesyncConfig> {
     Ok(SniDesyncConfig {
         fake_sni: fake_sni.into(),
         sequence,
+        method,
     })
 }
 
@@ -2715,14 +2937,71 @@ fn parse_fragment(s: Option<&Value>, path: &str) -> R<FragmentConfig> {
     // Xray has used both `interval` and `delay` for this field.
     let delay_str = get("delay").or_else(|| get("interval")).unwrap_or("1");
 
+    // Xray also takes lists, one entry per piece, the last entry repeating
+    // for every piece after it: `"lengths": ["0", "104", "1"]` is an empty
+    // TLS record, a piece of 104 bytes, and pieces of one byte from there.
+    // The model keeps the leading zeros as a count, the last entry as
+    // `length`, and whatever sits between them as `lead_lengths`.
+    let list = |key: &str| -> R<Vec<&str>> {
+        match s.and_then(|s| s.get(key)) {
+            None => Ok(Vec::new()),
+            Some(Value::Array(items)) => items
+                .iter()
+                .map(|item| {
+                    item.as_str()
+                        .ok_or_else(|| format!("{path}: {key} must be a list of strings"))
+                })
+                .collect(),
+            Some(_) => Err(format!("{path}: {key} must be a list of strings")),
+        }
+    };
+    let mut lengths = list("lengths")?
+        .into_iter()
+        .map(|entry| RangeU32::parse(entry).ok_or_else(|| format!("{path}: bad length {entry:?}")))
+        .collect::<R<Vec<_>>>()?;
+    let length = match lengths.pop() {
+        Some(last) => Some(last),
+        None => RangeU32::parse(get("length").unwrap_or("100-200")),
+    }
+    .filter(|range| range.min > 0)
+    .ok_or_else(|| format!("{path}: bad length (the last one cannot be 0)"))?;
+    let empty_records = lengths.iter().take_while(|range| range.max == 0).count();
+    let lead_lengths = lengths.split_off(empty_records);
+    // In `tlshello` a zero is an empty record. Cutting raw bytes it is a
+    // piece of nothing, which Xray accepts and which does nothing.
+    if packets != FragmentPackets::TlsHello
+        && (empty_records > 0 || lead_lengths.iter().any(|r| r.min == 0))
+    {
+        return Err(format!(
+            "{path}: a zero in lengths is an empty TLS record, which needs packets \"tlshello\""
+        ));
+    }
+    let mut delays = list("delays")?
+        .into_iter()
+        .map(|entry| {
+            RangeDuration::parse_millis(entry).ok_or_else(|| format!("{path}: bad delay {entry:?}"))
+        })
+        .collect::<R<Vec<_>>>()?;
+    let delay = match delays.pop() {
+        Some(last) => last,
+        None => {
+            RangeDuration::parse_millis(delay_str).ok_or_else(|| format!("{path}: bad delay"))?
+        }
+    };
+    if lead_lengths.len() > 64 || delays.len() > 64 {
+        return Err(format!("{path}: more than 64 entries in lengths or delays"));
+    }
+
     Ok(FragmentConfig {
         packets,
-        length: RangeU32::parse(get("length").unwrap_or("100-200"))
-            .ok_or_else(|| format!("{path}: bad length"))?,
-        delay: RangeDuration::parse_millis(delay_str)
-            .ok_or_else(|| format!("{path}: bad delay"))?,
+        length,
+        delay,
         max_split: RangeU32::parse(get("maxSplit").unwrap_or("0"))
             .ok_or_else(|| format!("{path}: bad maxSplit"))?,
+        empty_records: u8::try_from(empty_records)
+            .map_err(|_| format!("{path}: too many empty records"))?,
+        lead_lengths,
+        lead_delays: delays,
     })
 }
 
@@ -3660,6 +3939,27 @@ mod tests {
         assert_eq!(settings.xhttp_mode, XhttpMode::StreamUp);
     }
 
+    /// Xray's `lengths` list: leading zeros are empty records, the last
+    /// entry sizes the pieces.
+    #[test]
+    fn a_fragment_mask_can_ask_for_empty_records_before_the_hello() {
+        let mask = |settings: Value| parse_fragment(Some(&settings), "o");
+        let parsed = mask(serde_json::json!({
+            "packets": "tlshello", "lengths": ["0", "100-200"], "delays": ["0"]
+        }))
+        .unwrap();
+        assert_eq!(parsed.empty_records, 1);
+        assert_eq!(parsed.length, RangeU32::new(100, 200));
+        assert_eq!(parsed.delay, RangeDuration::millis(0, 0));
+        // The plain single range still works and asks for none.
+        let plain = mask(serde_json::json!({"packets": "tlshello", "length": "50"})).unwrap();
+        assert_eq!((plain.empty_records, plain.length.min), (0, 50));
+        // The last entry has to move bytes, and an empty record needs TLS framing.
+        assert!(mask(serde_json::json!({"packets": "tlshello", "lengths": ["0"]})).is_err());
+        assert!(mask(serde_json::json!({"packets": "1-1", "lengths": ["0", "40"]})).is_err());
+        assert!(mask(serde_json::json!({"packets": "tlshello", "lengths": "0"})).is_err());
+    }
+
     #[test]
     fn legacy_freedom_fragment_and_noise_are_compiled() {
         let value = serde_json::json!({
@@ -3972,6 +4272,60 @@ mod tests {
         assert!(error.contains("value is invalid"));
     }
 
+    /// The pairing in use in Iran: an empty record, a 104-byte record and
+    /// single bytes in one write, with a TCP split underneath. The later
+    /// entry of `finalmask.tcp` is the one on top, as in Xray.
+    #[test]
+    fn listed_lengths_and_two_stacked_fragment_masks_are_kept_as_written() {
+        let value = serde_json::json!({
+            "outbounds": [{
+                "protocol": "freedom",
+                "streamSettings": {
+                    "finalmask": {
+                        "tcp": [
+                            {"type": "fragment", "settings": {
+                                "packets": "1-1", "lengths": ["114", "1"],
+                                "delays": ["1"], "maxSplit": "11"
+                            }},
+                            {"type": "fragment", "settings": {
+                                "packets": "tlshello", "lengths": ["0", "104", "1"],
+                                "delays": ["0"], "maxSplit": "11"
+                            }}
+                        ]
+                    }
+                }
+            }]
+        });
+        let (config, _) = parse_config(&value).unwrap();
+        let evasion = &config.outbounds[0].stream.evasion;
+        let top = evasion.tcp_fragment.as_ref().expect("the later mask");
+        assert_eq!(top.packets, FragmentPackets::TlsHello);
+        assert_eq!(top.empty_records, 1);
+        assert_eq!(top.lead_lengths, [RangeU32::new(104, 104)]);
+        assert_eq!(top.length, RangeU32::new(1, 1));
+        assert!(top.lead_delays.is_empty());
+        assert_eq!(top.delay, RangeDuration::millis(0, 0));
+        let under = evasion
+            .tcp_fragment_under
+            .as_ref()
+            .expect("the earlier mask");
+        assert_eq!(under.packets, FragmentPackets::Range { from: 1, to: 1 });
+        assert_eq!(under.lead_lengths, [RangeU32::new(114, 114)]);
+        assert_eq!(under.max_split, RangeU32::new(11, 11));
+
+        // A third mask has nowhere to go, and a zero cannot cut raw bytes.
+        let mut three = value.clone();
+        let masks = three["outbounds"][0]["streamSettings"]["finalmask"]["tcp"]
+            .as_array_mut()
+            .unwrap();
+        masks.push(masks[0].clone());
+        assert!(parse_config(&three).unwrap_err().contains("at most two"));
+        let mut zero = value;
+        zero["outbounds"][0]["streamSettings"]["finalmask"]["tcp"][0]["settings"]["lengths"] =
+            serde_json::json!(["5", "0", "9"]);
+        assert!(parse_config(&zero).unwrap_err().contains("tlshello"));
+    }
+
     #[test]
     fn legacy_and_finalmask_evasion_cannot_be_ambiguous() {
         let value = serde_json::json!({
@@ -4079,6 +4433,18 @@ mod tests {
         };
         let ech = tls.ech.as_ref().expect("ECH marker");
         assert!(ech.config_list.is_empty());
+
+        // Xray's "look it up" spelling asks for the same thing.
+        let mut queried = value.clone();
+        queried["outbounds"][0]["streamSettings"]["tlsSettings"] = serde_json::json!({
+            "serverName": "proxy.example",
+            "echConfigList": "cloudflare-ech.com+udp://1.1.1.1"
+        });
+        let (config, _) = parse_config(&queried).unwrap();
+        let Security::Tls(tls) = &config.outbounds[0].stream.security else {
+            panic!("expected certificate TLS")
+        };
+        assert!(tls.ech.as_ref().expect("ECH marker").config_list.is_empty());
     }
 
     #[test]

@@ -331,6 +331,19 @@
     <string name="settings_evasion_off_hint">普通连接。最快，但更容易被封锁。</string>
     <string name="settings_evasion_auto_hint">正常连接；服务器被封锁时拆分握手。优先使用你所在网络上其他人验证有效的方法。</string>
     <string name="settings_evasion_strong_hint">始终伪装流量。略慢，但更难被封锁。</string>
+    <string name="settings_decoy">隐藏服务器名称 (SNI)</string>
+    <string name="settings_decoy_off_hint">从不隐藏服务器名称。</string>
+    <string name="settings_decoy_auto_hint">只有在连接因名称被切断时，才会对过滤器隐藏服务器名称。</string>
+    <string name="settings_decoy_always_hint">每个连接都会对过滤器隐藏服务器名称。在某些手机上，每个连接大约晚半秒开始。</string>
+    <string name="option_always">始终</string>
+    <string name="settings_decoy_test">在这部手机上测试</string>
+    <string name="decoy_test_running">正在测试…</string>
+    <string name="decoy_test_unsupported">这部手机无法隐藏服务器名称；系统不允许。ZeroNet 会改用其他方法。</string>
+    <string name="decoy_test_broken">这部手机尝试隐藏名称，但在手机内部的测试中连接没有正确到达，因此在这里不能依赖它。</string>
+    <string name="decoy_test_works">有效：此网络切断了一个被过滤的名称，而同一名称在隐藏后通过了。</string>
+    <string name="decoy_test_not_needed">隐藏名称在这部手机上有效。此网络刚才没有切断测试名称，所以没有需要绕过的东西。</string>
+    <string name="decoy_test_blocked">隐藏名称在这部手机上有效，但此网络仍然切断了测试名称。</string>
+    <string name="decoy_test_offline">隐藏名称在这部手机上有效。无法访问测试网站，因此没有检查网络部分。</string>
     <string name="settings_block_quic">阻止 QUIC</string>
     <string name="settings_block_quic_hint">应用会回退到 TCP，而不是卡住</string>
     <string name="settings_remote_dns">被封锁站点的 DNS</string>
@@ -514,6 +527,7 @@
     <string name="settings_speed_floor_adaptive_hint">学习你的网速，放弃明显慢于近期服务器的服务器</string>
     <string name="cdn_throttled_split">此网络限制了 Cloudflare；正在拆分握手以通过。</string>
     <string name="cdn_throttled_ech">此网络限制了 Cloudflare；正在隐藏服务器名称以通过。</string>
+    <string name="cdn_decoy">此网络按名称过滤 Cloudflare；正在对过滤器隐藏服务器名称以通过。</string>
     <string name="cdn_blocked">Cloudflare CDN 配置在此网络上无法使用，已跳过。</string>
     <string name="warp_open">获取 Cloudflare WARP 账户</string>
     <string name="warp_title">Cloudflare WARP</string>

@@ -698,6 +698,11 @@ async fn xray_client_to_zray_reality_server(binary: &str, carrier: &str, flow: O
 
 /// Zray client → Xray server.
 async fn zray_client_to_xray_server(binary: &str, protocol: &str, carrier: &str) {
+    zray_client_to_xray_server_mux(binary, protocol, carrier, false).await
+}
+
+/// The same, optionally with several streams sharing one Mux carrier.
+async fn zray_client_to_xray_server_mux(binary: &str, protocol: &str, carrier: &str, mux: bool) {
     let echo = echo_service().await;
     let relay_port = free_port();
     let socks_port = free_port();
@@ -733,6 +738,7 @@ async fn zray_client_to_xray_server(binary: &str, protocol: &str, carrier: &str)
             "protocol": protocol,
             "settings": client_settings,
             "streamSettings": stream,
+            "mux": {"enabled": mux, "concurrency": 8},
         }],
     }));
 
@@ -751,10 +757,19 @@ async fn zray_client_to_xray_server(binary: &str, protocol: &str, carrier: &str)
     .unwrap();
     round_trip(&mut stream, &payload(1, 64)).await;
     round_trip(&mut stream, &payload(2, 96 * 1024)).await;
+    if mux {
+        let socks = SocketAddr::new("127.0.0.1".parse().unwrap(), socks_port);
+        many_small_writes(socks, echo).await;
+    }
 }
 
 /// Xray client → Zray server.
 async fn xray_client_to_zray_server(binary: &str, protocol: &str, carrier: &str) {
+    xray_client_to_zray_server_mux(binary, protocol, carrier, false).await
+}
+
+/// The same, optionally with several streams sharing one Mux carrier.
+async fn xray_client_to_zray_server_mux(binary: &str, protocol: &str, carrier: &str, mux: bool) {
     let echo = echo_service().await;
     let relay_port = free_port();
     let socks_port = free_port();
@@ -790,6 +805,7 @@ async fn xray_client_to_zray_server(binary: &str, protocol: &str, carrier: &str)
                 "protocol": protocol,
                 "settings": client_settings,
                 "streamSettings": stream,
+                "mux": {"enabled": mux, "concurrency": 8},
             }],
         }),
     );
@@ -804,6 +820,25 @@ async fn xray_client_to_zray_server(binary: &str, protocol: &str, carrier: &str)
     let mut stream = socks_connect(socks, echo).await.unwrap();
     round_trip(&mut stream, &payload(3, 64)).await;
     round_trip(&mut stream, &payload(4, 96 * 1024)).await;
+    if mux {
+        many_small_writes(socks, echo).await;
+    }
+}
+
+/// Several more streams on the carrier, each opening with a few small
+/// writes. Those are the writes a Mux carrier pads, in both directions, so
+/// this is where an end that mishandled a padding frame would corrupt or
+/// drop a stream.
+async fn many_small_writes(socks: SocketAddr, echo: SocketAddr) {
+    let mut streams = Vec::new();
+    for _ in 0..4 {
+        streams.push(socks_connect(socks, echo).await.unwrap());
+    }
+    for round in 0..6u8 {
+        for (index, stream) in streams.iter_mut().enumerate() {
+            round_trip(stream, &payload(round * 8 + index as u8, 40 + 30 * index)).await;
+        }
+    }
 }
 
 /// Zray client → Xray server over VLESS Mux's UDP packet path.
@@ -948,6 +983,23 @@ differential!(
     "httpupgrade"
 );
 differential!(vless_over_grpc_matches_the_oracle, "vless", "grpc");
+
+/// Mux.cool with TCP streams, both ways round. Each end pads a session's
+/// first small writes with keep-alive frames that carry data, and relies on
+/// the other end discarding them as Xray does.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "needs an Xray binary; see the module documentation"]
+async fn vless_mux_matches_the_oracle() {
+    let binary = oracle_binary().unwrap_or_else(|reason| {
+        panic!("the oracle comparison cannot run: {reason}");
+    });
+    eprintln!(
+        "oracle: {} (VLESS Mux over raw TCP)",
+        oracle_version(&binary)
+    );
+    zray_client_to_xray_server_mux(&binary, "vless", "tcp", true).await;
+    xray_client_to_zray_server_mux(&binary, "vless", "tcp", true).await;
+}
 differential!(trojan_over_raw_tcp_matches_the_oracle, "trojan", "tcp");
 differential!(trojan_over_websocket_matches_the_oracle, "trojan", "ws");
 differential!(vmess_over_raw_tcp_matches_the_oracle, "vmess", "tcp");

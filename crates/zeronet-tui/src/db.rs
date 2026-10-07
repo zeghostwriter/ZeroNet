@@ -130,7 +130,8 @@ pub struct AppSettings {
     /// Split the ClientHello across packets on every TLS-bearing outbound.
     pub fragment_enabled: bool,
     /// Inject a decoy allow-listed SNI on TLS/REALITY outbounds (raw fake-SNI
-    /// desync). Needs CAP_NET_RAW; without it the decoy is skipped.
+    /// desync). Sent with a raw socket or from the connection itself; where the
+    /// system allows neither the decoy is skipped.
     pub sni_spoof: bool,
     /// Install the default routes over TUN.
     pub tun_auto_route: bool,

@@ -11,14 +11,18 @@
 //! | TCP segments of 40–80 B  | works, 10 of 10 |
 //! | ECH (name encrypted)     | works, 10 of 10 |
 //!
+//! By 2026-10-07 the same line had changed: TCP segments got 0 of 2, and one
+//! empty TLS record in front of the ClientHello got 2 of 2 (see
+//! `zero_config::FragmentConfig::empty_record`).
+//!
 //! So the right handling depends on the network, and can change with it.
-//! This module probes one CDN outbound three ways — as is, split, with ECH —
-//! each with real data through the tunnel (a handshake alone proves nothing:
+//! This module probes one CDN outbound four ways — as is, behind an empty
+//! record, split, with ECH — each with real data through the tunnel (a handshake alone proves nothing:
 //! the throttled handshakes all completed), and reports the cheapest that
 //! works. The server applies that to every CDN outbound and, if none works,
 //! stops choosing CDN outbounds and says so.
 //!
-//! Cost is bounded: at most three small HTTP exchanges per probe, one probe
+//! Cost is bounded: at most four small HTTP exchanges per probe, one probe
 //! per network change or per [`RECHECK`] period, never a sweep.
 
 use std::net::IpAddr;
@@ -61,6 +65,19 @@ pub enum CdnCondition {
     Ech,
     /// Nothing tried gets through; CDN outbounds are not used.
     Blocked,
+    /// Throttled; an empty TLS record in front of the ClientHello gets
+    /// through. Listed last so the numbers saved by older builds keep their
+    /// meaning; it is tried second.
+    EmptyRecord,
+    /// Throttled; a decoy ClientHello naming an allowed site, sent ahead of
+    /// the real one, gets through (`zero_evasion::decoy`). Tried third: it
+    /// adds a few hundred milliseconds to every connection, where the empty
+    /// record adds nothing.
+    Decoy,
+    /// Throttled; one byte of TCP urgent data in the middle of the server
+    /// name gets through (`zero_evasion::urgent`). Tried second: like the
+    /// empty record it adds no delay, and it works on any phone.
+    Urgent,
 }
 
 impl CdnCondition {
@@ -71,6 +88,9 @@ impl CdnCondition {
             Self::Fragment => 2,
             Self::Ech => 3,
             Self::Blocked => 4,
+            Self::EmptyRecord => 5,
+            Self::Decoy => 6,
+            Self::Urgent => 7,
         }
     }
 
@@ -80,6 +100,9 @@ impl CdnCondition {
             2 => Self::Fragment,
             3 => Self::Ech,
             4 => Self::Blocked,
+            5 => Self::EmptyRecord,
+            6 => Self::Decoy,
+            7 => Self::Urgent,
             _ => Self::Unknown,
         }
     }
@@ -88,8 +111,11 @@ impl CdnCondition {
     pub fn notice(self) -> Option<&'static str> {
         match self {
             Self::Unknown | Self::Clear => None,
-            Self::Fragment => Some(
+            Self::Fragment | Self::EmptyRecord => Some(
                 "Cloudflare connections are throttled on this network; ZeroNet splits the handshake to get through.",
+            ),
+            Self::Decoy | Self::Urgent => Some(
+                "Cloudflare connections are filtered by name on this network; ZeroNet sends a decoy name first to get through, so connections start a little slower.",
             ),
             Self::Ech => Some(
                 "Cloudflare connections are throttled on this network; ZeroNet hides the server name with ECH to get through.",
@@ -107,14 +133,35 @@ pub fn observations(condition: CdnCondition) -> &'static [(&'static str, bool)] 
     match condition {
         CdnCondition::Unknown => &[],
         CdnCondition::Clear => &[("cdn:plain", true)],
-        CdnCondition::Fragment => &[("cdn:plain", false), ("cdn:fragment", true)],
+        CdnCondition::EmptyRecord => &[("cdn:plain", false), ("cdn:empty", true)],
+        CdnCondition::Urgent => &[
+            ("cdn:plain", false),
+            ("cdn:empty", false),
+            ("cdn:urgent", true),
+        ],
+        // From here on a device may have skipped a rung it cannot do, so
+        // nothing is said about the urgent byte or the decoy on the way.
+        CdnCondition::Decoy => &[
+            ("cdn:plain", false),
+            ("cdn:empty", false),
+            ("cdn:decoy", true),
+        ],
+        // A device that cannot send a decoy skips it, so nothing is said
+        // about the decoy on the way to the later rungs.
+        CdnCondition::Fragment => &[
+            ("cdn:plain", false),
+            ("cdn:empty", false),
+            ("cdn:fragment", true),
+        ],
         CdnCondition::Ech => &[
             ("cdn:plain", false),
+            ("cdn:empty", false),
             ("cdn:fragment", false),
             ("cdn:ech", true),
         ],
         CdnCondition::Blocked => &[
             ("cdn:plain", false),
+            ("cdn:empty", false),
             ("cdn:fragment", false),
             ("cdn:ech", false),
         ],
@@ -151,9 +198,28 @@ pub fn is_cloudflare_cdn(outbound: &Outbound) -> bool {
     }
 }
 
+/// Cloudflare's published IPv6 prefixes, as (network, prefix length). On
+/// networks that filter the IPv4 edge harder than the IPv6 one, a CDN config
+/// is pointed at one of these, and it is still a CDN config.
+const CLOUDFLARE_PREFIXES_V6: [(u128, u8); 7] = [
+    (0x2400_cb00 << 96, 32),
+    (0x2606_4700 << 96, 32),
+    (0x2803_f800 << 96, 32),
+    (0x2405_b500 << 96, 32),
+    (0x2405_8100 << 96, 32),
+    (0x2a06_98c0 << 96, 29),
+    (0x2c0f_f248 << 96, 32),
+];
+
 fn is_cloudflare_ip(ip: IpAddr) -> bool {
-    let IpAddr::V4(v4) = ip else {
-        return false;
+    let v4 = match ip {
+        IpAddr::V4(v4) => v4,
+        IpAddr::V6(v6) => {
+            let bits = u128::from(v6);
+            return CLOUDFLARE_PREFIXES_V6
+                .iter()
+                .any(|(network, prefix)| (bits ^ network) >> (128 - u32::from(*prefix)) == 0);
+        }
     };
     let bits = u32::from(v4);
     zero_net::clean_ip::CLOUDFLARE_PREFIXES
@@ -189,8 +255,20 @@ pub fn apply(condition: CdnCondition, outbound: &mut Outbound) {
     let Security::Tls(tls) = &mut outbound.stream.security else {
         return;
     };
-    let configured = tls.ech.is_some() || outbound.stream.evasion.tcp_fragment.is_some();
+    let configured = tls.ech.is_some()
+        || outbound.stream.evasion.tcp_fragment.is_some()
+        || outbound.stream.evasion.sni_desync.is_some();
     match condition {
+        CdnCondition::EmptyRecord if !configured => {
+            outbound.stream.evasion.tcp_fragment =
+                Some(zero_config::FragmentConfig::empty_record());
+        }
+        CdnCondition::Urgent if !configured => {
+            outbound.stream.evasion.sni_desync = Some(zero_config::SniDesyncConfig::urgent());
+        }
+        CdnCondition::Decoy if !configured => {
+            outbound.stream.evasion.sni_desync = Some(zero_config::SniDesyncConfig::decoy());
+        }
         CdnCondition::Fragment if !configured => {
             outbound.stream.evasion.tcp_fragment = Some(zero_config::FragmentConfig::default());
         }
@@ -205,22 +283,39 @@ pub fn apply(condition: CdnCondition, outbound: &mut Outbound) {
     }
 }
 
-/// Probe `outbound` (a Cloudflare CDN outbound): as is, then split, then with
-/// ECH. Returns the first that carries real data, or [`CdnCondition::Blocked`].
+/// Probe `outbound` (a Cloudflare CDN outbound): as is, then each way of
+/// getting past a filter, cheapest first — an empty record (five bytes, no
+/// delay), an urgent byte in the name (one byte, no delay), a decoy hello
+/// (one resend per connection, and only where this device can send one),
+/// TCP segments (a delay per piece), ECH (a DNS lookup first).
+/// Returns the first that carries real data, or [`CdnCondition::Blocked`].
 pub async fn probe(outbound: &Outbound, resolver: &zero_dns::Resolver) -> CdnCondition {
     let base = plain(outbound);
     if carries_data(&base, resolver).await {
         return CdnCondition::Clear;
     }
-    let mut split = base.clone();
-    apply(CdnCondition::Fragment, &mut split);
-    if carries_data(&split, resolver).await {
-        return CdnCondition::Fragment;
-    }
-    let mut ech = base;
-    apply(CdnCondition::Ech, &mut ech);
-    if carries_data(&ech, resolver).await {
-        return CdnCondition::Ech;
+    for way in [
+        CdnCondition::EmptyRecord,
+        CdnCondition::Urgent,
+        CdnCondition::Decoy,
+        CdnCondition::Fragment,
+        CdnCondition::Ech,
+    ] {
+        let possible = match way {
+            CdnCondition::Urgent => {
+                zero_evasion::decoy::enabled() && zero_evasion::urgent::supported()
+            }
+            CdnCondition::Decoy => zero_evasion::decoy::available(),
+            _ => true,
+        };
+        if !possible {
+            continue;
+        }
+        let mut shaped = base.clone();
+        apply(way, &mut shaped);
+        if carries_data(&shaped, resolver).await {
+            return way;
+        }
     }
     CdnCondition::Blocked
 }
@@ -261,6 +356,13 @@ mod tests {
         assert!(is_cloudflare_cdn(&link(
             "trojan://pw@172.67.1.2:443?security=tls&sni=cdn.example.com&type=ws&host=cdn.example.com#t"
         )));
+        // The same on a Cloudflare IPv6 address, and not on someone else's.
+        assert!(is_cloudflare_cdn(&link(
+            "trojan://pw@[2a06:98c1:3121::7]:443?security=tls&sni=cdn.example.com&type=ws&host=cdn.example.com#six"
+        )));
+        assert!(!is_cloudflare_cdn(&link(
+            "trojan://pw@[2001:db8::7]:443?security=tls&sni=cdn.example.com&type=ws&host=cdn.example.com#other"
+        )));
         // Plain TCP-TLS to an origin, REALITY, and a non-Cloudflare CDN
         // address are not Cloudflare CDN.
         assert!(!is_cloudflare_cdn(&link(
@@ -283,6 +385,26 @@ mod tests {
             fragment.packets,
             zero_config::FragmentPackets::Range { from: 1, to: 1 }
         );
+
+        let mut decoy = link(WORKER);
+        apply(CdnCondition::Decoy, &mut decoy);
+        assert_eq!(
+            decoy.stream.evasion.sni_desync.map(|d| d.method),
+            Some(zero_config::SniMethod::Decoy)
+        );
+        let mut urgent = link(WORKER);
+        apply(CdnCondition::Urgent, &mut urgent);
+        assert_eq!(
+            urgent.stream.evasion.sni_desync.map(|d| d.method),
+            Some(zero_config::SniMethod::Urgent)
+        );
+        assert!(decoy.stream.evasion.tcp_fragment.is_none());
+
+        let mut empty = link(WORKER);
+        apply(CdnCondition::EmptyRecord, &mut empty);
+        let fragment = empty.stream.evasion.tcp_fragment.expect("empty record");
+        assert_eq!(fragment.packets, zero_config::FragmentPackets::TlsHello);
+        assert_eq!(fragment.empty_records, 1);
 
         let mut ech = link(WORKER);
         apply(CdnCondition::Ech, &mut ech);
@@ -318,6 +440,9 @@ mod tests {
             CdnCondition::Fragment,
             CdnCondition::Ech,
             CdnCondition::Blocked,
+            CdnCondition::EmptyRecord,
+            CdnCondition::Decoy,
+            CdnCondition::Urgent,
         ] {
             assert_eq!(CdnCondition::from_u8(condition.as_u8()), condition);
         }

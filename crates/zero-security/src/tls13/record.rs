@@ -210,6 +210,54 @@ impl RecordCrypter {
         Ok(())
     }
 
+    /// Append an application-data record of exactly `wire_len` bytes that
+    /// carries nothing: its plaintext is the inner type and then zero padding
+    /// (RFC 8446 §5.4), which the peer strips to find no content at all.
+    ///
+    /// This is how a server stands in for records it has no real content
+    /// for, such as the session tickets a camouflage site sends. `wire_len`
+    /// counts the header and tag, so 22 is the smallest it can be. On error
+    /// `out` is left as it was.
+    pub fn seal_empty_into<B: SealBuffer>(
+        &mut self,
+        wire_len: usize,
+        out: &mut B,
+    ) -> Result<(), super::Failure> {
+        let padding = match wire_len.checked_sub(5 + 1 + TAG_LEN) {
+            Some(padding) if padding < MAX_PLAINTEXT => padding,
+            _ => return Err(malformed(format!("no empty record is {wire_len} bytes"))),
+        };
+        let nonce = self.next_nonce()?;
+
+        let header = record_header(CONTENT_APPDATA, 1 + padding + TAG_LEN);
+        let start = out.filled_len();
+        out.reserve_more(wire_len);
+        out.append(&header);
+        out.append(&[CONTENT_APPDATA]);
+        const ZEROS: [u8; 256] = [0; 256];
+        let mut left = padding;
+        while left > 0 {
+            let step = left.min(ZEROS.len());
+            out.append(&ZEROS[..step]);
+            left -= step;
+        }
+
+        let sealed = {
+            let body = &mut out.as_mut_slice()[start + 5..];
+            self.seal_in_place(&nonce, &header, body)
+        };
+        match sealed {
+            Ok(tag) => out.append(&tag),
+            Err(_) => {
+                out.truncate_to(start);
+                return Err(malformed("seal failed"));
+            }
+        }
+
+        self.seq += 1;
+        Ok(())
+    }
+
     /// Protect one record. `content` is the plaintext payload; `inner_type`
     /// is appended before sealing, per RFC 8446 §5.2.
     pub fn seal(&mut self, content: &[u8], inner_type: u8) -> Result<SealedRecord, super::Failure> {
@@ -331,6 +379,30 @@ impl SealBuffer for BytesMut {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_empty_record_is_exactly_the_size_asked_for_and_opens_to_nothing() {
+        for suite in CipherSuite::OFFERED {
+            let mut w = RecordCrypter::new(suite, b"traffic secret material here");
+            let mut r = RecordCrypter::new(suite, b"traffic secret material here");
+            for wire_len in [22usize, 69, 255, 1400] {
+                let mut out = Vec::new();
+                w.seal_empty_into(wire_len, &mut out).unwrap();
+                assert_eq!(out.len(), wire_len);
+                let header: [u8; 5] = out[..5].try_into().unwrap();
+                let (inner_type, plain) = r.open(&header, &out[5..]).unwrap();
+                assert_eq!(inner_type, CONTENT_APPDATA);
+                assert!(plain.is_empty());
+            }
+            let mut out = vec![1, 2, 3];
+            assert!(w.seal_empty_into(21, &mut out).is_err());
+            assert_eq!(out, [1, 2, 3], "a refused record leaves the buffer alone");
+            // The refusal used no sequence number: the next record still opens.
+            w.seal_empty_into(40, &mut out).unwrap();
+            let header: [u8; 5] = out[3..8].try_into().unwrap();
+            assert!(r.open(&header, &out[8..]).is_ok());
+        }
+    }
 
     #[test]
     fn seal_open_roundtrip_all_suites() {

@@ -42,19 +42,25 @@ pub const TUN_ADDRESS_V6: &str = "fdfe:dcba:9876::1/126";
 /// The observatory's probe for balancer ranking.
 pub const BALANCER_PROBE_URL: &str = "https://www.gstatic.com/generate_204";
 
-/// ClientHello chunk sizes of the fragmented variants `evasion = "auto"`
-/// adds after each link's plain one. 40-80 got 10 of 10 through a throttled
-/// Cloudflare edge from Tehran on 2026-09-28; 100-200 3 of 3, with slower
-/// runs. BPB's sweep of twenty lengths is not needed once the split is plain
-/// TCP segments, and every variant is one more outbound to probe.
-const AUTO_FRAGMENT_LENGTHS: [&str; 2] = ["40-80", "100-200"];
+/// The shaped variants `evasion = "auto"` adds after each link's plain one:
+/// [`EMPTY_RECORD`], then TCP segments of 40-80 bytes.
+///
+/// Which one gets through depends on the day. From Tehran, segments of 40-80
+/// got 10 of 10 through a throttled Cloudflare edge on 2026-09-28; on
+/// 2026-10-07 they got 0 of 2 and the empty record got 2 of 2. Both stay, the
+/// balancer's probes keep whichever works, and every variant is one more
+/// outbound to probe, so there are two and not a sweep.
+const AUTO_FRAGMENT_LENGTHS: [&str; 2] = [EMPTY_RECORD, "40-80"];
+/// Stands in for a length: one empty TLS record in front of the ClientHello,
+/// in the same write (`zero_config::FragmentConfig::empty_record`).
+const EMPTY_RECORD: &str = "empty";
 
 /// How much the builder layers ClientHello fragmentation onto TLS links.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Evasion {
     /// No fragmentation; the link dials as described.
     Off,
-    /// Each fragmentable link as is, then fragmented at each of
+    /// Each fragmentable link as is, then shaped each way in
     /// `AUTO_FRAGMENT_LENGTHS`, behind the balancer: the plain connection is
     /// used while it works, and a fragmented one takes over when it does not.
     /// When other users on this network reported fragmenting working better
@@ -87,10 +93,16 @@ struct BuildRequest {
     /// connection on this network, so a fresh connect starts with what
     /// worked for others instead of rediscovering it.
     fragment_first: bool,
-    /// Inject a decoy ClientHello carrying an allow-listed SNI (raw fake-SNI
-    /// desync) on every TLS/REALITY outbound. Needs CAP_NET_RAW at runtime; the
-    /// engine falls back to fragmentation when it is missing.
+    /// Send a decoy ClientHello naming an allowed site ahead of the real one
+    /// on every TLS/REALITY outbound. The engine sends it with a raw socket
+    /// where it may open one and from the connection's own socket otherwise
+    /// (`zero_evasion::decoy`); where neither works it falls back to
+    /// fragmentation.
     sni_spoof: bool,
+    /// Whether `evasion = "auto"` adds the variants of each link that hide
+    /// its server name (an urgent byte, a decoy). Left out, the device is
+    /// asked which of them it can do.
+    auto_decoy: Option<bool>,
     dns: DnsRequest,
     log_level: String,
     /// Scanner results (`ip:port`), ranked by the observatory for CDN-fronted
@@ -103,6 +115,30 @@ struct BuildRequest {
     /// link says: `server-first` (hybrid) or `warp-first` (reverse hybrid).
     /// Unset, or `auto`, keeps each link's own order.
     warp_order: Option<String>,
+    /// A password for the app's own use of the local proxy in VPN mode (see
+    /// [`LocalAuth`]). Empty leaves the local proxy open, as before.
+    local_auth: LocalAuth,
+}
+
+/// The password the host app will use on its own requests through the local
+/// HTTP proxy.
+///
+/// How this is used: in VPN mode other apps reach the tunnel through the TUN
+/// device, so the local proxy ports serve only the host app's own checks.
+/// Left open on loopback they also serve every other app on the device: any
+/// of them can connect, ask a what-is-my-address service through the proxy,
+/// and learn the address of the server the user is hiding behind. Tools that
+/// do exactly this to common clients are public. Given a password, VPN mode
+/// drops the SOCKS port (nothing of the host's uses it) and makes the HTTP
+/// port refuse anyone without it.
+///
+/// It does nothing in proxy mode, or when the user is sharing the connection
+/// on the LAN: there the ports are meant for others, on the user's terms.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+struct LocalAuth {
+    user: String,
+    pass: String,
 }
 
 impl Default for BuildRequest {
@@ -121,11 +157,13 @@ impl Default for BuildRequest {
             fragment_packets: "1-1".into(),
             fragment_first: false,
             sni_spoof: false,
+            auto_decoy: None,
             dns: DnsRequest::default(),
             log_level: "warning".into(),
             clean_ips: Vec::new(),
             assets_dir: None,
             warp_order: None,
+            local_auth: LocalAuth::default(),
         }
     }
 }
@@ -332,11 +370,20 @@ pub fn build_config_with_assets(
         // and the optional SNI decoy; `None` when neither applies.
         let evasion_block = |length: Option<&str>| -> Option<Value> {
             let mut block = serde_json::Map::new();
-            if let Some(length) = length {
-                block.insert(
-                    "fragment".into(),
-                    json!({"packets": fragment_packets, "length": length, "interval": "1-1"}),
-                );
+            match length {
+                Some(EMPTY_RECORD) => {
+                    block.insert(
+                        "fragment".into(),
+                        json!({"packets": "tlshello", "lengths": ["0", "16384"], "delays": ["0"]}),
+                    );
+                }
+                Some(length) => {
+                    block.insert(
+                        "fragment".into(),
+                        json!({"packets": fragment_packets, "length": length, "interval": "1-1"}),
+                    );
+                }
+                None => {}
             }
             if let Some(spoof) = &spoof {
                 block.insert("sniSpoof".into(), spoof.clone());
@@ -347,6 +394,19 @@ pub fn build_config_with_assets(
             Some(evasion) => outbounds.push(json!({"link": parsed.link, "evasion": evasion})),
             None => outbounds.push(json!({"link": parsed.link})),
         };
+        // Under `auto`, variants that hide the server name, for any link
+        // with a name a filter can read, REALITY included: one with an
+        // urgent byte in the name (free, works on any phone), and one behind
+        // a decoy ClientHello where this device can send one (gets past more
+        // filters, costs every connection a resend). They answer a filter
+        // that puts the pieces of a split hello back together, and they come
+        // last, so the balancer settles on them only when the others do not
+        // get through. Left out when the user turned hiding on for every
+        // variant.
+        let hide_name =
+            evasion == Evasion::Auto && spoof.is_none() && sni_spoofable(&parsed.outbound);
+        let auto_urgent = hide_name && request.auto_decoy.unwrap_or_else(urgent_available);
+        let auto_decoy = hide_name && request.auto_decoy.unwrap_or_else(decoy_available);
         match evasion {
             Evasion::Auto if can_fragment => {
                 // Plain first, fragmented after — or the other way round when
@@ -366,6 +426,18 @@ pub fn build_config_with_assets(
             // No fragmentation (Off, or a REALITY/QUIC link) — but the outbound
             // still carries the SNI decoy when spoofing is on.
             _ => push(&mut outbounds, None),
+        }
+        if auto_urgent {
+            outbounds.push(json!({
+                "link": parsed.link,
+                "evasion": {"sniSpoof": {"method": "urgent"}},
+            }));
+        }
+        if auto_decoy {
+            outbounds.push(json!({
+                "link": parsed.link,
+                "evasion": {"sniSpoof": {"fakeSni": SPOOF_DECOY_SNI, "method": "decoy"}},
+            }));
         }
     }
     // The balancer is keyed off how many proxy outbounds exist, not how many
@@ -435,7 +507,20 @@ pub fn build_config_with_assets(
 
     // ---- inbounds
     let lan_auth = request.lan.enabled && !request.lan.user.is_empty();
+    let private = vpn && !request.lan.enabled && !request.local_auth.user.is_empty();
     if let Some(inbounds) = config["inbounds"].as_array_mut() {
+        if private {
+            inbounds.retain(|inbound| inbound["tag"] != "socks-in");
+            for inbound in inbounds.iter_mut() {
+                if inbound["tag"] == "http-in" {
+                    inbound["listen"] = json!("127.0.0.1");
+                    inbound["settings"] = json!({"accounts": [{
+                        "user": request.local_auth.user,
+                        "pass": request.local_auth.pass,
+                    }]});
+                }
+            }
+        }
         for inbound in inbounds.iter_mut() {
             match inbound["tag"].as_str() {
                 Some("socks-in") if lan_auth => {
@@ -612,13 +697,25 @@ fn fragmentable(outbound: &zero_config::Outbound) -> bool {
 /// The decoy SNI stamped into a spoofed ClientHello: a widely-allow-listed
 /// name, so a DPI parser sees an unblocked destination. The real hello (and
 /// its true SNI) still reaches the server untouched.
-const SPOOF_DECOY_SNI: &str = "www.microsoft.com";
+pub(crate) const SPOOF_DECOY_SNI: &str = "www.microsoft.com";
+
+/// Whether this device can send a decoy ClientHello at all. Unit tests get a
+/// fixed "no", so what they build does not depend on the kernel they run on;
+/// the ones about the decoy ask for it with `auto_decoy`.
+fn decoy_available() -> bool {
+    !cfg!(test) && zero_evasion::decoy::available()
+}
+
+/// The same question for the urgent byte, with the same fixed "no" in tests.
+fn urgent_available() -> bool {
+    !cfg!(test) && zero_evasion::decoy::enabled() && zero_evasion::urgent::supported()
+}
 
 /// Whether raw fake-SNI injection applies to this outbound. Unlike
 /// fragmentation it adds a *separate* decoy packet and never touches the real
 /// ClientHello, so REALITY is fine — but there must be a TCP TLS/REALITY hello
 /// to hide behind, so plaintext, ECH and QUIC carriers are skipped.
-fn sni_spoofable(outbound: &zero_config::Outbound) -> bool {
+pub(crate) fn sni_spoofable(outbound: &zero_config::Outbound) -> bool {
     if matches!(
         outbound.protocol,
         zero_config::OutboundProtocol::Hysteria2(_) | zero_config::OutboundProtocol::Tuic(_)
@@ -641,6 +738,53 @@ mod tests {
         let (generation, _) = zero_config::compile_config(config, zero_core::GenerationId(1))
             .unwrap_or_else(|error| panic!("{error}\n{config:#}"));
         generation.config
+    }
+
+    /// In VPN mode with a password from the host, no other app on the device
+    /// can use the local ports: the SOCKS one is gone and the HTTP one asks
+    /// for the password.
+    #[test]
+    fn a_local_password_closes_the_loopback_proxy_to_other_apps() {
+        let config = build_config(&json!({
+            "links": [SS], "mode": "vpn",
+            "local_auth": {"user": "u1", "pass": "p1"}
+        }))
+        .unwrap();
+        let inbounds = config["inbounds"].as_array().unwrap();
+        assert!(inbounds.iter().all(|i| i["tag"] != "socks-in"));
+        let http = inbounds.iter().find(|i| i["tag"] == "http-in").unwrap();
+        assert_eq!(http["listen"], "127.0.0.1");
+        assert_eq!(http["settings"]["accounts"][0]["user"], "u1");
+        assert!(inbounds.iter().any(|i| i["tag"] == "tun-in"));
+        // And the runtime reads it as an inbound that asks for the password.
+        let compiled = compile(&config);
+        let http = compiled
+            .inbounds
+            .iter()
+            .find(|i| i.tag.as_ref() == "http-in")
+            .unwrap();
+        assert!(matches!(
+            &http.socks_auth,
+            zero_config::SocksAuth::Password(accounts) if accounts.len() == 1
+        ));
+    }
+
+    /// The password is for VPN mode only. In proxy mode, and when the user
+    /// shares the connection on the LAN, the ports are for others to use.
+    #[test]
+    fn a_local_password_leaves_proxy_mode_and_lan_sharing_alone() {
+        for request in [
+            json!({"links": [SS], "mode": "proxy", "local_auth": {"user": "u", "pass": "p"}}),
+            json!({"links": [SS], "mode": "vpn", "lan": {"enabled": true},
+                   "local_auth": {"user": "u", "pass": "p"}}),
+            json!({"links": [SS], "mode": "vpn"}),
+        ] {
+            let config = build_config(&request).unwrap();
+            let inbounds = config["inbounds"].as_array().unwrap();
+            assert!(inbounds.iter().any(|i| i["tag"] == "socks-in"), "{request}");
+            let http = inbounds.iter().find(|i| i["tag"] == "http-in").unwrap();
+            assert!(http["settings"]["accounts"].is_null(), "{request}");
+        }
     }
 
     #[test]
@@ -911,7 +1055,7 @@ mod tests {
     }
 
     /// The fragment lengths of the proxy outbounds in `config`, in order;
-    /// `None` for a plain one.
+    /// `None` for a plain one and `"empty"` for the empty-record one.
     fn variant_lengths(config: &Value) -> Vec<Option<String>> {
         config["outbounds"]
             .as_array()
@@ -923,9 +1067,11 @@ mod tests {
                     .is_some_and(|t| t == "proxy" || t.starts_with("proxy-"))
             })
             .map(|o| {
-                o["evasion"]["fragment"]["length"]
-                    .as_str()
-                    .map(str::to_string)
+                let fragment = &o["evasion"]["fragment"];
+                if fragment["lengths"][0] == "0" {
+                    return Some(EMPTY_RECORD.to_string());
+                }
+                fragment["length"].as_str().map(str::to_string)
             })
             .collect()
     }
@@ -935,7 +1081,7 @@ mod tests {
         let config = build_config(&json!({"links": [WS_TLS], "evasion": "auto"})).unwrap();
         assert_eq!(
             variant_lengths(&config),
-            [None, Some("40-80".into()), Some("100-200".into())]
+            [None, Some("empty".into()), Some("40-80".into())]
         );
         let compiled = compile(&config);
         // One link still gets the balancer that chooses among its variants.
@@ -946,16 +1092,19 @@ mod tests {
                 .len(),
             3
         );
-        // Only the fragmented variants split the ClientHello, as TCP segments.
+        // The shaped variants: an empty record ahead of the hello, then the
+        // hello as TCP segments.
         let fragments: Vec<_> = compiled
             .outbounds
             .iter()
             .filter_map(|o| o.stream.evasion.tcp_fragment.as_ref())
             .collect();
         assert_eq!(fragments.len(), 2);
-        assert!(fragments
-            .iter()
-            .all(|f| f.packets == zero_config::FragmentPackets::Range { from: 1, to: 1 }));
+        assert_eq!(*fragments[0], zero_config::FragmentConfig::empty_record());
+        assert_eq!(
+            fragments[1].packets,
+            zero_config::FragmentPackets::Range { from: 1, to: 1 }
+        );
     }
 
     #[test]
@@ -966,7 +1115,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             variant_lengths(&config),
-            [Some("40-80".into()), Some("100-200".into()), None]
+            [Some("empty".into()), Some("40-80".into()), None]
         );
         compile(&config);
     }
@@ -993,8 +1142,9 @@ mod tests {
             .iter()
             .filter_map(|o| o["evasion"]["fragment"]["packets"].as_str())
             .collect();
-        assert_eq!(modes.len(), AUTO_FRAGMENT_LENGTHS.len());
-        assert!(modes.iter().all(|m| *m == "1-1"));
+        // The empty-record variant is always `tlshello`: an empty record is
+        // TLS framing, whatever the split variants are set to.
+        assert_eq!(modes, ["tlshello", "1-1"]);
         compile(&config);
 
         // A nonsense packets value is rejected by name.
@@ -1058,6 +1208,55 @@ mod tests {
         let ev = &compiled.outbounds[0].stream.evasion;
         assert!(ev.tcp_fragment.is_some(), "fragment lost");
         assert!(ev.sni_desync.is_some(), "SNI decoy lost");
+    }
+
+    /// `auto` on a device that can send a decoy: every link with a readable
+    /// name gets one more variant behind it, REALITY too, after the others.
+    #[test]
+    fn auto_adds_a_decoy_variant_where_the_device_can_send_one() {
+        let decoys = |request: Value| -> Vec<bool> {
+            compile(&build_config(&request).unwrap())
+                .outbounds
+                .iter()
+                .filter(|o| !matches!(o.stream.security, zero_config::Security::None))
+                .map(|o| o.stream.evasion.sni_desync.is_some())
+                .collect()
+        };
+        assert_eq!(
+            decoys(json!({"links": [REALITY], "evasion": "auto", "auto_decoy": true})),
+            [false, true, true]
+        );
+        let tls = decoys(json!({"links": [WS_TLS], "evasion": "auto", "auto_decoy": true}));
+        assert_eq!(tls[tls.len() - 2..], [true, true]);
+        assert_eq!(tls.iter().filter(|decoy| **decoy).count(), 2);
+        // The urgent byte first, then the decoy.
+        let methods: Vec<_> = compile(
+            &build_config(&json!({"links": [REALITY], "evasion": "auto", "auto_decoy": true}))
+                .unwrap(),
+        )
+        .outbounds
+        .iter()
+        .filter_map(|o| o.stream.evasion.sni_desync.as_ref().map(|d| d.method))
+        .collect();
+        assert_eq!(
+            methods,
+            [
+                zero_config::SniMethod::Urgent,
+                zero_config::SniMethod::Decoy
+            ]
+        );
+        // Not when the device cannot, and not on top of the user's own switch.
+        assert!(!decoys(json!({"links": [REALITY], "evasion": "auto"})).contains(&true));
+        assert_eq!(
+            decoys(
+                json!({"links": [REALITY], "evasion": "auto", "auto_decoy": true, "sni_spoof": true})
+            ),
+            [true]
+        );
+        assert!(
+            !decoys(json!({"links": [REALITY], "evasion": "off", "auto_decoy": true}))
+                .contains(&true)
+        );
     }
 
     #[test]

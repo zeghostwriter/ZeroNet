@@ -2729,6 +2729,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "shape-bench"
+version = "0.0.0"
+dependencies = [
+ "tokio",
+ "zero-core",
+ "zero-protocol",
+ "zero-transport",
+]
+
+[[package]]
 name = "sharded-slab"
 version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3925,6 +3935,7 @@ dependencies = [
  "zero-config",
  "zero-core",
  "zero-dns",
+ "zero-evasion",
  "zero-net",
  "zero-router",
  "zero-runtime",
@@ -4060,6 +4071,7 @@ dependencies = [
  "hkdf",
  "httparse",
  "libc",
+ "qrcode",
  "quinn",
  "rand 0.8.8",
  "rustls",
@@ -4172,6 +4184,7 @@ dependencies = [
  "tracing",
  "zero-core",
  "zero-evasion",
+ "zero-protocol",
  "zero-security",
 ]
 
@@ -4288,6 +4301,7 @@ dependencies = [
  "zero-config",
  "zero-core",
  "zero-discovery",
+ "zero-evasion",
  "zero-runtime",
  "zero-scanner",
  "zero-tun",
@@ -4350,6 +4364,7 @@ dependencies = [
  "zero-config",
  "zero-core",
  "zero-net",
+ "zero-protocol",
  "zero-router",
  "zero-runtime",
 ]

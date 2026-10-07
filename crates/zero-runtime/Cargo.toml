@@ -7,6 +7,9 @@ license.workspace = true
 [features]
 # Lets tests of other crates stage a route race for a screen to draw.
 test-util = []
+# QR codes in the Tide server's control panel. Off in the phone library, which
+# is never a server.
+panel = ["dep:qrcode"]
 
 [dependencies]
 zero-core = { workspace = true }
@@ -42,6 +45,7 @@ aes = { workspace = true }
 aes-gcm = { workspace = true }
 hex = { workspace = true }
 url = { workspace = true }
+qrcode = { version = "0.14", default-features = false, optional = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "io-util", "net", "time", "test-util"] }

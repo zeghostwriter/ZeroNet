@@ -10,6 +10,8 @@ const VERSION: &str = match option_env!("ZRAY_APP_VERSION") {
     None => env!("CARGO_PKG_VERSION"),
 };
 
+mod tide;
+
 fn main() -> Result<()> {
     zero_runtime::tune_allocator();
     init_tracing();
@@ -58,6 +60,7 @@ fn main() -> Result<()> {
         }
         "preset" => cmd_preset(&args[1..]),
         "assets" => cmd_assets(&args[1..]),
+        "zerov1" | "tide" => tide::run(&args[1..]),
         "version" | "-version" | "--version" | "-V" => {
             // v2rayA expects the output to have at least two fields, with fields[0] matching "V2RAY" or "XRAY"
             // e.g. "Xray 26.3.27" or "V2Ray 5.52.0"
@@ -89,6 +92,10 @@ fn print_usage() {
                               Download and validate the config\'s rule sets\n  \
          zray assets check <file>\n  \
                               Report cached rule-set health without fetching\n  \
+         zray zerov1 init --host <domain> (--cert F --key F | --behind-proxy PORT)\n  \
+                              Set up a ZeroV1 server: config, first user, link and QR\n  \
+         zray zerov1 links <file>\n  \
+                              Print the links and QR codes of a ZeroV1 server\n  \
          zray version\n\n\
          PRESET OPTIONS:\n  \
          --remote-dns NAME     cloudflare (default), google, quad9, adguard\n  \

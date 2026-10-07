@@ -861,6 +861,38 @@ pub extern "system" fn Java_com_zeronet_mobile_core_ZrayNative_builtInPublicKey<
     java_string(&mut env, &key)
 }
 
+/// `setDecoy(enabled)` — the user's switch for the decoy ClientHello. Off
+/// stops the core from turning to it by itself; it takes effect on the next
+/// connection.
+#[no_mangle]
+pub extern "system" fn Java_com_zeronet_mobile_core_ZrayNative_setDecoy<'local>(
+    _env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    enabled: jboolean,
+) {
+    contained(
+        "setDecoy",
+        || (),
+        || zero_discovery::set_decoy_enabled(enabled != JNI_FALSE),
+    );
+}
+
+/// `decoyCheck(): String` — `{"supported", "local", "network"}`, see
+/// `zero_discovery::decoy_check`. Blocks for up to about half a minute on a
+/// network that answers nothing, so the app calls it off the main thread.
+#[no_mangle]
+pub extern "system" fn Java_com_zeronet_mobile_core_ZrayNative_decoyCheck<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+) -> jstring {
+    let unknown = || json!({"supported": false, "local": false, "network": "skipped"});
+    let answer = contained("decoyCheck", unknown, || match job_runtime() {
+        Some(runtime) => runtime.block_on(zero_discovery::decoy_check()),
+        None => unknown(),
+    });
+    java_string(&mut env, &answer.to_string())
+}
+
 /// `discover(requestJson, listener): Long`
 #[no_mangle]
 pub extern "system" fn Java_com_zeronet_mobile_core_ZrayNative_discover<'local>(

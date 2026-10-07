@@ -11,19 +11,31 @@
 //! instead of twice, and one allocation per frame goes with it.
 //! `bench/hotpath` counts what that saves.
 //!
+//! The client's request header is not written on its own. It waits in
+//! `pending_write` and leaves in the same carrier write as the first padded
+//! frame, so a connection does not open with one short record of a telltale
+//! size followed by a second one. A caller that reads before it writes (a
+//! server-first protocol) would leave it waiting forever, so the first read
+//! starts [`FIRST_PAYLOAD_WAIT`]; when that runs out the header goes with an
+//! empty padded frame instead, as Xray's client does.
+//!
 //! This implementation deliberately emits `PaddingEnd`, never
 //! `PaddingDirect`. The latter requires handing an already-record-aligned raw
 //! TCP socket back through the outer TLS implementation; emitting End is the
 //! interoperable Xray mode and keeps the stream safe on transports that cannot
 //! expose that handoff. Xray still accepts the resulting Vision flow.
 
+use std::future::Future;
 use std::io;
 use std::pin::Pin;
-use std::task::{Context, Poll};
+use std::task::{ready, Context, Poll};
 
 use bytes::{Buf, BufMut, BytesMut};
 use rand::RngCore;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+use tokio::time::Sleep;
+
+use crate::first_flight::FIRST_PAYLOAD_WAIT;
 
 const COMMAND_CONTINUE: u8 = 0x00;
 const COMMAND_END: u8 = 0x01;
@@ -60,6 +72,14 @@ pub struct VisionStream<S> {
     inner_looks_tls: bool,
     write_first: bool,
     pending_write: BytesMut,
+    /// The request header sits in `pending_write` waiting for the first frame
+    /// to leave with.
+    header_held: bool,
+    /// Runs from the first read while the header is held.
+    header_wait: Option<Pin<Box<Sleep>>>,
+    /// The carrier owes a flush for a first flight nobody wrote (the caller
+    /// flushes after its own writes; nobody flushes after a timer).
+    flush_due: bool,
     direct_read_switch: Option<DirectReadSwitch<S>>,
 }
 
@@ -85,6 +105,9 @@ impl<S> VisionStream<S> {
             inner_looks_tls: false,
             write_first: true,
             pending_write: BytesMut::new(),
+            header_held: false,
+            header_wait: None,
+            flush_due: false,
             direct_read_switch: None,
         }
     }
@@ -106,6 +129,9 @@ impl<S> VisionStream<S> {
             inner_looks_tls: false,
             write_first: true,
             pending_write: BytesMut::new(),
+            header_held: false,
+            header_wait: None,
+            flush_due: false,
             direct_read_switch: None,
         }
     }
@@ -122,18 +148,25 @@ impl<S> VisionStream<S> {
         self
     }
 
-    /// Send the mandatory empty first Vision frame. Xray emits this even when
-    /// the local application has not produced payload yet, which prevents the
-    /// VLESS header from being a distinctive short record.
-    pub async fn send_initial_frame(&mut self) -> io::Result<()>
-    where
-        S: AsyncWrite + Unpin,
-    {
-        let frame = make_frame(&[], Some(&self.uuid), COMMAND_CONTINUE, true);
-        tokio::io::AsyncWriteExt::write_all(&mut self.inner, &frame).await?;
-        tokio::io::AsyncWriteExt::flush(&mut self.inner).await?;
+    /// Give the stream the VLESS request header to send in front of its
+    /// first frame. Call it before any I/O; nothing is written here.
+    pub fn with_request_header(mut self, header: &[u8]) -> Self {
+        self.pending_write.extend_from_slice(header);
+        self.header_held = true;
+        self
+    }
+
+    /// Let the held header go with an empty padded frame behind it. Xray
+    /// sends this frame too when the application has nothing to say yet; it
+    /// keeps the header from being a short record of its own.
+    fn release_header_alone(&mut self) {
+        let mut framed = std::mem::take(&mut self.pending_write);
+        make_frame_into(&[], Some(&self.uuid), COMMAND_CONTINUE, true, &mut framed);
+        self.pending_write = framed;
         self.write_first = false;
-        Ok(())
+        self.header_held = false;
+        self.header_wait = None;
+        self.flush_due = true;
     }
 
     /// Append the framed (or, once padding has ended, verbatim) form of
@@ -327,6 +360,26 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for VisionStream<S> {
         cx: &mut Context<'_>,
         buf: &mut ReadBuf<'_>,
     ) -> Poll<io::Result<()>> {
+        if self.header_held {
+            let wait = self
+                .header_wait
+                .get_or_insert_with(|| Box::pin(tokio::time::sleep(FIRST_PAYLOAD_WAIT)));
+            if wait.as_mut().poll(cx).is_ready() {
+                self.release_header_alone();
+            }
+        }
+        if self.flush_due {
+            // Nobody else will push a first flight the timer released.
+            match self.poll_flush_pending(cx) {
+                Poll::Ready(Ok(())) => {
+                    if Pin::new(&mut self.inner).poll_flush(cx)?.is_ready() {
+                        self.flush_due = false;
+                    }
+                }
+                Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
+                Poll::Pending => {}
+            }
+        }
         loop {
             if !self.read_window.is_empty() {
                 let n = self.read_window.len().min(buf.remaining());
@@ -389,12 +442,12 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncWrite for VisionStream<S> {
         if buf.is_empty() {
             return Poll::Ready(Ok(0));
         }
-        if !self.pending_write.is_empty() {
-            match self.poll_flush_pending(cx) {
-                Poll::Ready(Ok(())) => {}
-                Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
-                Poll::Pending => return Poll::Pending,
-            }
+        if self.header_held {
+            // The frame built below joins the header in `pending_write`.
+            self.header_held = false;
+            self.header_wait = None;
+        } else if !self.pending_write.is_empty() {
+            ready!(self.poll_flush_pending(cx))?;
         }
 
         if !self.write_padding && self.pending_write.is_empty() {
@@ -412,6 +465,11 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncWrite for VisionStream<S> {
     }
 
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        if self.header_held {
+            // A flush before the first write has nothing of the caller's to
+            // push; the header keeps waiting for its payload.
+            return Pin::new(&mut self.inner).poll_flush(cx);
+        }
         match self.poll_flush_pending(cx) {
             Poll::Ready(Ok(())) => Pin::new(&mut self.inner).poll_flush(cx),
             other => other,
@@ -419,6 +477,9 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncWrite for VisionStream<S> {
     }
 
     fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        if self.header_held {
+            self.release_header_alone();
+        }
         match self.poll_flush_pending(cx) {
             Poll::Ready(Ok(())) => Pin::new(&mut self.inner).poll_shutdown(cx),
             other => other,
@@ -426,6 +487,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncWrite for VisionStream<S> {
     }
 }
 
+#[cfg(test)]
 fn make_frame(content: &[u8], uuid: Option<&[u8; 16]>, command: u8, long_padding: bool) -> Vec<u8> {
     let mut out = BytesMut::with_capacity(uuid.map_or(0, |_| 16) + 5 + content.len() + 1024);
     make_frame_into(content, uuid, command, long_padding, &mut out);
@@ -520,7 +582,6 @@ mod tests {
     async fn client_frame_roundtrip_preserves_header_and_payload() {
         let (mut peer, server_side) = tokio::io::duplex(65536);
         let mut client = VisionStream::new_client(server_side, UUID);
-        client.send_initial_frame().await.unwrap();
         client.write_all(b"payload").await.unwrap();
         client.flush().await.unwrap();
 
@@ -551,6 +612,69 @@ mod tests {
         // Keep the client and server variables live long enough to ensure the
         // generic stream remains usable in both directions.
         let _ = (&mut client, n);
+    }
+
+    #[tokio::test]
+    async fn the_request_header_leaves_with_the_first_frame() {
+        use crate::first_flight::tests::Chunks;
+        let mut client =
+            VisionStream::new_client(Chunks::default(), UUID).with_request_header(b"HEADER");
+        client.flush().await.unwrap();
+        assert!(
+            client.inner.writes.is_empty(),
+            "a flush is not a first write"
+        );
+        client.write_all(b"payload").await.unwrap();
+        client.flush().await.unwrap();
+
+        assert_eq!(client.inner.writes.len(), 1, "one carrier write");
+        let wire = client.inner.writes[0].clone();
+        assert_eq!(&wire[..6], b"HEADER");
+
+        // What follows the header is an ordinary first Vision frame.
+        let (mut producer, server_io) = tokio::io::duplex(65536);
+        producer.write_all(&wire[6..]).await.unwrap();
+        let mut server = VisionStream::new_server(server_io, UUID);
+        let mut payload = [0u8; 7];
+        server.read_exact(&mut payload).await.unwrap();
+        assert_eq!(&payload, b"payload");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_reader_first_caller_gets_the_header_and_an_empty_frame() {
+        use crate::first_flight::tests::Chunks;
+        let mut client =
+            VisionStream::new_client(Chunks::default(), UUID).with_request_header(b"HEADER");
+        let mut byte = [0u8; 1];
+        let early = tokio::time::timeout(FIRST_PAYLOAD_WAIT / 2, client.read(&mut byte)).await;
+        assert!(early.is_err());
+        assert!(client.inner.writes.is_empty());
+
+        let late = tokio::time::timeout(FIRST_PAYLOAD_WAIT, client.read(&mut byte)).await;
+        assert!(late.is_err());
+        assert_eq!(client.inner.writes.len(), 1);
+        assert_eq!(client.inner.flushes, 1);
+        let wire = client.inner.writes[0].clone();
+        assert_eq!(&wire[..6], b"HEADER");
+        assert_eq!(&wire[6..22], &UUID);
+        assert_eq!(wire[22], COMMAND_CONTINUE);
+        assert_eq!(&wire[23..25], &[0, 0], "no content");
+        assert!(wire.len() >= 6 + 16 + 5 + LONG_PADDING_MIN);
+
+        // The payload that follows is a later frame without the UUID.
+        client.write_all(b"late").await.unwrap();
+        assert_eq!(client.inner.writes.len(), 2);
+        assert_eq!(client.inner.writes[1][0], COMMAND_CONTINUE);
+    }
+
+    #[tokio::test]
+    async fn closing_before_writing_still_sends_the_header() {
+        use crate::first_flight::tests::Chunks;
+        let mut client =
+            VisionStream::new_client(Chunks::default(), UUID).with_request_header(b"HEADER");
+        client.shutdown().await.unwrap();
+        assert_eq!(&client.inner.writes.concat()[..6], b"HEADER");
+        assert!(client.inner.shut);
     }
 
     #[tokio::test]

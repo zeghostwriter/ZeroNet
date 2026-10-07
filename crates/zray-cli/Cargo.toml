@@ -14,7 +14,8 @@ zero-core = { workspace = true }
 zero-config = { workspace = true }
 zero-net = { workspace = true }
 zero-router = { workspace = true }
-zero-runtime = { workspace = true }
+zero-runtime = { workspace = true, features = ["panel"] }
+zero-protocol = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }

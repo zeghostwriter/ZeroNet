@@ -409,6 +409,9 @@ pub struct ConnectionPlanner {
     /// to rotate a carrier before this deadline, and a fixed guess would be
     /// either useless on a short timeout or wasteful on a long one.
     observed_flow_lifetime: Option<Duration>,
+    /// Whether this device can send a decoy ClientHello (see
+    /// [`Self::set_decoy_available`]).
+    decoy_available: bool,
 }
 
 impl ConnectionPlanner {
@@ -420,7 +423,18 @@ impl ConnectionPlanner {
             consecutive_failures: 0,
             probing: None,
             observed_flow_lifetime: None,
+            decoy_available: false,
         }
+    }
+
+    /// Say whether this device can send a decoy ClientHello, which is what
+    /// [`PathStrategy::SniDesync`] needs. The planner cannot find out by
+    /// itself (it never touches a socket), so the runtime tells it once.
+    ///
+    /// With a decoy to hand, a handshake that dies after the TCP connection
+    /// opened goes to the decoy first: see `next_for_failure`.
+    pub fn set_decoy_available(&mut self, available: bool) {
+        self.decoy_available = available;
     }
 
     pub fn current(&self) -> PathStrategy {
@@ -554,6 +568,12 @@ impl ConnectionPlanner {
         self.probing = None;
     }
 
+    /// Whether the decoy is there to be tried: the device can send one and
+    /// the ladder has not reached it yet.
+    fn decoy_ready(&self) -> bool {
+        self.decoy_available && self.current < PathStrategy::SniDesync
+    }
+
     fn next_for_failure(&self, failure: &Failure) -> Option<PathStrategy> {
         match failure.kind {
             // A reset that arrived only after the flow had lived a while is a
@@ -563,6 +583,28 @@ impl ConnectionPlanner {
             // (PLAN-01 §5.2).
             FailureKind::TcpReset if is_time_triggered(failure) => {
                 Some(PathStrategy::KeepaliveShaping)
+            }
+            // The TCP connection opened, and then it was reset before the
+            // other side sent anything, or the handshake was never answered:
+            // a filter read the server name. That is what a decoy answers,
+            // for any server, so it comes before the splits (which a filter
+            // that reassembles sees through) and before giving up on the
+            // address. Only once: if the decoy is already in use the rules
+            // below take over.
+            //
+            // The reset is taken up to the first byte back and not just up
+            // to the end of TLS, because a connection relayed as it is (a
+            // direct outbound) has no TLS of its own: its hello is plain
+            // upload, and the reset arrives after that upload.
+            FailureKind::TcpReset
+                if self.decoy_ready() && failure.stage < Stage::FirstByteReceived =>
+            {
+                Some(PathStrategy::SniDesync)
+            }
+            FailureKind::TlsTimeout
+                if self.decoy_ready() && failure.stage < Stage::TlsCompleted =>
+            {
+                Some(PathStrategy::SniDesync)
             }
             // Bytes moved before the reset: the handshake was seen and matched,
             // which is what fragmentation addresses.
@@ -791,6 +833,52 @@ mod tests {
             }
         );
         assert_eq!(planner.current(), PathStrategy::CdnWebSocket);
+    }
+
+    /// With a decoy to hand, a handshake cut off after the connection opened
+    /// is answered with it, whether the filter resets or stays silent. If
+    /// the decoy does not help either, the old rule moves to the CDN.
+    #[test]
+    fn a_handshake_cut_off_by_name_goes_to_the_decoy_first_where_there_is_one() {
+        let silent = Failure::new(FailureKind::TlsTimeout, Stage::TlsStarted);
+        let reset = Failure::new(FailureKind::TcpReset, Stage::TlsStarted);
+
+        let mut without = ConnectionPlanner::new(b"local");
+        without.record_failure(&silent);
+        assert_eq!(without.current(), PathStrategy::CdnWebSocket);
+
+        for failure in [&silent, &reset] {
+            let mut planner = ConnectionPlanner::new(b"local");
+            planner.set_decoy_available(true);
+            assert_eq!(
+                planner.record_failure(failure),
+                Transition::Climb {
+                    to: PathStrategy::SniDesync
+                }
+            );
+        }
+
+        let mut planner = ConnectionPlanner::new(b"local");
+        planner.set_decoy_available(true);
+        planner.record_failure(&silent);
+        planner.record_failure(&silent);
+        assert_eq!(planner.current(), PathStrategy::CdnWebSocket);
+
+        // A hello relayed as plain upload, reset before anything came back.
+        let mut relayed = ConnectionPlanner::new(b"local");
+        relayed.set_decoy_available(true);
+        relayed.record_failure(
+            &Failure::new(FailureKind::TcpReset, Stage::UploadConfirmed).with_bytes(1571),
+        );
+        assert_eq!(relayed.current(), PathStrategy::SniDesync);
+
+        // A reset once data has come back is not about the name.
+        let mut later = ConnectionPlanner::new(b"local");
+        later.set_decoy_available(true);
+        later.record_failure(
+            &Failure::new(FailureKind::TcpReset, Stage::PayloadTransferred).with_bytes(4096),
+        );
+        assert_ne!(later.current(), PathStrategy::SniDesync);
     }
 
     #[test]

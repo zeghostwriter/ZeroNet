@@ -76,6 +76,7 @@ fun protocolLabel(p: String): String = when (p.lowercase(Locale.ROOT)) {
     "hysteria2", "hy2" -> "Hysteria 2"
     "tuic" -> "TUIC"
     "anytls" -> "AnyTLS"
+    "zerov1", "tide" -> "ZeroV1"
     "" -> "—"
     else -> p
 }

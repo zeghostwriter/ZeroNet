@@ -5,6 +5,8 @@
 //! validates the REALITY session seal, and then exposes the same record stream
 //! type used by the client implementation.
 
+use std::sync::{Arc, Mutex};
+
 use aes_gcm::{
     aead::{Aead, Payload},
     Aes256Gcm, KeyInit, Nonce,
@@ -32,6 +34,39 @@ pub struct RealityServerParams {
     pub private_key: [u8; 32],
     pub server_names: Box<[Box<str>]>,
     pub short_ids: Box<[Box<[u8]>]>,
+    /// What each server name's real site sends after a handshake, filled in
+    /// by whoever can reach that site. Empty until then, and the server sends
+    /// nothing extra for a name it has no entry for.
+    pub post_handshake: Arc<PostHandshakeShapes>,
+}
+
+/// The sizes of the records a camouflage site sends straight after a
+/// handshake, per server name (see [`super::post_handshake`]).
+///
+/// After each handshake it accepts, the server sends empty records of the
+/// sizes stored for the name the client asked for, so the first thing on the
+/// wire after the handshake matches the real site's.
+#[derive(Debug, Default)]
+pub struct PostHandshakeShapes(Mutex<Vec<Shape>>);
+
+/// A server name and the record sizes its site sends.
+type Shape = (Box<str>, Arc<[u16]>);
+
+impl PostHandshakeShapes {
+    /// Remember `wire_lens` for `server_name`, replacing what was there.
+    pub fn set(&self, server_name: &str, wire_lens: &[u16]) {
+        let mut shapes = self.0.lock().unwrap_or_else(|p| p.into_inner());
+        shapes.retain(|(name, _)| &**name != server_name);
+        shapes.push((server_name.into(), wire_lens.into()));
+    }
+
+    fn get(&self, server_name: &str) -> Option<Arc<[u16]>> {
+        let shapes = self.0.lock().unwrap_or_else(|p| p.into_inner());
+        shapes
+            .iter()
+            .find(|(name, _)| &**name == server_name)
+            .map(|(_, lens)| Arc::clone(lens))
+    }
 }
 
 struct ClientHelloInfo {
@@ -185,7 +220,8 @@ where
         };
     }
 
-    match complete_handshake(io, hello, auth_key).await {
+    let post_handshake = params.post_handshake.get(&hello.sni);
+    match complete_handshake(io, hello, auth_key, post_handshake).await {
         Ok(stream) => HandshakeOutcome::Accepted(stream),
         Err(failure) => HandshakeOutcome::Rejected(failure),
     }
@@ -195,6 +231,7 @@ async fn complete_handshake<S>(
     mut io: S,
     hello: ClientHelloInfo,
     auth_key: [u8; 32],
+    post_handshake: Option<Arc<[u16]>>,
 ) -> Result<Tls13Stream<S>, Failure>
 where
     S: AsyncRead + AsyncWrite + Unpin,
@@ -279,7 +316,16 @@ where
     // traffic secret but is not part of the transcript input to the
     // application traffic key schedule (RFC 8446 §7.1).
     let (client_app, server_app) = establish_application_secrets(&schedule, &transcript.snapshot());
-    Ok(Tls13Stream::new(io, hello.suite, client_app, server_app))
+    let mut stream = Tls13Stream::new(io, hello.suite, client_app, server_app);
+    if let Some(wire_lens) = post_handshake {
+        // Where the real site would be sending its session tickets.
+        stream.queue_empty_records(&wire_lens)?;
+        stream
+            .flush()
+            .await
+            .map_err(|error| Failure::from_io(&error, Stage::TlsStarted))?;
+    }
+    Ok(stream)
 }
 
 fn derive_auth_key(shared: &[u8; 32], salt: &[u8]) -> [u8; 32] {
@@ -818,6 +864,7 @@ mod tests {
             private_key,
             server_names: vec![Box::from("example.test")].into_boxed_slice(),
             short_ids: vec![vec![0xaa, 0xbb, 0xcc, 0xdd].into_boxed_slice()].into_boxed_slice(),
+            post_handshake: Default::default(),
         };
         let client_params = crate::reality::RealityParams::from_config(
             std::sync::Arc::from("example.test"),
@@ -862,6 +909,7 @@ mod tests {
                 vec![0xaa, 0xbb, 0xcc, 0xdd].into_boxed_slice(),
             ]
             .into_boxed_slice(),
+            post_handshake: Default::default(),
         };
         let client_params = crate::reality::RealityParams::from_config(
             std::sync::Arc::from("example.test"),
@@ -904,6 +952,38 @@ mod tests {
         client.write_all(b"ping").await.unwrap();
         client.flush().await.unwrap();
         server.await.unwrap();
+    }
+
+    /// With a site's record sizes on file, the first things the server sends
+    /// after the handshake are empty records of exactly those sizes, and the
+    /// session behind them is undisturbed.
+    #[tokio::test]
+    async fn the_sites_post_handshake_records_are_replayed_by_size() {
+        let (server_params, client_params) = reality_pair(&[0xaa, 0xbb, 0xcc, 0xdd]);
+        server_params.post_handshake.set("example.test", &[255, 69]);
+        // A different name's sizes are not this name's.
+        server_params.post_handshake.set("other.test", &[1000]);
+        let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+        let server = tokio::spawn(async move {
+            let mut stream = handshake(server_io, &server_params).await.unwrap();
+            let mut request = [0u8; 4];
+            stream.read_exact(&mut request).await.unwrap();
+            stream.write_all(b"pong").await.unwrap();
+            stream.flush().await.unwrap();
+        });
+        let (tapped, sizes) = super::super::post_handshake::tap(client_io);
+        let mut client = crate::reality::connect(tapped, &client_params)
+            .await
+            .unwrap();
+        client.write_all(b"ping").await.unwrap();
+        client.flush().await.unwrap();
+        let mut reply = [0u8; 4];
+        client.read_exact(&mut reply).await.unwrap();
+        assert_eq!(&reply, b"pong");
+        server.await.unwrap();
+        // The two replayed records, then the 4-byte reply in a record of its
+        // own: header, payload, type byte, tag.
+        assert_eq!(*sizes.lock().unwrap(), [255, 69, 5 + 4 + 1 + 16]);
     }
 
     #[tokio::test]
@@ -963,6 +1043,7 @@ mod tests {
             private_key: [7u8; 32],
             server_names: vec![Box::from("reality.example")].into_boxed_slice(),
             short_ids: vec![vec![1, 2, 3, 4].into_boxed_slice()].into_boxed_slice(),
+            post_handshake: Default::default(),
         };
         match handshake_or_fallback(server, &params).await {
             HandshakeOutcome::Fallback { client_hello, .. } => assert_eq!(client_hello, expected),

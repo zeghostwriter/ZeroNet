@@ -689,6 +689,16 @@ impl<S> Tls13Stream<S> {
         self.suite
     }
 
+    /// Queue empty application-data records of these wire sizes behind
+    /// anything already waiting to be sent. They leave on the next flush.
+    pub(crate) fn queue_empty_records(&mut self, wire_lens: &[u16]) -> Result<(), super::Failure> {
+        for &wire_len in wire_lens {
+            self.write
+                .seal_empty_into(wire_len as usize, &mut self.outgoing)?;
+        }
+        Ok(())
+    }
+
     /// Enter Vision's authenticated direct-read mode. The protocol layer
     /// calls this only after consuming a valid `PaddingDirect` frame; an
     /// unauthenticated record-shaped prefix must never bypass the outer

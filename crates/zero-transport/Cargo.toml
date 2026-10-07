@@ -8,6 +8,7 @@ license.workspace = true
 zero-core = { workspace = true }
 zero-evasion = { workspace = true }
 zero-security = { workspace = true }
+zero-protocol = { workspace = true }
 tokio = { workspace = true }
 bytes = { workspace = true }
 tracing = { workspace = true }

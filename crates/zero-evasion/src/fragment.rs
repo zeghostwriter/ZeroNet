@@ -28,7 +28,7 @@ pub enum Packets {
     Range { from: u64, to: u64 },
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct FragmentPolicy {
     pub packets: Packets,
     pub length_min: i64,
@@ -37,6 +37,19 @@ pub struct FragmentPolicy {
     pub interval_max_ms: i64,
     pub max_split_min: i64,
     pub max_split_max: i64,
+    /// Zero-length TLS records written in front of the ClientHello
+    /// ([`Packets::TlsHello`] only). Xray spells this as leading `0` entries
+    /// in the fragment mask's `lengths`.
+    pub empty_records: u8,
+    /// Sizes for the pieces that come first (after any empty records), one
+    /// `(min, max)` entry per piece; `length_*` sizes every piece after
+    /// them. Xray's `lengths` list is this followed by `length_*`. A zero
+    /// here is an empty record in the middle of the hello.
+    pub lead_lengths: Vec<(i64, i64)>,
+    /// Delays for the first pieces, counted from the very first one (empty
+    /// records included), one `(min, max)` entry in milliseconds per piece;
+    /// `interval_*` follows every piece after them. Xray's `delays` list.
+    pub lead_delays: Vec<(i64, i64)>,
 }
 
 impl Default for FragmentPolicy {
@@ -52,28 +65,72 @@ impl Default for FragmentPolicy {
             interval_max_ms: 1,
             max_split_min: 0,
             max_split_max: 0,
+            empty_records: 0,
+            lead_lengths: Vec::new(),
+            lead_delays: Vec::new(),
         }
     }
 }
 
 impl FragmentPolicy {
-    /// When the interval is zero Xray coalesces the re-framed records into a
-    /// single write, which still defeats record-boundary matching but costs no
-    /// extra latency or syscalls.
-    fn combines_hello(&self) -> bool {
-        self.interval_max_ms == 0
+    /// One empty TLS record and then the ClientHello whole, in one write: the
+    /// shape `zero_config::FragmentConfig::empty_record` describes, for the
+    /// connections that are not built from a configuration (the WARP API).
+    ///
+    /// Not for the MASQUE tunnel: measured the same day, a tunnel dialled
+    /// this way authenticated and then carried nothing (0 of 2, against 2 of
+    /// 2 without it), so a handshake that completes is not proof it helps.
+    pub fn empty_record() -> Self {
+        Self {
+            packets: Packets::TlsHello,
+            length_min: 16_384,
+            length_max: 16_384,
+            interval_min_ms: 0,
+            interval_max_ms: 0,
+            max_split_min: 0,
+            max_split_max: 0,
+            empty_records: 1,
+            lead_lengths: Vec::new(),
+            lead_delays: Vec::new(),
+        }
     }
-}
 
-/// Draw one fragment length.
-///
-/// Xray's config loader rejects non-positive lengths, but a policy can be
-/// built directly. A zero draw would make the split loop emit empty fragments
-/// forever (an unbounded allocation), and a negative one would wrap to a huge
-/// `usize`; one byte is the smallest step that always makes progress.
-fn fragment_len(policy: &FragmentPolicy) -> usize {
-    let drawn = rand_between(policy.length_min, policy.length_max);
-    usize::try_from(drawn).unwrap_or(0).max(1)
+    /// When there is one delay and it is zero, Xray coalesces the re-framed
+    /// records into a single write, which still defeats record-boundary
+    /// matching but costs no extra latency or syscalls. A list of delays is
+    /// never coalesced, even when every entry is zero, as in Xray.
+    fn combines_hello(&self) -> bool {
+        self.lead_delays.is_empty() && self.interval_max_ms == 0
+    }
+
+    /// The length of piece number `piece` (0-based): nothing for an empty
+    /// record, then the listed sizes, then `length_*` for the rest.
+    ///
+    /// Xray's config loader rejects a non-positive last length, but a policy
+    /// can be built directly. A zero draw there would make the split loop
+    /// emit empty fragments forever (an unbounded allocation), and a negative
+    /// one would wrap to a huge `usize`; one byte is the smallest step that
+    /// always makes progress. A listed size may be zero: the list ends.
+    fn length_of(&self, piece: usize) -> usize {
+        let Some(listed) = piece.checked_sub(usize::from(self.empty_records)) else {
+            return 0;
+        };
+        let draw = |(min, max): (i64, i64)| usize::try_from(rand_between(min, max)).unwrap_or(0);
+        match self.lead_lengths.get(listed) {
+            Some(range) => draw(*range),
+            None => draw((self.length_min, self.length_max)).max(1),
+        }
+    }
+
+    /// The delay, in milliseconds, to leave after piece number `piece`.
+    fn delay_after(&self, piece: usize) -> i64 {
+        let (min, max) = self
+            .lead_delays
+            .get(piece)
+            .copied()
+            .unwrap_or((self.interval_min_ms, self.interval_max_ms));
+        rand_between(min, max)
+    }
 }
 
 /// One planned output chunk.
@@ -104,9 +161,11 @@ pub fn plan_tls_hello(buf: &[u8], policy: &FragmentPolicy) -> Option<Vec<Chunk>>
     let mut combined: Vec<u8> = Vec::new();
     let mut from = 0usize;
     let mut split_num: i64 = 0;
-
+    // Pieces are numbered from zero. The empty records come first and count
+    // as pieces, as they do in Xray (each is a `lengths` entry of 0 there).
+    let mut piece = 0usize;
     loop {
-        let mut to = from.saturating_add(fragment_len(policy));
+        let mut to = from.saturating_add(policy.length_of(piece));
         split_num += 1;
         if to > data.len() || (max_split > 0 && split_num >= max_split) {
             to = data.len();
@@ -126,10 +185,11 @@ pub fn plan_tls_hello(buf: &[u8], policy: &FragmentPolicy) -> Option<Vec<Chunk>>
         } else {
             chunks.push(Chunk {
                 bytes: rec,
-                delay_ms: rand_between(policy.interval_min_ms, policy.interval_max_ms),
+                delay_ms: policy.delay_after(piece),
             });
         }
 
+        piece += 1;
         from = to;
         if from == data.len() {
             break;
@@ -155,22 +215,29 @@ pub fn plan_tls_hello(buf: &[u8], policy: &FragmentPolicy) -> Option<Vec<Chunk>>
 }
 
 /// Plan a raw byte-boundary split, used by `Packets::Range`.
+///
+/// A listed length of zero cuts nothing, so that piece is skipped; it still
+/// counts towards the split limit and still takes its place in the lists.
 pub fn plan_raw(buf: &[u8], policy: &FragmentPolicy) -> Vec<Chunk> {
     let max_split = rand_between(policy.max_split_min, policy.max_split_max);
     let mut chunks = Vec::new();
     let mut from = 0usize;
     let mut split_num: i64 = 0;
+    let mut piece = 0usize;
 
     while from < buf.len() {
-        let mut to = from.saturating_add(fragment_len(policy));
+        let mut to = from.saturating_add(policy.length_of(piece));
         split_num += 1;
         if to > buf.len() || (max_split > 0 && split_num >= max_split) {
             to = buf.len();
         }
-        chunks.push(Chunk {
-            bytes: buf[from..to].to_vec(),
-            delay_ms: rand_between(policy.interval_min_ms, policy.interval_max_ms),
-        });
+        if to > from {
+            chunks.push(Chunk {
+                bytes: buf[from..to].to_vec(),
+                delay_ms: policy.delay_after(piece),
+            });
+        }
+        piece += 1;
         from = to;
     }
     chunks
@@ -348,6 +415,47 @@ mod tests {
     use super::*;
     use tokio::io::AsyncWriteExt;
 
+    /// The shape measured to get through: one write holding an empty record
+    /// and then the untouched ClientHello record.
+    #[test]
+    fn an_empty_record_goes_in_front_of_the_hello_in_the_same_write() {
+        let hello = tls_record(517);
+        let policy = FragmentPolicy {
+            packets: Packets::TlsHello,
+            length_min: 16_384,
+            length_max: 16_384,
+            interval_min_ms: 0,
+            interval_max_ms: 0,
+            empty_records: 1,
+            ..Default::default()
+        };
+        let chunks = plan_tls_hello(&hello, &policy).unwrap();
+        assert_eq!(chunks.len(), 1, "both records must share one write");
+        let mut expected = vec![0x16, 0x03, 0x01, 0x00, 0x00];
+        expected.extend_from_slice(&hello);
+        assert_eq!(chunks[0].bytes, expected);
+
+        // With pieces after it, the empty record still comes first and the
+        // pieces still add up to the hello.
+        let pieces = FragmentPolicy {
+            length_min: 100,
+            length_max: 100,
+            empty_records: 2,
+            ..policy
+        };
+        let bytes = &plan_tls_hello(&hello, &pieces).unwrap()[0].bytes;
+        assert_eq!(&bytes[..10], [0x16, 3, 1, 0, 0, 0x16, 3, 1, 0, 0]);
+        let mut body = Vec::new();
+        let mut at = 10;
+        while at < bytes.len() {
+            let len = usize::from(bytes[at + 3]) << 8 | usize::from(bytes[at + 4]);
+            assert!(len > 0 && len <= 100);
+            body.extend_from_slice(&bytes[at + 5..at + 5 + len]);
+            at += 5 + len;
+        }
+        assert_eq!(body, hello[5..]);
+    }
+
     /// Build a synthetic TLS handshake record of `payload` bytes.
     fn tls_record(payload_len: usize) -> Vec<u8> {
         let mut v = vec![0x16, 0x03, 0x01];
@@ -355,6 +463,80 @@ mod tests {
         v.push(payload_len as u8);
         v.extend((0..payload_len).map(|i| (i % 251) as u8));
         v
+    }
+
+    /// The lengths of the TLS records in `bytes`, in order.
+    fn record_lengths(bytes: &[u8]) -> Vec<usize> {
+        let mut lengths = Vec::new();
+        let mut at = 0;
+        while at < bytes.len() {
+            let len = usize::from(bytes[at + 3]) << 8 | usize::from(bytes[at + 4]);
+            lengths.push(len);
+            at += 5 + len;
+        }
+        lengths
+    }
+
+    /// Xray's `lengths` list, piece by piece: `["0", "104", "1"]` with a
+    /// split limit of 6 is an empty record, 104 bytes, three single bytes,
+    /// and a sixth piece that takes whatever is left.
+    #[test]
+    fn listed_lengths_size_the_first_pieces_and_the_last_one_repeats() {
+        let hello = tls_record(517);
+        let listed = FragmentPolicy {
+            lead_lengths: vec![(104, 104)],
+            length_min: 1,
+            length_max: 1,
+            max_split_min: 6,
+            max_split_max: 6,
+            ..FragmentPolicy::empty_record()
+        };
+        let chunks = plan_tls_hello(&hello, &listed).unwrap();
+        assert_eq!(chunks.len(), 1, "one zero delay still merges the records");
+        assert_eq!(record_lengths(&chunks[0].bytes), [0, 104, 1, 1, 1, 410]);
+
+        // Cutting raw bytes, the same list without the empty record.
+        let raw = FragmentPolicy {
+            packets: Packets::Range { from: 1, to: 1 },
+            empty_records: 0,
+            lead_lengths: vec![(114, 114)],
+            max_split_min: 4,
+            max_split_max: 4,
+            ..listed
+        };
+        let sizes: Vec<usize> = plan_raw(&hello, &raw)
+            .iter()
+            .map(|chunk| chunk.bytes.len())
+            .collect();
+        assert_eq!(sizes, [114, 1, 1, 406]);
+    }
+
+    /// Xray's `delays` list: one entry per piece from the first, the last
+    /// repeating, and a list is never merged into one write even when it is
+    /// all zeros.
+    #[test]
+    fn listed_delays_follow_their_pieces_and_stop_the_merge() {
+        let hello = tls_record(300);
+        let p = FragmentPolicy {
+            lead_delays: vec![(0, 0), (7, 7)],
+            interval_min_ms: 3,
+            interval_max_ms: 3,
+            length_min: 100,
+            length_max: 100,
+            ..FragmentPolicy::empty_record()
+        };
+        let chunks = plan_tls_hello(&hello, &p).unwrap();
+        let delays: Vec<i64> = chunks.iter().map(|chunk| chunk.delay_ms).collect();
+        assert_eq!(delays, [0, 7, 3, 3]);
+        assert_eq!(chunks[0].bytes, [0x16, 3, 1, 0, 0]);
+
+        let zeros = FragmentPolicy {
+            lead_delays: vec![(0, 0)],
+            interval_min_ms: 0,
+            interval_max_ms: 0,
+            ..p
+        };
+        assert_eq!(plan_tls_hello(&hello, &zeros).unwrap().len(), 4);
     }
 
     /// The `tlshello` record planner these tests exercise; the default is

@@ -274,6 +274,25 @@ async fn tunnel(protocol: &str, quic: bool, transport: Value) -> Tunnel {
                 "password": PASSWORD
             }]}),
         ),
+        "tide" => {
+            use zero_protocol::tide::{encode_key, generate_keypair};
+            let (secret, public) = generate_keypair();
+            let user = [7u8; 16];
+            (
+                json!({
+                    "path": "/assets/app",
+                    "secretKey": encode_key(&secret),
+                    "users": [{"id": encode_key(&user), "name": "test"}],
+                }),
+                json!({
+                    "address": SERVER_NAME,
+                    "port": relay_port,
+                    "path": "/assets/app",
+                    "serverKey": encode_key(&public),
+                    "user": encode_key(&user),
+                }),
+            )
+        }
         "vless" => (
             json!({"clients": [{"id": UUID}]}),
             json!({"vnext": [{
@@ -366,6 +385,38 @@ async fn anytls_carries_payload_intact() {
     let mut stream = socks_connect(tunnel.socks, tunnel.echo).await.unwrap();
     round_trip(&mut stream, &payload(1, 64)).await;
     round_trip(&mut stream, &payload(2, 128 * 1024)).await;
+}
+
+/// Tide end to end through two running cores: a SOCKS client, the Tide
+/// outbound over real TLS and HTTP/2, the Tide inbound, and out to an echo.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn tide_carries_payload_intact() {
+    let tunnel = tunnel("tide", false, raw()).await;
+    let mut stream = socks_connect(tunnel.socks, tunnel.echo).await.unwrap();
+    round_trip(&mut stream, &payload(1, 64)).await;
+    round_trip(&mut stream, &payload(2, 512 * 1024)).await;
+    // A second connection rides the session the first one made.
+    let mut again = socks_connect(tunnel.socks, tunnel.echo).await.unwrap();
+    round_trip(&mut again, &payload(3, 64)).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+async fn tide_keeps_concurrent_flows_separate() {
+    // Every flow shares one session and two connections; a mistake in stream
+    // ids or ordering would hand one flow's bytes to another.
+    let tunnel = tunnel("tide", false, raw()).await;
+    let mut tasks = Vec::new();
+    for index in 0..32 {
+        let socks = tunnel.socks;
+        let echo = tunnel.echo;
+        tasks.push(tokio::spawn(async move {
+            let mut stream = socks_connect(socks, echo).await.unwrap();
+            round_trip(&mut stream, &payload(index as u8, 48 * 1024)).await;
+        }));
+    }
+    for task in tasks {
+        task.await.unwrap();
+    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

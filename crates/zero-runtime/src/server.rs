@@ -272,6 +272,35 @@ struct InboundRuntime {
     reality: Option<zero_security::tls13::server::RealityServerParams>,
     transport: Option<zero_transport::ws::WsConfig>,
     raw_http_header: Option<zero_transport::tcp_header::HttpHeaderConfig>,
+    tide: Option<Arc<TideInbound>>,
+}
+
+/// A Tide inbound's server. It outlives any one connection: a session's
+/// requests arrive on several connections, some of them after the one that
+/// opened it has gone.
+struct TideInbound {
+    server: Arc<zero_transport::tide::Server>,
+    /// Streams clients open, until the first connection starts the task that
+    /// routes them.
+    streams: StdMutex<Option<tokio::sync::mpsc::Receiver<zero_transport::tide::Incoming>>>,
+}
+
+impl TideInbound {
+    fn new(config: &zero_config::TideInboundConfig) -> Arc<Self> {
+        let users = crate::tide_users::load(config);
+        let (server, streams) =
+            zero_transport::tide::Server::new(zero_transport::tide::ServerConfig {
+                path: config.path.to_string(),
+                secret: config.secret,
+                admin: crate::tide_users::admin(config, &users),
+                users,
+                decoy: Default::default(),
+            });
+        Arc::new(Self {
+            server,
+            streams: StdMutex::new(Some(streams)),
+        })
+    }
 }
 
 impl InboundRuntime {
@@ -290,6 +319,7 @@ impl InboundRuntime {
                     private_key: reality.private_key,
                     server_names: reality.server_names.clone(),
                     short_ids: reality.short_ids.clone(),
+                    post_handshake: Default::default(),
                 })
             }
             _ => None,
@@ -316,6 +346,10 @@ impl InboundRuntime {
             tls,
             reality,
             transport,
+            tide: match &inbound.protocol {
+                InboundProtocol::Tide(config) => Some(TideInbound::new(config)),
+                _ => None,
+            },
             raw_http_header: inbound
                 .raw_http_header
                 .as_ref()
@@ -438,9 +472,12 @@ impl Server {
             state: arc_swap::ArcSwap::from_pointee(state),
             geodata,
             asset_status: Arc::new(StdMutex::new(Vec::new())),
-            planner: Arc::new(Mutex::new(zero_observatory::ConnectionPlanner::new(
-                b"zray-local-network-profile",
-            ))),
+            planner: Arc::new(Mutex::new({
+                let mut planner =
+                    zero_observatory::ConnectionPlanner::new(b"zray-local-network-profile");
+                planner.set_decoy_available(zero_evasion::decoy::any_available());
+                planner
+            })),
             health: Arc::new(StdMutex::new(zero_observatory::HealthTable::default())),
             clean_ip_results: Arc::new(StdMutex::new(Vec::new())),
             xhttp_hub: Arc::new(zero_transport::xhttp::SplitHub::new()),
@@ -545,15 +582,17 @@ impl Server {
     ) -> ServerState {
         let router = Self::build_router(&config, geodata);
         let client_resolver = Arc::new(zero_dns::Resolver::new(config.dns.clone()));
+        let resolver = Arc::new(client_resolver.without_fake());
+        let inbounds: Vec<_> = config
+            .inbounds
+            .iter()
+            .map(InboundRuntime::compile)
+            .collect();
+        learn_post_handshake(&config, &inbounds, &resolver);
         ServerState {
-            resolver: Arc::new(client_resolver.without_fake()),
+            resolver,
             client_resolver,
-            inbounds: config
-                .inbounds
-                .iter()
-                .map(InboundRuntime::compile)
-                .collect::<Vec<_>>()
-                .into(),
+            inbounds: inbounds.into(),
             config,
             router,
             generation,
@@ -1553,6 +1592,15 @@ impl Server {
             InboundProtocol::AnyTls(config) => {
                 return self.handle_anytls(stream, peer, id, tag, config).await;
             }
+            InboundProtocol::Tide(_) => {
+                let tide = session
+                    .state
+                    .inbounds
+                    .get(id.0 as usize)
+                    .and_then(|compiled| compiled.tide.clone())
+                    .ok_or_else(|| "inbound Tide configuration is missing".to_string())?;
+                return self.handle_tide(stream, id, tag, tide).await;
+            }
             InboundProtocol::Dokodemo {
                 target: Some(target),
                 network: Network::Tcp,
@@ -1709,6 +1757,7 @@ impl Server {
                     | OutboundProtocol::Shadowsocks(_)
                     | OutboundProtocol::Vmess(_)
                     | OutboundProtocol::AnyTls(_)
+                    | OutboundProtocol::Tide(_)
                     | OutboundProtocol::Hysteria2(_)
                     | OutboundProtocol::Tuic(_)
                     | OutboundProtocol::AmneziaWireguard(_) => {
@@ -1991,6 +2040,7 @@ impl Server {
                     | OutboundProtocol::Shadowsocks(_)
                     | OutboundProtocol::Vmess(_)
                     | OutboundProtocol::AnyTls(_)
+                    | OutboundProtocol::Tide(_)
                     | OutboundProtocol::Hysteria2(_)
                     | OutboundProtocol::Tuic(_)
                     | OutboundProtocol::AmneziaWireguard(_) => {
@@ -2376,6 +2426,7 @@ impl Server {
                     | OutboundProtocol::Shadowsocks(_)
                     | OutboundProtocol::Vmess(_)
                     | OutboundProtocol::AnyTls(_)
+                    | OutboundProtocol::Tide(_)
                     | OutboundProtocol::Hysteria2(_)
                     | OutboundProtocol::Tuic(_)
                     | OutboundProtocol::AmneziaWireguard(_) => {
@@ -2420,6 +2471,85 @@ impl Server {
             "VMess session finished"
         );
         Ok(())
+    }
+
+    /// Deal with a connection that did not authenticate. With a fallback
+    /// configured it is joined to that address, starting with every byte
+    /// already read from it, so whoever connected gets a real web server's
+    /// answer to whatever they sent. Without one it is closed with `reason`,
+    /// as before.
+    ///
+    /// This runs outside the handshake deadline on purpose: to the visitor it
+    /// is an ordinary connection to a website, and those last.
+    async fn fall_back(
+        &self,
+        fallback: Option<&(Address, u16)>,
+        stream: zero_core::BoxStream,
+        seen: Vec<u8>,
+        peer: SocketAddr,
+        reason: String,
+    ) -> Result<(), String> {
+        let Some((address, port)) = fallback else {
+            return Err(reason);
+        };
+        self.stats.failed.fetch_add(1, Ordering::Relaxed);
+        let destination = Destination::tcp(address.clone(), *port);
+        let mut remote = outbound::connect_direct_with_resolver(
+            &destination,
+            &zero_config::StreamSettings::default(),
+            &self.resolver(),
+        )
+        .await
+        .map_err(|error| {
+            format!("{reason}; and the fallback {destination} is unreachable: {error}")
+        })?;
+        remote
+            .write_all(&seen)
+            .await
+            .map_err(|error| format!("{reason}; and writing to the fallback failed: {error}"))?;
+        debug!(%peer, %reason, to = %destination, "unauthenticated connection handed to the fallback");
+        let _ = relay(stream, remote).await;
+        Ok(())
+    }
+
+    /// Serve one connection of a Tide inbound. The streams its sessions carry
+    /// are routed by a task of their own, started by the first connection,
+    /// because a session is not tied to the connection it arrived on.
+    async fn handle_tide(
+        self: Arc<Self>,
+        stream: zero_core::BoxStream,
+        id: InboundId,
+        tag: Arc<str>,
+        tide: Arc<TideInbound>,
+    ) -> Result<(), String> {
+        let streams = tide
+            .streams
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .take();
+        if let Some(mut streams) = streams {
+            let server = Arc::clone(&self);
+            tokio::spawn(async move {
+                // A session spans connections, so a stream has no one peer
+                // address; routing by source does not apply to it.
+                let peer = SocketAddr::from(([0, 0, 0, 0], 0));
+                while let Some((_user, destination, stream)) = streams.recv().await {
+                    let (server, tag) = (Arc::clone(&server), tag.clone());
+                    tokio::spawn(async move {
+                        if let Err(error) = server
+                            .handle_hysteria2(boxed(stream), peer, id, tag, destination)
+                            .await
+                        {
+                            debug!(%error, "Tide stream ended with an error");
+                        }
+                    });
+                }
+            });
+        }
+        tide.server
+            .serve_connection(stream)
+            .await
+            .map_err(|error| format!("Tide connection: {error}"))
     }
 
     async fn handle_anytls(
@@ -2479,6 +2609,7 @@ impl Server {
                     | OutboundProtocol::Shadowsocks(_)
                     | OutboundProtocol::Vmess(_)
                     | OutboundProtocol::AnyTls(_)
+                    | OutboundProtocol::Tide(_)
                     | OutboundProtocol::Hysteria2(_)
                     | OutboundProtocol::Tuic(_)
                     | OutboundProtocol::AmneziaWireguard(_) => {
@@ -2568,6 +2699,7 @@ impl Server {
                     | OutboundProtocol::Shadowsocks(_)
                     | OutboundProtocol::Vmess(_)
                     | OutboundProtocol::AnyTls(_)
+                    | OutboundProtocol::Tide(_)
                     | OutboundProtocol::Hysteria2(_)
                     | OutboundProtocol::Tuic(_)
                     | OutboundProtocol::AmneziaWireguard(_) => {
@@ -2898,13 +3030,20 @@ impl Server {
         tag: Arc<str>,
         config: &VlessInboundConfig,
     ) -> Result<(), String> {
-        let (mut request, consumed, buffered) =
-            within_handshake(read_vless_request(&mut stream)).await??;
-        let user = config
-            .users
-            .iter()
-            .find(|user| user.uuid == request.uuid)
-            .ok_or_else(|| "VLESS UUID is not authorised".to_string())?;
+        let fallback = config.fallback.as_ref();
+        let read = within_handshake(read_vless_request(&mut stream, fallback.is_some())).await?;
+        let (mut request, consumed, buffered) = match read {
+            Ok(read) => read,
+            Err((reason, seen)) => {
+                return self.fall_back(fallback, stream, seen, peer, reason).await
+            }
+        };
+        let Some(user) = config.users.iter().find(|user| user.uuid == request.uuid) else {
+            let reason = "VLESS UUID is not authorised".to_string();
+            return self
+                .fall_back(fallback, stream, buffered, peer, reason)
+                .await;
+        };
         let request_is_vision = request.flow.is_some();
         let user_is_vision = user.flow.is_vision();
         if request_is_vision != user_is_vision {
@@ -2974,6 +3113,7 @@ impl Server {
                     | OutboundProtocol::Shadowsocks(_)
                     | OutboundProtocol::Vmess(_)
                     | OutboundProtocol::AnyTls(_)
+                    | OutboundProtocol::Tide(_)
                     | OutboundProtocol::Hysteria2(_)
                     | OutboundProtocol::Tuic(_)
                     | OutboundProtocol::AmneziaWireguard(_) => {
@@ -3004,16 +3144,8 @@ impl Server {
             }
         };
 
-        debug!(%peer, vision = user_is_vision, "VLESS route connected; sending response header");
-        stream
-            .write_all(&[0, 0])
-            .await
-            .map_err(|error| format!("writing VLESS response: {error}"))?;
-        stream
-            .flush()
-            .await
-            .map_err(|error| format!("flushing VLESS response: {error}"))?;
-        debug!(%peer, "VLESS response header sent; starting relay");
+        debug!(%peer, vision = user_is_vision, "VLESS route connected; starting relay");
+        let stream = with_vless_response(stream);
         let client = ChainedStream::new(buffered[consumed..].to_vec(), stream);
         let client: zero_core::BoxStream = if user_is_vision {
             boxed(zero_protocol::vision::VisionStream::new_server(
@@ -3052,7 +3184,7 @@ impl Server {
 
     async fn handle_vless_mux_udp(
         self: Arc<Self>,
-        mut outer: ChainedStream,
+        outer: ChainedStream,
         first: zero_protocol::mux::Frame,
         peer: SocketAddr,
         id: InboundId,
@@ -3068,14 +3200,7 @@ impl Server {
             return Err("VLESS XUDP must start with a UDP NEW data frame".into());
         }
 
-        outer
-            .write_all(&[0, 0])
-            .await
-            .map_err(|error| format!("writing VLESS XUDP response: {error}"))?;
-        outer
-            .flush()
-            .await
-            .map_err(|error| format!("flushing VLESS XUDP response: {error}"))?;
+        let mut outer = with_vless_response(boxed(outer));
 
         let mut targets = HashMap::<u16, Destination>::new();
         let mut pending = Some(first);
@@ -3211,7 +3336,7 @@ impl Server {
 
     async fn handle_vless_mux(
         self: Arc<Self>,
-        mut outer: ChainedStream,
+        outer: ChainedStream,
         first: zero_protocol::mux::Frame,
         peer: SocketAddr,
         id: InboundId,
@@ -3228,14 +3353,7 @@ impl Server {
             .connect_vless_mux_target(&destination, peer, id, tag.clone())
             .await?;
 
-        outer
-            .write_all(&[0, 0])
-            .await
-            .map_err(|error| format!("writing VLESS Mux response: {error}"))?;
-        outer
-            .flush()
-            .await
-            .map_err(|error| format!("flushing VLESS Mux response: {error}"))?;
+        let outer = with_vless_response(boxed(outer));
 
         let server = self.clone();
         let route_tag = tag.clone();
@@ -3252,7 +3370,7 @@ impl Server {
                     })
             }
         };
-        zero_protocol::mux::relay_server_pool(boxed(outer), first, remote, route)
+        zero_protocol::mux::relay_server_pool(outer, first, remote, route)
             .await
             .map_err(|error| format!("VLESS Mux relay: {error}"))?;
         self.stats.succeeded.fetch_add(1, Ordering::Relaxed);
@@ -3291,6 +3409,7 @@ impl Server {
                     | OutboundProtocol::Shadowsocks(_)
                     | OutboundProtocol::Vmess(_)
                     | OutboundProtocol::AnyTls(_)
+                    | OutboundProtocol::Tide(_)
                     | OutboundProtocol::Hysteria2(_)
                     | OutboundProtocol::Tuic(_)
                     | OutboundProtocol::AmneziaWireguard(_) => {
@@ -3330,16 +3449,25 @@ impl Server {
         tag: Arc<str>,
         config: &zero_config::TrojanInboundConfig,
     ) -> Result<(), String> {
-        let (mut request, consumed, buffered) =
-            within_handshake(read_trojan_request(&mut stream)).await??;
-        request.destination = self.restore_fake_destination(&request.destination).await;
+        let fallback = config.fallback.as_ref();
+        let read = within_handshake(read_trojan_request(&mut stream, fallback.is_some())).await?;
+        let (mut request, consumed, buffered) = match read {
+            Ok(read) => read,
+            Err((reason, seen)) => {
+                return self.fall_back(fallback, stream, seen, peer, reason).await
+            }
+        };
         if !config
             .password_hashes
             .iter()
             .any(|candidate| candidate == &request.password_hash)
         {
-            return Err("Trojan password is not authorised".into());
+            let reason = "Trojan password is not authorised".to_string();
+            return self
+                .fall_back(fallback, stream, buffered, peer, reason)
+                .await;
         }
+        request.destination = self.restore_fake_destination(&request.destination).await;
         if request.destination.network == Network::Udp {
             return self
                 .handle_trojan_udp(stream, peer, id, tag, buffered[consumed..].to_vec())
@@ -3370,6 +3498,7 @@ impl Server {
                     | OutboundProtocol::Shadowsocks(_)
                     | OutboundProtocol::Vmess(_)
                     | OutboundProtocol::AnyTls(_)
+                    | OutboundProtocol::Tide(_)
                     | OutboundProtocol::Hysteria2(_)
                     | OutboundProtocol::Tuic(_)
                     | OutboundProtocol::AmneziaWireguard(_) => {
@@ -3498,6 +3627,7 @@ impl Server {
                     | OutboundProtocol::Shadowsocks(_)
                     | OutboundProtocol::Vmess(_)
                     | OutboundProtocol::AnyTls(_)
+                    | OutboundProtocol::Tide(_)
                     | OutboundProtocol::Hysteria2(_)
                     | OutboundProtocol::Tuic(_)
                     | OutboundProtocol::AmneziaWireguard(_) => {
@@ -3596,21 +3726,14 @@ impl Server {
 
     async fn handle_vless_udp(
         self: Arc<Self>,
-        mut stream: zero_core::BoxStream,
+        stream: zero_core::BoxStream,
         peer: SocketAddr,
         id: InboundId,
         tag: Arc<str>,
         destination: Destination,
         buffered: Vec<u8>,
     ) -> Result<(), String> {
-        stream
-            .write_all(&[0, 0])
-            .await
-            .map_err(|error| format!("writing VLESS UDP response: {error}"))?;
-        stream
-            .flush()
-            .await
-            .map_err(|error| format!("flushing VLESS UDP response: {error}"))?;
+        let stream = with_vless_response(stream);
         let (mut reader, writer) = tokio::io::split(ChainedStream::new(buffered, stream));
         let (mut udp, replies) =
             UdpRelay::<()>::new(Arc::clone(&self), id, tag, 4, self.sniff_policy(id));
@@ -5640,6 +5763,10 @@ fn replace_outbound_endpoint(outbound: &mut zero_config::Outbound, address: Addr
             config.address = address;
             config.port = port;
         }
+        OutboundProtocol::Tide(config) => {
+            config.address = address;
+            config.port = port;
+        }
         OutboundProtocol::Hysteria2(config) => {
             config.address = address;
             config.port = port;
@@ -5834,24 +5961,42 @@ fn ss2022_method(method: zero_config::ShadowsocksMethod) -> zero_protocol::shado
     }
 }
 
+/// Read a VLESS request header. On failure the bytes read so far come back
+/// with the reason, so a fallback can replay them.
+///
+/// `first_read_decides` is for an inbound with a fallback: a real client
+/// sends its whole header at once, so a first read that does not hold one is
+/// treated as a visitor straight away (Xray does the same) rather than waited
+/// on, which would leave a browser's request hanging.
 async fn read_vless_request<S: tokio::io::AsyncRead + Unpin>(
     stream: &mut S,
-) -> Result<(zero_protocol::vless::Request, usize, Vec<u8>), String> {
+    first_read_decides: bool,
+) -> Result<(zero_protocol::vless::Request, usize, Vec<u8>), (String, Vec<u8>)> {
     let mut buffered = Vec::with_capacity(256);
     let mut scratch = [0u8; 2048];
     loop {
-        let n = stream
-            .read(&mut scratch)
-            .await
-            .map_err(|error| format!("reading VLESS request: {error}"))?;
+        let n = match stream.read(&mut scratch).await {
+            Ok(n) => n,
+            Err(error) => return Err((format!("reading VLESS request: {error}"), buffered)),
+        };
         if n == 0 {
-            return Err("VLESS client closed before the request header".into());
+            return Err((
+                "VLESS client closed before the request header".into(),
+                buffered,
+            ));
         }
         buffered.extend_from_slice(&scratch[..n]);
-        match zero_protocol::vless::parse_request(&buffered)? {
+        let parsed = match zero_protocol::vless::parse_request(&buffered) {
+            Ok(parsed) => parsed,
+            Err(reason) => return Err((reason, buffered)),
+        };
+        match parsed {
             zero_protocol::vless::RequestParse::Incomplete => {
+                if first_read_decides {
+                    return Err(("VLESS request header is incomplete".into(), buffered));
+                }
                 if buffered.len() > 8192 {
-                    return Err("VLESS request header exceeds the limit".into());
+                    return Err(("VLESS request header exceeds the limit".into(), buffered));
                 }
             }
             zero_protocol::vless::RequestParse::Complete { request, consumed } => {
@@ -5861,24 +6006,42 @@ async fn read_vless_request<S: tokio::io::AsyncRead + Unpin>(
     }
 }
 
+/// Read a Trojan request header. On failure the bytes read so far come back
+/// with the reason, so a fallback can replay them.
+///
+/// `first_read_decides` is for an inbound with a fallback: a real client
+/// sends its whole header at once, so a first read that does not hold one is
+/// treated as a visitor straight away (Xray does the same) rather than waited
+/// on, which would leave a browser's request hanging.
 async fn read_trojan_request<S: tokio::io::AsyncRead + Unpin>(
     stream: &mut S,
-) -> Result<(zero_protocol::trojan::Request, usize, Vec<u8>), String> {
+    first_read_decides: bool,
+) -> Result<(zero_protocol::trojan::Request, usize, Vec<u8>), (String, Vec<u8>)> {
     let mut buffered = Vec::with_capacity(256);
     let mut scratch = [0u8; 2048];
     loop {
-        let n = stream
-            .read(&mut scratch)
-            .await
-            .map_err(|error| format!("reading Trojan request: {error}"))?;
+        let n = match stream.read(&mut scratch).await {
+            Ok(n) => n,
+            Err(error) => return Err((format!("reading Trojan request: {error}"), buffered)),
+        };
         if n == 0 {
-            return Err("Trojan client closed before the request header".into());
+            return Err((
+                "Trojan client closed before the request header".into(),
+                buffered,
+            ));
         }
         buffered.extend_from_slice(&scratch[..n]);
-        match zero_protocol::trojan::parse_request(&buffered)? {
+        let parsed = match zero_protocol::trojan::parse_request(&buffered) {
+            Ok(parsed) => parsed,
+            Err(reason) => return Err((reason, buffered)),
+        };
+        match parsed {
             zero_protocol::trojan::RequestParse::Incomplete => {
+                if first_read_decides {
+                    return Err(("Trojan request header is incomplete".into(), buffered));
+                }
                 if buffered.len() > 8192 {
-                    return Err("Trojan request header exceeds the limit".into());
+                    return Err(("Trojan request header exceeds the limit".into(), buffered));
                 }
             }
             zero_protocol::trojan::RequestParse::Complete { request, consumed } => {
@@ -6093,6 +6256,82 @@ fn asset_specs(assets: &zero_config::AssetsConfig) -> Vec<zero_router::AssetSpec
 /// deliberately not protected: it listens for datagrams from applications on
 /// this device, and exempting it from the tunnel would move it off the
 /// interface those applications reach it on.
+/// REALITY server names looked up per inbound. A config lists a handful; this
+/// keeps a pathological one from opening a connection per name at start.
+const POST_HANDSHAKE_NAMES: usize = 8;
+
+/// Ask each REALITY inbound's camouflage site what it sends straight after a
+/// handshake, in the background, and file the answer where the inbound's
+/// handshakes will find it (see [`zero_security::tls13::post_handshake`]).
+///
+/// Nothing waits on this. Until a site has answered, and for good if it never
+/// does, the inbound sends no extra records after its handshakes for that
+/// name, which is how every inbound behaved before.
+fn learn_post_handshake(
+    config: &RuntimeConfig,
+    inbounds: &[InboundRuntime],
+    resolver: &Arc<zero_dns::Resolver>,
+) {
+    // Built outside a runtime (some tests do): there is nowhere to run it.
+    let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+        return;
+    };
+    for (inbound, compiled) in config.inbounds.iter().zip(inbounds) {
+        let (zero_config::InboundSecurity::Reality(reality), Some(params)) =
+            (&inbound.security, &compiled.reality)
+        else {
+            continue;
+        };
+        let Some((address, port)) = reality.target.clone() else {
+            continue;
+        };
+        let names = reality.server_names.iter().filter(|name| !name.is_empty());
+        for name in names.take(POST_HANDSHAKE_NAMES) {
+            let name = name.clone();
+            let shapes = Arc::clone(&params.post_handshake);
+            let resolver = Arc::clone(resolver);
+            let destination = Destination::tcp(address.clone(), port);
+            runtime.spawn(async move {
+                let learned = timeout(Duration::from_secs(15), async {
+                    let site = outbound::connect_direct_with_resolver(
+                        &destination,
+                        &zero_config::StreamSettings::default(),
+                        &resolver,
+                    )
+                    .await?;
+                    zero_security::tls13::post_handshake::observe(site, &name).await
+                })
+                .await;
+                match learned {
+                    Ok(Ok(sizes)) => {
+                        debug!(%name, ?sizes, "REALITY target's post-handshake records learned");
+                        shapes.set(&name, &sizes);
+                    }
+                    Ok(Err(error)) => warn!(
+                        %name, %error,
+                        "REALITY target did not complete a handshake; this inbound will not copy its session tickets. Check that the target serves this name."
+                    ),
+                    Err(_) => warn!(
+                        %name,
+                        "REALITY target did not answer in time; this inbound will not copy its session tickets. Check that the server can reach the target."
+                    ),
+                }
+            });
+        }
+    }
+}
+
+/// Put the two-byte VLESS response header in front of the first thing sent
+/// back on `stream`, instead of sending it as a tiny packet of its own. The
+/// client cannot use the header before that payload arrives anyway. See
+/// [`zero_protocol::first_flight`].
+fn with_vless_response(stream: zero_core::BoxStream) -> zero_core::BoxStream {
+    boxed(zero_protocol::first_flight::HeaderFirst::hold(
+        stream,
+        vec![0, 0],
+    ))
+}
+
 async fn bind_outbound_udp(ipv4: bool) -> Result<UdpSocket, String> {
     let bind: SocketAddr = if ipv4 {
         "0.0.0.0:0".parse().expect("a literal bind address")

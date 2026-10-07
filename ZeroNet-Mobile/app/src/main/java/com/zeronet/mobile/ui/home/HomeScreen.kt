@@ -410,7 +410,8 @@ private fun ServerCard(state: HomeState, onClick: () -> Unit) {
 @Composable
 private fun CdnNotice(cdn: String) {
     val text = when (cdn) {
-        "fragment" -> R.string.cdn_throttled_split
+        "fragment", "emptyrecord" -> R.string.cdn_throttled_split
+        "decoy", "urgent" -> R.string.cdn_decoy
         "ech" -> R.string.cdn_throttled_ech
         "blocked" -> R.string.cdn_blocked
         else -> return

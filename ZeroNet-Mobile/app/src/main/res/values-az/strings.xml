@@ -336,6 +336,19 @@
     <string name="settings_evasion_off_hint">Adi bağlantılar. Ən sürətli, amma bloklamaq daha asan.</string>
     <string name="settings_evasion_auto_hint">Adi qoşulur, server bloklananda əl sıxmanı bölür. Şəbəkənizdə başqalarında işləyən üsulla başlayır.</string>
     <string name="settings_evasion_strong_hint">Trafiki həmişə maskalayır. Bir az yavaş, amma bloklamaq çox çətin.</string>
+    <string name="settings_decoy">Server adını gizlət (SNI)</string>
+    <string name="settings_decoy_off_hint">Server adı heç vaxt gizlədilmir.</string>
+    <string name="settings_decoy_auto_hint">Server adı yalnız bağlantı adına görə kəsiləndə süzgəcdən gizlədilir.</string>
+    <string name="settings_decoy_always_hint">Hər bağlantı server adını süzgəcdən gizlədir. Bəzi telefonlarda hər biri təxminən yarım saniyə gec başlayır.</string>
+    <string name="option_always">Həmişə</string>
+    <string name="settings_decoy_test">Bu telefonda yoxla</string>
+    <string name="decoy_test_running">Yoxlanılır…</string>
+    <string name="decoy_test_unsupported">Bu telefon server adını gizlədə bilmir; sistemi icazə vermir. ZeroNet əvəzində digər üsullarından istifadə edir.</string>
+    <string name="decoy_test_broken">Bu telefon adı gizlətməyə çalışdı, amma telefonun içindəki yoxlamada bağlantı düzgün çatmadı, ona görə burada ona güvənmək olmaz.</string>
+    <string name="decoy_test_works">İşləyir: bu şəbəkə süzülən adı kəsdi, eyni ad isə gizli halda keçdi.</string>
+    <string name="decoy_test_not_needed">Adın gizlədilməsi bu telefonda işləyir. Bu şəbəkə indi yoxlama adlarını kəsmədi, ona görə keçiləsi bir şey yox idi.</string>
+    <string name="decoy_test_blocked">Adın gizlədilməsi bu telefonda işləyir, amma bu şəbəkə yoxlama adlarını yenə də kəsdi.</string>
+    <string name="decoy_test_offline">Adın gizlədilməsi bu telefonda işləyir. Yoxlama saytlarına çatmaq olmadı, ona görə şəbəkə hissəsi yoxlanmadı.</string>
     <string name="settings_block_quic">QUIC-i blokla</string>
     <string name="settings_block_quic_hint">Tətbiqlər donmaq əvəzinə TCP-yə keçir</string>
     <string name="settings_remote_dns">Bloklanmış saytlar üçün DNS</string>
@@ -520,6 +533,7 @@
     <string name="settings_speed_floor_adaptive_hint">Sürətinizi öyrənir və son serverlərinizdən xeyli yavaş olanı buraxır</string>
     <string name="cdn_throttled_split">Cloudflare bu şəbəkədə məhdudlaşdırılır; keçmək üçün əl sıxma bölünür.</string>
     <string name="cdn_throttled_ech">Cloudflare bu şəbəkədə məhdudlaşdırılır; keçmək üçün server adı gizlədilir.</string>
+    <string name="cdn_decoy">Cloudflare bu şəbəkədə ada görə süzülür; keçmək üçün server adı süzgəcdən gizlədilir.</string>
     <string name="cdn_blocked">Cloudflare CDN konfiqurasiyaları bu şəbəkədə işləmir, ona görə keçilir.</string>
     <string name="warp_open">Cloudflare WARP hesabı əldə et</string>
     <string name="warp_title">Cloudflare WARP</string>

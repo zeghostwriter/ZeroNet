@@ -1016,21 +1016,25 @@ fn request_header(
 }
 
 /// Write a VMess client request and return the framed stream.
+/// Prepare a VMess client stream for `destination`.
+///
+/// The request header is not written here. It leaves in the same carrier
+/// write as the first data chunk, so the connection does not open with a
+/// header-only packet; a caller that reads first gets it sent alone after a
+/// short wait (see [`crate::first_flight`]).
 pub async fn client_handshake<S>(
-    mut inner: S,
+    inner: S,
     uuid: [u8; 16],
     cipher: Cipher,
     destination: &Destination,
-) -> io::Result<Stream<S>>
+) -> io::Result<Stream<crate::first_flight::HeaderFirst<S>>>
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
     let (request, data_key, data_iv, response_key, response_iv, response_auth, options) =
         request_header(&uuid, cipher, destination)?;
-    tokio::io::AsyncWriteExt::write_all(&mut inner, &request).await?;
-    tokio::io::AsyncWriteExt::flush(&mut inner).await?;
     Ok(Stream::new_client(
-        inner,
+        crate::first_flight::HeaderFirst::new(inner, request),
         cipher.actual(),
         data_key,
         data_iv,
@@ -1406,12 +1410,13 @@ mod tests {
         let mut client = client_handshake(client_io, uuid(), Cipher::Aes128Gcm, &destination)
             .await
             .unwrap();
+        // The request header travels with the first payload, so the server
+        // has nothing to accept until the client has written.
+        client.write_all(b"hello from client").await.unwrap();
+        client.flush().await.unwrap();
         let accepted = server.await.unwrap().unwrap();
         assert_eq!(accepted.destination, destination);
         let mut server_stream = accepted.stream;
-
-        client.write_all(b"hello from client").await.unwrap();
-        client.flush().await.unwrap();
         let mut received = vec![0u8; 17];
         server_stream.read_exact(&mut received).await.unwrap();
         assert_eq!(&received, b"hello from client");
@@ -1435,12 +1440,13 @@ mod tests {
         let mut client = client_handshake(client_io, uuid(), Cipher::Aes128Gcm, &destination)
             .await
             .unwrap();
+        // The request header travels with the first payload, so the server
+        // has nothing to accept until the client has written.
+        client.write_all(b"dns-query").await.unwrap();
+        client.flush().await.unwrap();
         let accepted = server.await.unwrap().unwrap();
         assert_eq!(accepted.destination, destination);
         let mut server_stream = accepted.stream;
-
-        client.write_all(b"dns-query").await.unwrap();
-        client.flush().await.unwrap();
         let mut received = [0u8; 9];
         server_stream.read_exact(&mut received).await.unwrap();
         assert_eq!(&received, b"dns-query");
@@ -1542,6 +1548,8 @@ mod tests {
         let mut client = client_handshake(client_io, uuid(), Cipher::Aes128Gcm, &destination)
             .await
             .unwrap();
+        client.write_all(b"request").await.unwrap();
+        client.flush().await.unwrap();
         let mut request = vec![0u8; 4096];
         let _ = server_io.read(&mut request).await.unwrap();
         let wrong = client.response_auth.wrapping_add(1);
@@ -1554,6 +1562,23 @@ mod tests {
         server_io.write_all(&prefix).await.unwrap();
         let mut buf = [0u8; 8];
         assert!(client.read(&mut buf).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn the_request_header_and_the_first_chunk_are_one_carrier_write() {
+        use crate::first_flight::tests::Chunks;
+        let destination = Destination::tcp(Address::domain("example.com"), 443);
+        let (header, ..) = request_header(&uuid(), Cipher::Aes128Gcm, &destination).unwrap();
+        let mut client =
+            client_handshake(Chunks::default(), uuid(), Cipher::Aes128Gcm, &destination)
+                .await
+                .unwrap();
+        client.write_all(&[7u8; 300]).await.unwrap();
+        client.flush().await.unwrap();
+        let (carrier, held) = client.inner.parts();
+        assert!(held.is_empty(), "nothing is still held back");
+        assert_eq!(carrier.writes.len(), 1);
+        assert!(carrier.writes[0].len() > header.len() + 300);
     }
 
     #[test]

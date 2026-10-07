@@ -55,6 +55,18 @@ enum class AppFilterMode { All, OnlySelected, AllExceptSelected }
 enum class EvasionLevel { Off, Auto, Strong }
 
 /**
+ * Hiding the server name (SNI) from a filter that reads it. The core has two
+ * ways of doing it and picks what the phone can do: an extra byte the server
+ * drops and the filter does not, or a harmless name sent ahead of the real
+ * one.
+ *
+ * [Auto] (default) leaves it to the core, which turns to it when a
+ * connection is cut off by name; [Always] does it on every connection;
+ * [Off] never does.
+ */
+enum class DecoyMode { Off, Auto, Always }
+
+/**
  * Slowest download ZeroNet tolerates before moving to another server.
  *
  * Only real traffic is measured: a config counts as slow while the phone is
@@ -140,6 +152,7 @@ data class Settings(
     val lanPass: String = "",
     // Anti-censorship
     val evasion: EvasionLevel = EvasionLevel.Auto,
+    val sniDecoy: DecoyMode = DecoyMode.Auto,
     val blockQuic: Boolean = true,
     val remoteDns: RemoteDns = RemoteDns.Auto,
     /** A user-supplied resolver that overrides [remoteDns] when non-blank.
@@ -220,6 +233,7 @@ data class Settings(
         .put("lanUser", lanUser)
         .put("lanPass", lanPass)
         .put("evasion", evasion.name)
+        .put("sniDecoy", sniDecoy.name)
         .put("blockQuic", blockQuic)
         .put("remoteDns", remoteDns.name)
         .put("remoteDnsChosen", true)
@@ -282,6 +296,7 @@ data class Settings(
                 lanUser = o.optString("lanUser", d.lanUser),
                 lanPass = o.optString("lanPass", d.lanPass),
                 evasion = o.enumOr("evasion", d.evasion),
+                sniDecoy = o.enumOr("sniDecoy", d.sniDecoy),
                 blockQuic = o.optBoolean("blockQuic", d.blockQuic),
                 // Google saved before "Auto" existed was the old default;
                 // move it once. A choice saved since is kept.
