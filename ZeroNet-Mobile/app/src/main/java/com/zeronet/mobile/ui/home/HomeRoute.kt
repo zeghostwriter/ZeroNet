@@ -46,6 +46,7 @@ import com.zeronet.mobile.ui.components.IconBadge
 import com.zeronet.mobile.ui.components.RowShape
 import com.zeronet.mobile.ui.components.SectionTitle
 import com.zeronet.mobile.ui.components.ZeroSheet
+import com.zeronet.mobile.ui.components.PrimaryButton
 import com.zeronet.mobile.ui.icons.ZeroIcons
 import com.zeronet.mobile.ui.model.CountryGroup
 import com.zeronet.mobile.ui.model.countryLabel
@@ -80,7 +81,11 @@ fun HomeRoute() {
             SubscriptionRow(sub.id, sub.name.ifBlank { null }, own.size, own.filter { it.delayMs >= 0 }.minOfOrNull { it.delayMs } ?: -1)
         }
     }
-    val targetSubscription = remember(target, subscriptionRows) { (target as? ConnectTarget.Subscription)?.let { t -> subscriptionRows.firstOrNull { it.id == t.id } } }
+    // The chosen lists that still exist: one, or several searched together.
+    val targetSubscriptions = remember(target, subscriptionRows) {
+        (target as? ConnectTarget.Subscription)?.let { t -> subscriptionRows.filter { it.id in t.ids } }.orEmpty()
+    }
+    val unnamed = stringResource(R.string.source_subscription)
     var picker by rememberSaveable { mutableStateOf(false) }
 
     HomeScreen(
@@ -90,8 +95,8 @@ fun HomeRoute() {
             target = target,
             targetServer = targetServer,
             targetCountryDelay = countryDelay,
-            targetSubscription = targetSubscription?.name,
-            targetSubscriptionDelay = targetSubscription?.bestDelay ?: -1,
+            targetSubscription = targetSubscriptions.takeIf { it.isNotEmpty() }?.joinToString(", ") { it.name ?: unnamed },
+            targetSubscriptionDelay = targetSubscriptions.filter { it.bestDelay >= 0 }.minOfOrNull { it.bestDelay } ?: -1,
             profile = settings.profile,
             race = race,
         ),
@@ -144,6 +149,11 @@ fun ServerPickerSheet(
             color = c.text,
             modifier = Modifier.padding(horizontal = 24.dp).padding(bottom = 8.dp),
         )
+        // Lists are chosen several at a time and searched together; this is
+        // the choice being made, starting from the one in use.
+        var chosen by remember(visible, target) {
+            mutableStateOf((target as? ConnectTarget.Subscription)?.ids?.toSet().orEmpty())
+        }
         LazyColumn(
             modifier = Modifier.weight(1f, fill = false),
             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
@@ -160,16 +170,37 @@ fun ServerPickerSheet(
             }
             if (subscriptions.isNotEmpty()) {
                 item(key = "subs_title", contentType = "title") { SectionTitle(stringResource(R.string.picker_subscriptions), Modifier.padding(start = 8.dp, top = 8.dp)) }
+                if (subscriptions.size > 1) {
+                    item(key = "subs_hint", contentType = "hint") {
+                        Text(
+                            stringResource(R.string.picker_lists_hint),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = c.muted,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                        )
+                    }
+                }
                 items(subscriptions, key = { "sub_" + it.id }, contentType = { "row" }) { sub ->
                     PickerRow(
-                        selected = target == ConnectTarget.Subscription(sub.id),
+                        selected = sub.id in chosen,
                         leading = { IconBadge(ZeroIcons.Link) },
                         title = sub.name ?: stringResource(R.string.source_subscription),
                         subtitle = androidx.compose.ui.res.pluralStringResource(R.plurals.servers_count, sub.count, Num.int(sub.count, locale)),
                         trailing = if (sub.bestDelay >= 0) formatDelay(context, sub.bestDelay, locale) else null,
                         trailingColor = c.delayColor(sub.bestDelay),
-                        onClick = { onSelect(ConnectTarget.Subscription(sub.id)) },
+                        onClick = { chosen = if (sub.id in chosen) chosen - sub.id else chosen + sub.id },
                     )
+                }
+                val pick = ConnectTarget.Subscription.of(chosen.filter { id -> subscriptions.any { it.id == id } })
+                if (pick != null) {
+                    item(key = "subs_use", contentType = "action") {
+                        PrimaryButton(
+                            androidx.compose.ui.res.pluralStringResource(R.plurals.picker_use_lists, pick.ids.size, Num.int(pick.ids.size, locale)),
+                            onClick = { onSelect(pick) },
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp),
+                            icon = ZeroIcons.Bolt,
+                        )
+                    }
                 }
             }
             if (mine.isNotEmpty()) {
