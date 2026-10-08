@@ -32,7 +32,7 @@ jobs:
     timeout-minutes: 15
     steps:
       # First: the relay's address comes from its wrangler.toml.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: find the relays
         id: relays
         env:
