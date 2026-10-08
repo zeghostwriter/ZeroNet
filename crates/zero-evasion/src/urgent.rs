@@ -145,6 +145,7 @@ impl<S: AsyncRead + Unpin> AsyncRead for UrgentStream<S> {
 
 /// How far into a connection [`ReadPastMark`] keeps watching for the mark:
 /// the urgent byte only ever sits in the ClientHello, which is far shorter.
+#[cfg(any(target_os = "linux", target_os = "android"))]
 const MARK_WINDOW: u64 = 16 * 1024;
 
 /// The server side of the urgent byte: a TCP stream whose reads go on past
@@ -156,7 +157,7 @@ const MARK_WINDOW: u64 = 16 * 1024;
 /// already has: so a tokio server (Zray's own inbounds) sat on a hello
 /// carrying an urgent byte until the client gave up. This wrapper asks the
 /// kernel once more, without waiting, after every short read in the first
-/// [`MARK_WINDOW`] bytes, which picks up whatever lies past the mark. After
+/// 16 KiB, which picks up whatever lies past the mark. After
 /// that window it adds nothing but a comparison, so bulk traffic is untouched.
 pub struct ReadPastMark<S> {
     inner: S,
