@@ -27,6 +27,7 @@ pub mod decoy_check;
 pub mod discover;
 pub mod events;
 pub mod feed;
+pub mod github;
 pub mod glyph;
 pub mod json_subscription;
 pub mod link;

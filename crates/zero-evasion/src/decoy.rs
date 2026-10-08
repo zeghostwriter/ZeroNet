@@ -21,9 +21,11 @@
 //!    page again, and this time sends the real hello.
 //!
 //! The filter saw an allowed name first; the server only ever saw the real
-//! one. The price is one retransmission timeout per connection, measured at
-//! 0.7 to 1.5 seconds, so this is something to turn on where it is needed and
-//! not a default.
+//! one. The price is the resend: the kernel only sends the real hello once
+//! the server has said it is missing, about one round trip more per
+//! connection (0.3 s from Tehran, where the whole plain handshake takes
+//! 0.35 s). So this is something to use where it is needed, not a default:
+//! `crate::choice` keeps it for the servers that need it.
 //!
 //! Measured 2026-10-07 from Tehran (Zi-Tel) against Cloudflare's edge, 2 tries
 //! each: `x.pages.dev` 0 as is and 2 this way, `engage.cloudflareclient.com`
@@ -162,6 +164,18 @@ fn decoy_name(base: &str, len: usize) -> Vec<u8> {
     name
 }
 
+/// How many segments the rest of the hello is sent in, after the decoy.
+///
+/// The server drops the decoy, so everything after it arrives with a hole in
+/// front, and each piece makes the server say so (a SACK). Linux waits a
+/// quarter of a round trip after the first such report in case the hole is
+/// only reordering, but marks the hole lost at once from the third report on
+/// (its reordering threshold). Three pieces take that wait off every decoy
+/// connection: about 40 ms in a trace from Tehran, where a round trip is
+/// about 170 ms.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+const TAIL_PIECES: u8 = 3;
+
 /// A TCP stream whose first write, when it is a TLS ClientHello, goes out
 /// behind a decoy naming `base` (see the module text). Every other write and
 /// every read passes straight through.
@@ -181,6 +195,10 @@ enum State {
     /// The decoy has been handed to the kernel and is on its way out.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     Leaving(sys::Leaving),
+    /// The decoy is out; the rest of the hello goes in this many separate
+    /// writes (see [`TAIL_PIECES`]).
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    Tail(u8),
     /// The first write is over; the stream is an ordinary one from here.
     Plain,
 }
@@ -220,8 +238,24 @@ impl<S: AsyncWrite + Unpin + std::os::fd::AsRawFd> AsyncWrite for DecoyStream<S>
         match &mut this.state {
             State::Leaving(leaving) => {
                 let sent = std::task::ready!(leaving.poll_finish(cx));
-                this.state = State::Plain;
+                this.state = State::Tail(TAIL_PIECES);
                 Poll::Ready(Ok(sent))
+            }
+            State::Tail(left) => {
+                // An even share of what is left; the caller comes back for
+                // the rest, and each call is its own segment (the socket has
+                // no Nagle delay).
+                let share = buf.len().div_ceil(usize::from(*left)).max(1);
+                let written = std::task::ready!(
+                    Pin::new(&mut this.inner).poll_write(cx, &buf[..share.min(buf.len())])
+                );
+                if written.is_ok() {
+                    this.state = match *left {
+                        0..=1 => State::Plain,
+                        more => State::Tail(more - 1),
+                    };
+                }
+                Poll::Ready(written)
             }
             _ => Pin::new(&mut this.inner).poll_write(cx, buf),
         }

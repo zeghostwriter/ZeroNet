@@ -358,13 +358,16 @@ impl InboundRuntime {
     }
 }
 
+/// An accepted TCP connection as the inbound security layer reads it.
+type InboundTcp = zero_evasion::ReadPastMark<tokio::net::TcpStream>;
+
 /// What terminating an inbound's security layer produced.
 enum Secured {
     Stream(zero_core::BoxStream),
     /// An unauthenticated REALITY client, to be handed to the camouflage
     /// target with the ClientHello it already sent.
     Fallback {
-        stream: tokio::net::TcpStream,
+        stream: InboundTcp,
         client_hello: Vec<u8>,
         failure: String,
     },
@@ -968,6 +971,10 @@ impl Server {
             return;
         };
 
+        // A client may hide its server name with an urgent byte
+        // (`zero_evasion::urgent`); reading on past the mark keeps such a
+        // hello from stalling here.
+        let stream = zero_evasion::ReadPastMark::new(stream);
         let secured = match timeout(
             HANDSHAKE_TIMEOUT,
             Self::secure_inbound(stream, &inbound.security, compiled),
@@ -1056,7 +1063,7 @@ impl Server {
 
     /// Terminate the inbound's TLS or REALITY layer.
     async fn secure_inbound(
-        stream: tokio::net::TcpStream,
+        stream: InboundTcp,
         security: &zero_config::InboundSecurity,
         compiled: &InboundRuntime,
     ) -> Result<Secured, String> {
@@ -1106,7 +1113,7 @@ impl Server {
     /// handshake deadline: to the prober it is an ordinary long-lived session.
     async fn relay_reality_fallback(
         &self,
-        stream: tokio::net::TcpStream,
+        stream: InboundTcp,
         client_hello: Vec<u8>,
         failure: String,
         peer: SocketAddr,

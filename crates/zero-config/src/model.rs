@@ -415,8 +415,10 @@ pub struct SniDesyncConfig {
 /// The ways of keeping a server name from a filter that reads it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SniMethod {
-    /// A decoy ClientHello where this device can send one, and the urgent
-    /// byte where it cannot. What a configuration gets when it names none.
+    /// The urgent byte, which costs nothing, and a decoy ClientHello only
+    /// towards a server the urgent byte went unanswered at, or where the
+    /// device cannot send the urgent byte (`zero_evasion::choice`). What a
+    /// configuration gets when it names none.
     #[default]
     Auto,
     /// A decoy ClientHello naming `fake_sni`, sent ahead of the real one
