@@ -144,6 +144,10 @@ data class Settings(
     val bypassLan: Boolean = true,
     val appFilter: AppFilterMode = AppFilterMode.All,
     val filteredApps: Set<String> = emptySet(),
+    /** The user's own routing profiles (see [RoutingProfile]). */
+    val routingProfiles: List<RoutingProfile> = emptyList(),
+    /** The name of the profile in use; empty for none. */
+    val routingProfile: String = "",
     // Sharing
     val lanShare: Boolean = false,
     val socksPort: Int = 10808,
@@ -194,6 +198,10 @@ data class Settings(
     fun trustedLabel(networkId: String?): String =
         trustedNetworks.firstOrNull { it.substringBefore('|') == networkId }?.substringAfter('|').orEmpty()
 
+    /** The rules of the profile in use, in order; none when no profile is. */
+    val activeRoutingRules: List<RoutingRule>
+        get() = routingProfiles.firstOrNull { routingProfile.isNotEmpty() && it.name == routingProfile }?.rules.orEmpty()
+
     val speedFloorBytes: Long
         get() = when (speedFloor) {
             SpeedFloor.Off -> 0L
@@ -227,6 +235,8 @@ data class Settings(
         .put("bypassLan", bypassLan)
         .put("appFilter", appFilter.name)
         .put("filteredApps", JSONArray(filteredApps.toList()))
+        .put("routingProfiles", JSONArray(routingProfiles.map { it.toJson() }))
+        .put("routingProfile", routingProfile)
         .put("lanShare", lanShare)
         .put("socksPort", socksPort)
         .put("httpPort", httpPort)
@@ -290,6 +300,8 @@ data class Settings(
                 bypassLan = o.optBoolean("bypassLan", d.bypassLan),
                 appFilter = o.enumOr("appFilter", d.appFilter),
                 filteredApps = o.strings("filteredApps").toSet(),
+                routingProfiles = RoutingProfile.listFromJson(o.optJSONArray("routingProfiles")),
+                routingProfile = o.optString("routingProfile", d.routingProfile),
                 lanShare = o.optBoolean("lanShare", d.lanShare),
                 socksPort = o.optInt("socksPort", d.socksPort).coerceIn(1024, 65535),
                 httpPort = o.optInt("httpPort", d.httpPort).coerceIn(1024, 65535),

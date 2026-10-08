@@ -412,7 +412,7 @@ fun CountriesSheet(visible: Boolean, s: Settings, knownCountries: List<String>, 
 }
 
 @Composable
-private fun CheckMark(checked: Boolean) {
+internal fun CheckMark(checked: Boolean) {
     val c = ZeroTheme.colors
     Box(
         Modifier
@@ -428,10 +428,10 @@ private fun CheckMark(checked: Boolean) {
 // ------------------------------------------------------------------ apps
 
 @Immutable
-private data class AppEntry(val pkg: String, val label: String)
+internal data class AppEntry(val pkg: String, val label: String)
 
 /** Launchable apps (the manifest's <queries> allows exactly these), sorted by name. */
-private fun loadApps(pm: PackageManager, self: String): List<AppEntry> {
+internal fun loadApps(pm: PackageManager, self: String): List<AppEntry> {
     val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
     val infos = if (Build.VERSION.SDK_INT >= 33) {
         pm.queryIntentActivities(intent, PackageManager.ResolveInfoFlags.of(0))
@@ -513,7 +513,7 @@ fun AppPickerSheet(visible: Boolean, s: Settings, actions: SettingsActions, onDi
 }
 
 @Composable
-private fun AppIcon(pkg: String) {
+internal fun AppIcon(pkg: String) {
     val context = LocalContext.current
     val c = ZeroTheme.colors
     val density = androidx.compose.ui.platform.LocalDensity.current

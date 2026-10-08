@@ -2,6 +2,7 @@
 
 pub mod assets;
 pub mod matcher;
+pub mod process;
 pub mod router;
 
 pub use assets::{AssetKind, AssetPolicy, AssetSpec, AssetStore, RefreshOutcome};

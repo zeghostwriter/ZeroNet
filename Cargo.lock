@@ -4384,6 +4384,7 @@ dependencies = [
  "zero-config",
  "zero-core",
  "zero-discovery",
+ "zero-router",
  "zero-runtime",
  "zero-tun",
 ]

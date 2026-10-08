@@ -77,6 +77,8 @@ pub enum ComponentId {
     SettingMuxConcurrency,
     SettingSniffingToggle,
     SettingDomainStrategyCycle,
+    /// Opens the routing profile editor.
+    SettingRoutingProfiles,
     SettingTcpCongestionCycle,
     SettingAntiCensorshipCycle,
     SettingIpv6Toggle,

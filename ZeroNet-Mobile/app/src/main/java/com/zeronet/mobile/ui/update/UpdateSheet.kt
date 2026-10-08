@@ -17,6 +17,8 @@ import androidx.compose.animation.scaleIn
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -128,8 +130,15 @@ fun UpdateSheet(visible: Boolean, state: UpdateState, actions: UpdateActions) {
     ) {
         if (release == null || phase == null) return@ZeroSheet
         val c = ZeroTheme.colors
+        // Everything above the buttons scrolls in whatever height the sheet
+        // has left, so a long list of changes can never push the buttons off
+        // the bottom of the screen.
         Column(
-            Modifier.fillMaxWidth().padding(horizontal = 24.dp).padding(bottom = 8.dp),
+            Modifier
+                .weight(1f, fill = false)
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 24.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             // Motion specs are read here: transition lambdas are not composable.
@@ -182,7 +191,8 @@ fun UpdateSheet(visible: Boolean, state: UpdateState, actions: UpdateActions) {
                 }
             }
             Spacer(Modifier.height(20.dp))
-
+        }
+        Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp).padding(bottom = 8.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 when (phase) {
                     Phase.Offer -> {

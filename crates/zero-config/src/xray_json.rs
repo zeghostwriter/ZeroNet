@@ -3505,6 +3505,13 @@ fn parse_rule(v: &Value, idx: usize, out: &mut ParseOutput) -> R<Rule> {
     if let Some(a) = v.get("protocol").and_then(Value::as_array) {
         rule.protocols = a.iter().filter_map(Value::as_str).map(Box::from).collect();
     }
+    if let Some(a) = v.get("process").and_then(Value::as_array) {
+        rule.processes = a
+            .iter()
+            .filter_map(Value::as_str)
+            .filter_map(routing::ProcessPattern::parse)
+            .collect();
+    }
 
     if rule.is_unconditional() {
         out.note(path, "rule has no selectors and will match every session");

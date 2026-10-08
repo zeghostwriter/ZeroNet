@@ -19,9 +19,9 @@ const LABEL_WIDTH: usize = 28;
 const VALUE_WIDTH: usize = 20;
 
 /// Rows when Advanced is folded: four headings plus the everyday settings.
-pub(crate) const SETTINGS_ROWS_BASIC: usize = 32;
+pub(crate) const SETTINGS_ROWS_BASIC: usize = 33;
 /// Rows when Advanced is open, including the edge-scanner block.
-pub(crate) const SETTINGS_ROWS: usize = 62;
+pub(crate) const SETTINGS_ROWS: usize = 63;
 
 impl UiRenderer<'_> {
     /// Total lines the settings page needs, for the scrollbar.
@@ -228,6 +228,23 @@ impl UiRenderer<'_> {
             &self.settings.domain_strategy.to_uppercase(),
             self.theme.accent_bright,
             "click to cycle",
+        );
+        let (profile, profile_color) = if self.settings.routing_profile.is_empty() {
+            ("NONE".to_string(), self.theme.muted)
+        } else {
+            (
+                truncate(&self.settings.routing_profile, 18),
+                self.theme.accent_bright,
+            )
+        };
+        self.value_row(
+            frame,
+            row(),
+            ComponentId::SettingRoutingProfiles,
+            "Routing Profile",
+            &profile,
+            profile_color,
+            "your own direct / proxy / block rules",
         );
         self.value_row(
             frame,

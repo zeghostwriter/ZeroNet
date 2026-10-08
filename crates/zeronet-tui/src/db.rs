@@ -133,6 +133,10 @@ pub struct AppSettings {
     /// desync). Sent with a raw socket or from the connection itself; where the
     /// system allows neither the decoy is skipped.
     pub sni_spoof: bool,
+    /// Every routing profile, as JSON (`crate::routing_profile`).
+    pub routing_profiles: String,
+    /// The name of the active routing profile; empty for none.
+    pub routing_profile: String,
     /// Install the default routes over TUN.
     pub tun_auto_route: bool,
     /// Also block traffic that tries to leave around the tunnel.
@@ -226,6 +230,8 @@ impl Default for AppSettings {
             utls_fingerprint: "chrome".into(),
             fragment_enabled: false,
             sni_spoof: false,
+            routing_profiles: String::new(),
+            routing_profile: String::new(),
             tun_auto_route: true,
             tun_strict_route: false,
 
@@ -595,6 +601,8 @@ impl Database {
                     "utls_fingerprint" => settings.utls_fingerprint = item.1,
                     "fragment_enabled" => settings.fragment_enabled = truthy(&item.1),
                     "sni_spoof" => settings.sni_spoof = truthy(&item.1),
+                    "routing_profiles" => settings.routing_profiles = item.1,
+                    "routing_profile" => settings.routing_profile = item.1,
                     "tun_auto_route" => settings.tun_auto_route = truthy(&item.1),
                     "tun_strict_route" => settings.tun_strict_route = truthy(&item.1),
                     "scanner_mode" => settings.scanner_mode = item.1,
@@ -741,6 +749,8 @@ impl Database {
                 if settings.fragment_enabled { "1" } else { "0" },
             ),
             ("sni_spoof", if settings.sni_spoof { "1" } else { "0" }),
+            ("routing_profiles", &settings.routing_profiles),
+            ("routing_profile", &settings.routing_profile),
             (
                 "tun_auto_route",
                 if settings.tun_auto_route { "1" } else { "0" },
@@ -1454,6 +1464,9 @@ mod tests {
             utls_fingerprint: "firefox".into(),
             fragment_enabled: true,
             sni_spoof: true,
+            routing_profiles:
+                r#"[{"name":"Work","rules":[{"action":"block","domain":["x.example"]}]}]"#.into(),
+            routing_profile: "Work".into(),
             tun_auto_route: false,
             tun_strict_route: true,
 

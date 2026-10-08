@@ -21,6 +21,7 @@ import android.util.Log
 import androidx.core.content.ContextCompat
 import com.zeronet.mobile.BuildConfig
 import com.zeronet.mobile.R
+import com.zeronet.mobile.core.ConnectionOwners
 import com.zeronet.mobile.core.SocketProtection
 import com.zeronet.mobile.model.AppFilterMode
 import com.zeronet.mobile.model.ConnState
@@ -47,6 +48,7 @@ class ZeroVpnService : VpnService(), TunnelHost {
     override fun onCreate() {
         super.onCreate()
         SocketProtection.install { fd -> protect(fd) }
+        ConnectionOwners.install(this)
         ensureChannel()
         registerUnlockReceiver()
     }
@@ -84,6 +86,7 @@ class ZeroVpnService : VpnService(), TunnelHost {
         unregisterNetworkCallback()
         unregisterUnlockReceiver()
         SocketProtection.install(null)
+        ConnectionOwners.install(null)
         super.onDestroy()
     }
 

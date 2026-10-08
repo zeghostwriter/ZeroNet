@@ -20,6 +20,7 @@ jni = ["dep:jni", "dep:zero-discovery", "dep:futures", "dep:serde"]
 zero-core = { workspace = true }
 zero-config = { workspace = true }
 zero-runtime = { workspace = true }
+zero-router = { workspace = true }
 zero-tun = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
