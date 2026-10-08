@@ -70,6 +70,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.zeronet.mobile.ui.icons.ZeroIcons
 import com.zeronet.mobile.ui.theme.Motion
 import com.zeronet.mobile.ui.theme.ZeroTheme
@@ -132,6 +133,62 @@ fun SectionTitle(text: String, modifier: Modifier = Modifier) {
 
 // ------------------------------------------------------------------ buttons
 
+/**
+ * A label for a button, tab or chip that shrinks to fit instead of being cut
+ * short.
+ *
+ * On a narrow phone (or with a large system font, or in a longer language) a
+ * label may not fit at its usual size. It is then drawn a step smaller, down
+ * to [FIT_MIN_SCALE] of its size, which stays readable. A label allowed to
+ * [wrap] (a button's) that still does not fit on one line at that size goes
+ * onto two centred lines instead; one that may not (a tab's) only then ends
+ * in "…". So "Recommended" on a small screen comes out a little smaller, not
+ * as "Recommenda…".
+ */
+@Composable
+fun FitLabel(
+    text: String,
+    style: TextStyle,
+    color: Color,
+    modifier: Modifier = Modifier,
+    textAlign: TextAlign? = null,
+    wrap: Boolean = false,
+) {
+    val full = style.fontSize.takeIf { it.isSp } ?: 14.sp
+    val smallest = (full.value * FIT_MIN_SCALE).sp
+    androidx.compose.foundation.layout.BoxWithConstraints(modifier, contentAlignment = Alignment.Center) {
+        val measurer = androidx.compose.ui.text.rememberTextMeasurer()
+        val width = constraints.maxWidth
+        val twoLines = wrap && width != androidx.compose.ui.unit.Constraints.Infinity &&
+            remember(text, style, width) {
+                measurer.measure(
+                    text,
+                    style.copy(fontSize = smallest),
+                    maxLines = 1,
+                    softWrap = false,
+                    constraints = androidx.compose.ui.unit.Constraints(maxWidth = width),
+                ).hasVisualOverflow
+            }
+        Text(
+            text,
+            style = style,
+            color = color,
+            maxLines = if (twoLines) 2 else 1,
+            softWrap = twoLines,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = if (twoLines) TextAlign.Center else textAlign,
+            autoSize = androidx.compose.foundation.text.TextAutoSize.StepBased(
+                minFontSize = smallest,
+                maxFontSize = full,
+                stepSize = 0.5.sp,
+            ),
+        )
+    }
+}
+
+/** The smallest a [FitLabel] gets, as a share of its normal size. */
+private const val FIT_MIN_SCALE = 0.72f
+
 @Composable
 fun PrimaryButton(
     text: String,
@@ -164,7 +221,7 @@ fun PrimaryButton(
             Icon(icon, null, tint = fg, modifier = Modifier.size(20.dp))
             Spacer(Modifier.width(8.dp))
         }
-        Text(text, style = MaterialTheme.typography.labelLarge, color = fg, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        FitLabel(text, MaterialTheme.typography.labelLarge, fg, Modifier.weight(1f, fill = false), wrap = true)
     }
 }
 
@@ -195,7 +252,7 @@ fun TonalButton(
             Icon(icon, null, tint = fg, modifier = Modifier.size(18.dp))
             Spacer(Modifier.width(8.dp))
         }
-        Text(text, style = MaterialTheme.typography.labelLarge, color = fg, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        FitLabel(text, MaterialTheme.typography.labelLarge, fg, Modifier.weight(1f, fill = false), wrap = true)
     }
 }
 
@@ -261,7 +318,7 @@ fun ZeroChip(
             Icon(icon, null, tint = fg, modifier = Modifier.size(16.dp))
             Spacer(Modifier.width(6.dp))
         }
-        Text(text, style = MaterialTheme.typography.labelLarge, color = fg, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        FitLabel(text, MaterialTheme.typography.labelLarge, fg, Modifier.weight(1f, fill = false), wrap = true)
         if (trailing != null) {
             Spacer(Modifier.width(6.dp))
             Icon(trailing, null, tint = fg, modifier = Modifier.size(16.dp))
@@ -336,17 +393,10 @@ fun <T> Segmented(
                         .heightIn(min = 40.dp)
                         .clip(CircleShape)
                         .selectable(selected = isSel, role = Role.Tab, onClick = { if (!isSel) onSelect(option) })
-                        .padding(horizontal = 8.dp, vertical = 8.dp),
+                        .padding(horizontal = 4.dp, vertical = 8.dp),
                     contentAlignment = Alignment.Center,
                 ) {
-                    Text(
-                        label(option),
-                        style = MaterialTheme.typography.labelLarge,
-                        color = fg,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        textAlign = TextAlign.Center,
-                    )
+                    FitLabel(label(option), MaterialTheme.typography.labelLarge, fg, textAlign = TextAlign.Center)
                 }
             }
         }
