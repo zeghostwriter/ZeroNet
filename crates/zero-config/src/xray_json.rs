@@ -877,21 +877,7 @@ fn parse_outbound(v: &Value, idx: usize, out: &mut ParseOutput) -> R<Outbound> {
         // Evasion is the one thing a link cannot express, because it is a
         // property of this network rather than of the server. Allow it to be
         // layered on without re-describing the whole outbound.
-        if let Some(evasion) = v.get("evasion") {
-            let overlay = parse_link_evasion(evasion, &path)?;
-            if overlay.tcp_fragment.is_some() {
-                outbound.stream.evasion.tcp_fragment = overlay.tcp_fragment;
-            }
-            if !overlay.udp_noise.is_empty() {
-                outbound.stream.evasion.udp_noise = overlay.udp_noise;
-            }
-            if overlay.keepalive.is_some() {
-                outbound.stream.evasion.keepalive = overlay.keepalive;
-            }
-            if overlay.sni_desync.is_some() {
-                outbound.stream.evasion.sni_desync = overlay.sni_desync;
-            }
-        }
+        layer_evasion(&mut outbound.stream.evasion, v.get("evasion"), &path)?;
         outbound.validate()?;
         return Ok(outbound);
     }
@@ -958,6 +944,9 @@ fn parse_outbound(v: &Value, idx: usize, out: &mut ParseOutput) -> R<Outbound> {
             stream.evasion = legacy;
         }
     }
+    // The same overlay a link outbound takes, so a hand-written outbound can
+    // ask for it too (`{"evasion": {"sniSpoof": {"method": "urgent"}}}`).
+    layer_evasion(&mut stream.evasion, v.get("evasion"), &path)?;
 
     let ob = Outbound {
         tag,
@@ -2871,9 +2860,31 @@ fn parse_sni_spoof(value: &Value, path: &str) -> R<SniDesyncConfig> {
     })
 }
 
-/// Evasion layered onto a link-form outbound: `{"fragment": {...},
-/// "noises": [...]}`. Deliberately the same shape as the Freedom schema so
-/// there is one spelling of these knobs across the config surface.
+/// Lay an outbound's own `evasion` block (`value`, when there is one) over
+/// `evasion`: each part it names replaces that part, the rest is kept.
+fn layer_evasion(evasion: &mut Evasion, value: Option<&Value>, path: &str) -> R<()> {
+    let Some(value) = value else {
+        return Ok(());
+    };
+    let overlay = parse_link_evasion(value, path)?;
+    if overlay.tcp_fragment.is_some() {
+        evasion.tcp_fragment = overlay.tcp_fragment;
+    }
+    if !overlay.udp_noise.is_empty() {
+        evasion.udp_noise = overlay.udp_noise;
+    }
+    if overlay.keepalive.is_some() {
+        evasion.keepalive = overlay.keepalive;
+    }
+    if overlay.sni_desync.is_some() {
+        evasion.sni_desync = overlay.sni_desync;
+    }
+    Ok(())
+}
+
+/// Evasion layered onto an outbound: `{"fragment": {...}, "noises": [...]}`.
+/// Deliberately the same shape as the Freedom schema so there is one
+/// spelling of these knobs across the config surface.
 fn parse_link_evasion(value: &Value, path: &str) -> R<Evasion> {
     if !value.is_object() {
         return Err(format!("{path}.evasion must be an object"));

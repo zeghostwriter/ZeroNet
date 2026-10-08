@@ -247,6 +247,17 @@ struct Tunnel {
 
 /// Build a client/server pair for a TLS- or QUIC-terminated protocol.
 async fn tunnel(protocol: &str, quic: bool, transport: Value) -> Tunnel {
+    tunnel_with(protocol, quic, transport, json!({})).await
+}
+
+/// [`tunnel`], with `outbound_extra` merged into the client's outbound (an
+/// `evasion` block, say).
+async fn tunnel_with(
+    protocol: &str,
+    quic: bool,
+    transport: Value,
+    outbound_extra: Value,
+) -> Tunnel {
     let echo = echo_service().await;
     let udp_echo = udp_echo_service().await;
     let relay_port = if quic {
@@ -322,6 +333,13 @@ async fn tunnel(protocol: &str, quic: bool, transport: Value) -> Tunnel {
         "outbounds": [{"tag": "direct", "protocol": "freedom"}],
     }));
 
+    let mut outbound = json!({
+        "tag": "proxy",
+        "protocol": protocol,
+        "settings": client_settings,
+        "streamSettings": outbound_stream,
+    });
+    merge(&mut outbound, &outbound_extra);
     let client = spawn(json!({
         "log": {"loglevel": "warning"},
         "inbounds": [{
@@ -331,12 +349,7 @@ async fn tunnel(protocol: &str, quic: bool, transport: Value) -> Tunnel {
             "protocol": "socks",
             "settings": {"udp": true},
         }],
-        "outbounds": [{
-            "tag": "proxy",
-            "protocol": protocol,
-            "settings": client_settings,
-            "streamSettings": outbound_stream,
-        }],
+        "outbounds": [outbound],
         // The server name resolves to the loopback listener; nothing leaves
         // the machine.
         "dns": {"hosts": {SERVER_NAME: ["127.0.0.1"]}},
@@ -378,6 +391,38 @@ fn xhttp(mode: &str, version: &str) -> Value {
 }
 
 // ------------------------------------------------------------------- TCP/TLS
+
+/// A client hiding the server name with an urgent byte
+/// (`zero_evasion::urgent`) gets through a Zray TLS inbound. Over the
+/// loopback the whole hello is queued before the server reads, which is
+/// exactly when a tokio server used to stop at the urgent mark and wait for
+/// ever.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_zray_tls_inbound_reads_a_hello_with_an_urgent_byte() {
+    let tunnel = tunnel_with(
+        "vless",
+        false,
+        raw(),
+        json!({"evasion": {"sniSpoof": {"method": "urgent"}}}),
+    )
+    .await;
+    for seed in 0..4 {
+        let mut stream = tokio::time::timeout(
+            Duration::from_secs(10),
+            socks_connect(tunnel.socks, tunnel.echo),
+        )
+        .await
+        .expect("the tunnel opened in time")
+        .unwrap();
+        tokio::time::timeout(
+            Duration::from_secs(10),
+            round_trip(&mut stream, &payload(seed, 4096)),
+        )
+        .await
+        .expect("the payload came back in time");
+    }
+}
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn anytls_carries_payload_intact() {

@@ -247,24 +247,45 @@ fn socket_options(stream: &StreamSettings) -> SocketOptions {
 /// which is the cheaper way where the process may open one. Otherwise the
 /// name is hidden from the socket itself, by the method the configuration
 /// names (`zero_config::SniMethod`): a decoy (`zero_evasion::decoy`) or an
-/// urgent byte (`zero_evasion::urgent`). Left to the device, it is the decoy
-/// where the kernel can send one and the urgent byte where it cannot. A
-/// system that can do neither leaves the fragment mask, as before. These
-/// and the mask are not stacked: the mask would cut the hello into pieces
-/// that neither of them can read a name out of.
+/// urgent byte (`zero_evasion::urgent`). Left to the device, it is the
+/// urgent byte, which costs nothing, and the decoy, which costs a round trip,
+/// only for a server the urgent byte went unanswered at
+/// (`zero_evasion::choice`). A system that can do neither leaves the
+/// fragment mask, as before. These and the mask are not stacked: the mask
+/// would cut the hello into pieces that neither of them can read a name out
+/// of.
 fn shaped(tcp: TcpStream, stream: &StreamSettings, injected: bool) -> BoxStream {
     use zero_config::SniMethod;
     if let Some(spoof) = stream.evasion.sni_desync.as_ref().filter(|_| !injected) {
+        use zero_evasion::choice::{self, Way};
         let decoy = zero_evasion::decoy::supported();
         let urgent = zero_evasion::urgent::supported();
-        match spoof.method {
-            SniMethod::Decoy | SniMethod::Auto if decoy => {
+        let peer = tcp.peer_addr().ok();
+        let way = match spoof.method {
+            SniMethod::Decoy => decoy.then_some(Way::Decoy),
+            SniMethod::Urgent => urgent.then_some(Way::Urgent),
+            // The free way first, the decoy where it went unanswered
+            // (`zero_evasion::choice`). Without a peer address there is no
+            // memory to ask, so the urgent byte it is.
+            SniMethod::Auto => match peer {
+                Some(peer) => choice::pick(peer, urgent, decoy),
+                None => urgent.then_some(Way::Urgent),
+            },
+        };
+        match (way, spoof.method, peer) {
+            (Some(Way::Decoy), ..) => {
                 return boxed(zero_evasion::DecoyStream::new(tcp, &spoof.fake_sni))
             }
-            SniMethod::Urgent | SniMethod::Auto if urgent => {
-                return boxed(zero_evasion::UrgentStream::new(tcp))
+            // Only an urgent byte the device chose is watched: one the
+            // configuration asked for is kept whatever happens.
+            (Some(Way::Urgent), SniMethod::Auto, Some(peer)) => {
+                return boxed(choice::Watched::new(
+                    zero_evasion::UrgentStream::new(tcp),
+                    peer,
+                ))
             }
-            _ => {}
+            (Some(Way::Urgent), ..) => return boxed(zero_evasion::UrgentStream::new(tcp)),
+            (None, ..) => {}
         }
     }
     // Two masks stack as they do in Xray: the one underneath cuts up what

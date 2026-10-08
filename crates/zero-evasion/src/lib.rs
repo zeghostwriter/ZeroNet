@@ -4,6 +4,7 @@
 //! among them from measured evidence; each one costs latency, syscalls or
 //! privileges, so none is applied unconditionally (PLAN-02 §4.2).
 
+pub mod choice;
 pub mod decoy;
 pub mod fragment;
 pub mod keepalive;
@@ -23,4 +24,4 @@ pub use rand_between::rand_between;
 pub use sni_desync::{
     build_fake_client_hello, has_raw_socket_capability, inject_fake_client_hello, SniDesyncConfig,
 };
-pub use urgent::UrgentStream;
+pub use urgent::{ReadPastMark, UrgentStream};

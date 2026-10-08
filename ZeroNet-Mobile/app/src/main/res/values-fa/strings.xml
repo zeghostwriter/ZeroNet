@@ -340,7 +340,7 @@
     <string name="settings_decoy">پنهان کردن نام سرور (SNI)</string>
     <string name="settings_decoy_off_hint">نام سرور هیچ‌وقت پنهان نمی‌شود.</string>
     <string name="settings_decoy_auto_hint">فقط وقتی اتصالی به‌خاطر نامش قطع شود، نام سرور از فیلتر پنهان می‌شود.</string>
-    <string name="settings_decoy_always_hint">هر اتصال نام سرورش را از فیلتر پنهان می‌کند. روی بعضی گوشی‌ها هر اتصال حدود نیم ثانیه دیرتر شروع می‌شود.</string>
+    <string name="settings_decoy_always_hint">هر اتصال نام سرورش را از فیلتر پنهان می‌کند، اول با راه سریع. فقط سروری که با این راه جواب نمی‌دهد راه کندتر را می‌گیرد که هر اتصال را حدود یک‌سوم ثانیه دیرتر شروع می‌کند.</string>
     <string name="option_always">همیشه</string>
     <string name="settings_decoy_test">آزمایش روی این گوشی</string>
     <string name="decoy_test_running">در حال آزمایش…</string>

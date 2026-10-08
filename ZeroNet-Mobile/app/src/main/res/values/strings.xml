@@ -355,7 +355,7 @@
     <string name="settings_decoy">Hide the server name (SNI)</string>
     <string name="settings_decoy_off_hint">The server name is never hidden.</string>
     <string name="settings_decoy_auto_hint">Hides the server name from the filter only when a connection gets cut off by its name.</string>
-    <string name="settings_decoy_always_hint">Every connection hides its server name from the filter. On some phones each one starts about half a second slower.</string>
+    <string name="settings_decoy_always_hint">Every connection hides its server name from the filter, the quick way first. Only a server that does not answer that way gets the slower one, which starts each connection about a third of a second later.</string>
     <string name="option_always">Always</string>
     <string name="settings_decoy_test">Test on this phone</string>
     <string name="decoy_test_running">Testing…</string>

@@ -143,6 +143,115 @@ impl<S: AsyncRead + Unpin> AsyncRead for UrgentStream<S> {
     }
 }
 
+/// How far into a connection [`ReadPastMark`] keeps watching for the mark:
+/// the urgent byte only ever sits in the ClientHello, which is far shorter.
+const MARK_WINDOW: u64 = 16 * 1024;
+
+/// The server side of the urgent byte: a TCP stream whose reads go on past
+/// an urgent mark instead of stalling at it.
+///
+/// A read stops at the urgent mark even when more has arrived after it. A
+/// tokio stream takes that short read to mean the socket is empty and waits
+/// for the kernel to say more has come, which it never does, because it
+/// already has: so a tokio server (Zray's own inbounds) sat on a hello
+/// carrying an urgent byte until the client gave up. This wrapper asks the
+/// kernel once more, without waiting, after every short read in the first
+/// [`MARK_WINDOW`] bytes, which picks up whatever lies past the mark. After
+/// that window it adds nothing but a comparison, so bulk traffic is untouched.
+pub struct ReadPastMark<S> {
+    inner: S,
+    read: u64,
+}
+
+impl<S> ReadPastMark<S> {
+    pub fn new(inner: S) -> Self {
+        Self { inner, read: 0 }
+    }
+}
+
+impl<S: AsyncWrite + Unpin> AsyncWrite for ReadPastMark<S> {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        Pin::new(&mut self.get_mut().inner).poll_write(cx, buf)
+    }
+
+    fn poll_write_vectored(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        bufs: &[io::IoSlice<'_>],
+    ) -> Poll<io::Result<usize>> {
+        Pin::new(&mut self.get_mut().inner).poll_write_vectored(cx, bufs)
+    }
+
+    fn is_write_vectored(&self) -> bool {
+        self.inner.is_write_vectored()
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.get_mut().inner).poll_flush(cx)
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.get_mut().inner).poll_shutdown(cx)
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+impl<S: AsyncRead + Unpin + std::os::fd::AsRawFd> AsyncRead for ReadPastMark<S> {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        let this = self.get_mut();
+        let before = buf.filled().len();
+        std::task::ready!(Pin::new(&mut this.inner).poll_read(cx, buf))?;
+        let got = buf.filled().len() - before;
+        if got > 0 && this.read < MARK_WINDOW {
+            // Short read early on: there may be bytes waiting past a mark.
+            while buf.remaining() > 0 {
+                // SAFETY: `recv` writes at most `remaining` bytes into the
+                // unfilled part, and only what it reports is marked filled.
+                let more = unsafe {
+                    let room = buf.unfilled_mut();
+                    libc::recv(
+                        this.inner.as_raw_fd(),
+                        room.as_mut_ptr().cast(),
+                        room.len(),
+                        libc::MSG_DONTWAIT,
+                    )
+                };
+                let Ok(more @ 1..) = usize::try_from(more) else {
+                    // Nothing more right now, the end, or an error the next
+                    // ordinary read will report.
+                    break;
+                };
+                // SAFETY: the kernel just wrote `more` bytes there.
+                unsafe { buf.assume_init(more) };
+                buf.advance(more);
+            }
+        }
+        this.read += (buf.filled().len() - before) as u64;
+        Poll::Ready(Ok(()))
+    }
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "android")))]
+impl<S: AsyncRead + Unpin> AsyncRead for ReadPastMark<S> {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        let this = self.get_mut();
+        let _ = this.read;
+        Pin::new(&mut this.inner).poll_read(cx, buf)
+    }
+}
+
 /// Accept one connection on `listener` and read `wanted` bytes from it with
 /// blocking calls, the way that is safe across an urgent mark: every call
 /// asks the kernel again, so the read that stopped at the mark is followed by
@@ -189,6 +298,35 @@ mod tests {
         let seen = tokio::task::spawn_blocking(move || read_past_the_mark(&listener, wanted))
             .await
             .unwrap();
+        assert_eq!(seen[..record.len()], record[..]);
+        assert_eq!(&seen[record.len()..], b"after");
+    }
+
+    /// A tokio server behind [`ReadPastMark`] reads the whole hello and what
+    /// follows, even when both parts were already waiting when it first read.
+    #[tokio::test]
+    async fn a_tokio_reader_behind_read_past_mark_does_not_stall() {
+        use tokio::io::AsyncReadExt;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let client = tokio::net::TcpStream::connect(listener.local_addr().unwrap())
+            .await
+            .unwrap();
+        let (server, _) = listener.accept().await.unwrap();
+        let record = crate::build_fake_client_hello("blocked.example.com").unwrap();
+        let mut stream = UrgentStream::new(client);
+        stream.write_all(&record).await.unwrap();
+        stream.write_all(b"after").await.unwrap();
+        // Let both parts land before the first read, the case that stalled.
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        let mut server = ReadPastMark::new(server);
+        let mut seen = vec![0u8; record.len() + 5];
+        tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            server.read_exact(&mut seen),
+        )
+        .await
+        .expect("the read went on past the mark")
+        .unwrap();
         assert_eq!(seen[..record.len()], record[..]);
         assert_eq!(&seen[record.len()..], b"after");
     }
