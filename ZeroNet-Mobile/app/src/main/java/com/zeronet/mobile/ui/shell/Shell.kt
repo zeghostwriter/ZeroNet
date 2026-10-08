@@ -256,13 +256,7 @@ private fun RowScope.BarItem(icon: ImageVector, label: String, selected: Boolean
     ) {
         Icon(icon, null, tint = fg, modifier = Modifier.size(22.dp))
         Spacer(Modifier.height(2.dp))
-        Text(
-            label,
-            style = MaterialTheme.typography.labelSmall,
-            color = fg,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
+        com.zeronet.mobile.ui.components.FitLabel(label, MaterialTheme.typography.labelSmall, fg)
     }
 }
 
