@@ -127,6 +127,11 @@
     <string name="picker_favorites">Favourites</string>
     <string name="picker_mine">Your configs</string>
     <string name="picker_subscriptions">Your subscriptions</string>
+    <string name="picker_lists_hint">Tap several to search them together</string>
+    <plurals name="picker_use_lists">
+        <item quantity="one">Search in this list</item>
+        <item quantity="other">Search in these %s lists</item>
+    </plurals>
     <string name="server_subscription_hint">Switches only between this subscription\'s configs</string>
     <string name="picker_countries">Countries</string>
     <string name="picker_empty">No servers yet. Connect once and ZeroNet will find some.</string>

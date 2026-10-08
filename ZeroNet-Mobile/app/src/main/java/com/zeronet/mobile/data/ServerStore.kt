@@ -108,6 +108,11 @@ class ServerStore private constructor(context: Context) :
             arrayOf(Server.SOURCE_SUB_PREFIX + id),
         )
 
+    /** The configs of every subscription in [ids], fastest known first. */
+    fun inSubscriptions(ids: List<String>): List<Server> =
+        ids.flatMap(::inSubscription).distinctBy { it.key }
+            .sortedWith(compareBy<Server> { if (it.delayMs < 0) 1 else 0 }.thenBy { it.delayMs })
+
     fun inCountry(code: String): List<Server> =
         query("SELECT * FROM servers WHERE country = ? ORDER BY CASE WHEN delay_ms < 0 THEN 1 ELSE 0 END, delay_ms", arrayOf(code))
 

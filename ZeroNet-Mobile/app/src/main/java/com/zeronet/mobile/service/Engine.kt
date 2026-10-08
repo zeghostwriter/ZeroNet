@@ -608,7 +608,7 @@ object Engine {
     private suspend fun findReplacements(network: String, excludeKeys: Set<String>) {
         when (val t = target) {
             is ConnectTarget.Subscription -> {
-                val all = withContext(Dispatchers.IO) { store.inSubscription(t.id) }
+                val all = withContext(Dispatchers.IO) { store.inSubscriptions(t.ids) }
                 val usable = all.filter { !it.excluded }
                 testAndCollect(usable.filter { it.key !in excludeKeys }.ifEmpty { usable }, network)
             }
@@ -695,7 +695,7 @@ object Engine {
                     if (!running) { fail(FailReason.NoWorkingServer, t.code); return }
                 }
                 is ConnectTarget.Subscription -> {
-                    val candidates = withContext(Dispatchers.IO) { store.inSubscription(t.id) }
+                    val candidates = withContext(Dispatchers.IO) { store.inSubscriptions(t.ids) }
                     if (candidates.isEmpty()) { fail(FailReason.ServerUnavailable, ""); return }
                     testAndCollect(candidates, network)
                     if (!running) { fail(FailReason.NoWorkingServer, ""); return }

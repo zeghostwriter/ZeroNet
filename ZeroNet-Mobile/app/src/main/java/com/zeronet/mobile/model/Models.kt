@@ -96,14 +96,26 @@ sealed interface ConnectTarget {
     data class Country(val code: String) : ConnectTarget
     /** One config the user chose: used as is, never swapped for another. */
     data class Specific(val key: String) : ConnectTarget
-    /** The user's own subscription: the engine switches only between its configs. */
-    data class Subscription(val id: String) : ConnectTarget
+    /**
+     * The user's own subscriptions, one or several: the engine searches and
+     * switches only between their configs. [ids] is never empty, sorted and
+     * without repeats, so the same choice always compares and saves the same.
+     */
+    data class Subscription(val ids: List<String>) : ConnectTarget {
+        constructor(id: String) : this(listOf(id))
+
+        companion object {
+            /** The target for [ids], or null when none is left. */
+            fun of(ids: Collection<String>): Subscription? =
+                ids.map { it.trim() }.filter { it.isNotEmpty() }.distinct().sorted().takeIf { it.isNotEmpty() }?.let(::Subscription)
+        }
+    }
 
     fun encode(): String = when (this) {
         Fastest -> "fastest"
         is Country -> "country:$code"
         is Specific -> "server:$key"
-        is Subscription -> "sub:$id"
+        is Subscription -> "sub:" + ids.joinToString(",")
     }
 
     companion object {
@@ -111,7 +123,8 @@ sealed interface ConnectTarget {
             value == null || value == "fastest" -> Fastest
             value.startsWith("country:") -> Country(value.removePrefix("country:"))
             value.startsWith("server:") -> Specific(value.removePrefix("server:"))
-            value.startsWith("sub:") -> Subscription(value.removePrefix("sub:"))
+            // One id (saved before several could be chosen) or several, comma-separated.
+            value.startsWith("sub:") -> Subscription.of(value.removePrefix("sub:").split(',')) ?: Fastest
             else -> Fastest
         }
     }

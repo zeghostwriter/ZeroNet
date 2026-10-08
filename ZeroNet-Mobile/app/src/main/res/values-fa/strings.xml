@@ -125,6 +125,11 @@
     <string name="picker_favorites">برگزیده‌ها</string>
     <string name="picker_mine">کانفیگ‌های شما</string>
     <string name="picker_subscriptions">اشتراک‌های شما</string>
+    <string name="picker_lists_hint">چند تا رو انتخاب کنید تا با هم جستجو بشن</string>
+    <plurals name="picker_use_lists">
+        <item quantity="one">جستجو در این لیست</item>
+        <item quantity="other">جستجو در این %s لیست</item>
+    </plurals>
     <string name="server_subscription_hint">فقط بین کانفیگ‌های همین اشتراک جابه‌جا می‌شود</string>
     <string name="picker_countries">کشورها</string>
     <string name="picker_empty">هنوز سروری نیست. یک بار وصل شوید تا زیرونت چند سرور پیدا کند.</string>
