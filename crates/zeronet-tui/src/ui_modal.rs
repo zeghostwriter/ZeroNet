@@ -52,6 +52,7 @@ impl UiRenderer<'_> {
             }
             ModalState::Warp { phase, .. } => (warp_dialog_rect(area, phase), "WARP"),
             ModalState::Connection { .. } => (connection_dialog_rect(area), "TEST"),
+            ModalState::RoutingProfiles { .. } => (centered_rect(86, 84, area), "ROUTING"),
         }
     }
 
@@ -79,6 +80,7 @@ impl UiRenderer<'_> {
             ModalState::Update { .. } => "UPDATE",
             ModalState::Warp { .. } => "CLOUDFLARE WARP",
             ModalState::Connection { .. } => "CONNECTION TEST",
+            ModalState::RoutingProfiles { .. } => "ROUTING PROFILES",
             ModalState::None => return,
         };
         let accent = match self.modal_state {
@@ -226,6 +228,9 @@ impl UiRenderer<'_> {
             }
             ModalState::Warp { phase, .. } => self.render_warp(frame, inner, phase),
             ModalState::Connection { checks, .. } => self.render_connection(frame, inner, checks),
+            ModalState::RoutingProfiles { editor, .. } => {
+                self.render_routing_profiles(frame, inner, editor)
+            }
             ModalState::None => {}
         }
 
@@ -1419,6 +1424,232 @@ impl UiRenderer<'_> {
             ComponentId::QuitConfirmNo,
             "✔ Stay (Esc)",
             self.theme.ok,
+        );
+    }
+
+    /// The routing profile editor: the profiles on the left, the selected
+    /// one's rules on the right, the rule form over the rules while a rule is
+    /// being written, and the keys along the bottom.
+    fn render_routing_profiles(
+        &mut self,
+        frame: &mut Frame,
+        inner: Rect,
+        editor: &crate::routing_profile::Editor,
+    ) {
+        use crate::routing_profile::{Pane, FORM_FIELDS};
+        use zero_config::RuleAction;
+        let rows = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Min(4),
+                Constraint::Length(1),
+                Constraint::Length(2),
+            ])
+            .split(inner);
+        let cols = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Length(24), Constraint::Min(20)])
+            .split(rows[0]);
+        let focus = |on: bool| {
+            if on {
+                self.theme.accent_bright
+            } else {
+                self.theme.border
+            }
+        };
+
+        // ---- profiles
+        let mut lines: Vec<Line> = Vec::new();
+        for (index, profile) in editor.profiles.iter().enumerate() {
+            let selected = index == editor.profile;
+            let marker = if profile.name == editor.active {
+                "● "
+            } else {
+                "  "
+            };
+            let style = if selected && editor.pane == Pane::Profiles {
+                Style::default()
+                    .fg(self.theme.bg)
+                    .bg(self.theme.accent_bright)
+            } else if selected {
+                Style::default().fg(self.theme.accent_bright)
+            } else {
+                Style::default().fg(self.theme.text)
+            };
+            lines.push(Line::from(Span::styled(
+                format!("{marker}{}", truncate(&profile.name, 19)),
+                style,
+            )));
+        }
+        if let Some(naming) = &editor.naming {
+            lines.push(Line::from(Span::styled(
+                format!("  {}▏", naming.buffer),
+                Style::default().fg(self.theme.warn),
+            )));
+        } else if editor.profiles.is_empty() {
+            lines.push(Line::from(Span::styled(
+                "  none yet: press n",
+                Style::default().fg(self.theme.muted),
+            )));
+        }
+        frame.render_widget(
+            Paragraph::new(lines).block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(focus(editor.pane == Pane::Profiles)))
+                    .title(" Profiles "),
+            ),
+            cols[0],
+        );
+
+        // ---- rules, or the form
+        let action_label = |action: RuleAction| match action {
+            RuleAction::Proxy => ("PROXY ", self.theme.info),
+            RuleAction::Direct => ("DIRECT", self.theme.ok),
+            RuleAction::Block => ("BLOCK ", self.theme.err),
+        };
+        let mut lines: Vec<Line> = Vec::new();
+        let title;
+        if let Some(form) = &editor.form {
+            title = if form.index.is_some() {
+                " Edit rule "
+            } else {
+                " New rule "
+            }
+            .to_string();
+            let network = if form.network.is_empty() {
+                "tcp + udp"
+            } else {
+                form.network.as_str()
+            };
+            let values = [
+                action_label(form.action).0.trim().to_string(),
+                form.domain.clone(),
+                form.ip.clone(),
+                form.process.clone(),
+                form.port.clone(),
+                network.to_string(),
+            ];
+            let hints = [
+                "←→ to change",
+                "example.com, keyword:bank, regexp:\\.ir$, geosite:category-ir",
+                "1.2.3.0/24, geoip:private",
+                "chrome, /usr/bin/curl, C:/Games/, org.telegram.messenger",
+                "443, 80,443 or 1000-2000",
+                "←→ to change",
+            ];
+            for (index, (label, value)) in FORM_FIELDS.iter().zip(values).enumerate() {
+                let focused = index == form.field;
+                let caret = if focused && (1..=4).contains(&index) {
+                    "▏"
+                } else {
+                    ""
+                };
+                lines.push(Line::from(vec![
+                    Span::styled(
+                        format!(" {label:<10} "),
+                        Style::default().fg(if focused {
+                            self.theme.accent_bright
+                        } else {
+                            self.theme.text
+                        }),
+                    ),
+                    Span::styled(
+                        format!("[ {value}{caret} ]"),
+                        Style::default().fg(if focused {
+                            self.theme.warn
+                        } else {
+                            self.theme.text
+                        }),
+                    ),
+                ]));
+                lines.push(Line::from(Span::styled(
+                    format!("            {}", hints[index]),
+                    Style::default().fg(self.theme.muted),
+                )));
+            }
+        } else {
+            title = match editor.profiles.get(editor.profile) {
+                Some(profile) => format!(" Rules of {} ", truncate(&profile.name, 24)),
+                None => " Rules ".to_string(),
+            };
+            let width = cols[1].width.saturating_sub(16) as usize;
+            for (index, rule) in editor.rules().iter().enumerate() {
+                let selected = index == editor.rule && editor.pane == Pane::Rules;
+                let (label, color) = action_label(rule.action);
+                let dim = !rule.enabled.0;
+                let base = if selected {
+                    Style::default().bg(self.theme.surface_hi)
+                } else {
+                    Style::default()
+                };
+                lines.push(Line::from(vec![
+                    Span::styled(
+                        if dim { " off " } else { " on  " },
+                        base.fg(if dim { self.theme.muted } else { self.theme.ok }),
+                    ),
+                    Span::styled(
+                        format!("{label} "),
+                        base.fg(if dim { self.theme.muted } else { color }),
+                    ),
+                    Span::styled(
+                        crate::routing_profile::summary(rule, width),
+                        base.fg(if dim {
+                            self.theme.muted
+                        } else {
+                            self.theme.text
+                        }),
+                    ),
+                ]));
+            }
+            if editor.rules().is_empty() && !editor.profiles.is_empty() {
+                lines.push(Line::from(Span::styled(
+                    " no rules yet: → then a to add one",
+                    Style::default().fg(self.theme.muted),
+                )));
+            }
+        }
+        frame.render_widget(
+            Paragraph::new(lines).block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(
+                        Style::default()
+                            .fg(focus(editor.pane == Pane::Rules || editor.form.is_some())),
+                    )
+                    .title(title),
+            ),
+            cols[1],
+        );
+
+        // ---- what went wrong, then the keys
+        if let Some(message) = &editor.message {
+            frame.render_widget(
+                Paragraph::new(Span::styled(
+                    format!(" {message}"),
+                    Style::default().fg(self.theme.err),
+                )),
+                rows[1],
+            );
+        }
+        let keys = if editor.naming.is_some() {
+            "type a name · Enter keep · Esc cancel"
+        } else if editor.form.is_some() {
+            "Tab/↑↓ field · ←→ change · commas between entries · Enter save · Esc cancel"
+        } else if editor.pane == Pane::Profiles {
+            "↑↓ choose · Enter use / stop · n new · r rename · d delete · → rules · Esc done"
+        } else {
+            "↑↓ choose · a add · Enter edit · Space on/off · d delete · Shift+↑↓ move · ← back · Esc done"
+        };
+        frame.render_widget(
+            Paragraph::new(vec![
+                Line::from(Span::styled(
+                    " Rules run top to bottom before the built-in ones; the first that fits decides.",
+                    Style::default().fg(self.theme.muted),
+                )),
+                Line::from(Span::styled(format!(" {keys}"), Style::default().fg(self.theme.text))),
+            ]),
+            rows[2],
         );
     }
 

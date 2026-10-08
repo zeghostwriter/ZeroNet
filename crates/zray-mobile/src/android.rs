@@ -339,6 +339,77 @@ impl zero_core::SocketProtector for JavaProtector {
     }
 }
 
+/// Calls `ZrayNative.ownerOf(...)` to learn which app opened a connection,
+/// for routing rules that name apps (`zero_router::process`). The answer is
+/// the app's package name, which is what such a rule names on Android.
+struct JavaOwnerFinder {
+    class: GlobalRef,
+    method: JStaticMethodID,
+}
+
+impl zero_router::process::ProcessFinder for JavaOwnerFinder {
+    fn find(
+        &self,
+        network: zero_core::Network,
+        source: std::net::SocketAddr,
+        destination: Option<std::net::SocketAddr>,
+    ) -> Option<zero_router::process::ProcessInfo> {
+        // Android finds a socket by both of its ends.
+        let destination = destination?;
+        let mut env = attached_env()?;
+        let class: &JClass = self.class.as_obj().into();
+        let name = env.with_local_frame(8, |env| -> jni::errors::Result<Option<String>> {
+            let source_ip = env.new_string(source.ip().to_canonical().to_string())?;
+            let destination_ip = env.new_string(destination.ip().to_canonical().to_string())?;
+            // SAFETY: the method id was resolved for this class with the
+            // signature (ZLjava/lang/String;ILjava/lang/String;I)Ljava/lang/String;
+            // and the arguments are, in order, a boolean, a string, an int, a
+            // string and an int.
+            let value = unsafe {
+                env.call_static_method_unchecked(
+                    class,
+                    self.method,
+                    ReturnType::Object,
+                    &[
+                        jvalue {
+                            z: u8::from(network == zero_core::Network::Tcp),
+                        },
+                        jvalue {
+                            l: source_ip.as_raw(),
+                        },
+                        jvalue {
+                            i: jint::from(source.port()),
+                        },
+                        jvalue {
+                            l: destination_ip.as_raw(),
+                        },
+                        jvalue {
+                            i: jint::from(destination.port()),
+                        },
+                    ],
+                )
+            }?
+            .l()?;
+            if value.is_null() {
+                return Ok(None);
+            }
+            let value = JString::from(value);
+            let name: String = env.get_string(&value)?.into();
+            Ok(Some(name))
+        });
+        if env.exception_check().unwrap_or(false) {
+            let _ = env.exception_clear();
+            return None;
+        }
+        let name = name.ok().flatten()?;
+        Some(zero_router::process::ProcessInfo {
+            pid: None,
+            name,
+            path: String::new(),
+        })
+    }
+}
+
 fn install_protector(env: &mut JNIEnv) -> Result<(), String> {
     static INSTALLED: OnceLock<()> = OnceLock::new();
     if INSTALLED.get().is_some() {
@@ -357,6 +428,22 @@ fn install_protector(env: &mut JNIEnv) -> Result<(), String> {
     let class = env
         .new_global_ref(&class)
         .map_err(|error| format!("cannot keep a reference to {NATIVE_CLASS}: {error}"))?;
+    // The owner lookup lives on the same class; an older app without it
+    // simply has no app rules.
+    match env.get_static_method_id(
+        NATIVE_CLASS,
+        "ownerOf",
+        "(ZLjava/lang/String;ILjava/lang/String;I)Ljava/lang/String;",
+    ) {
+        Ok(owner) => zero_router::process::set_finder(Arc::new(JavaOwnerFinder {
+            class: class.clone(),
+            method: owner,
+        })),
+        Err(error) => {
+            let _ = env.exception_clear();
+            tracing::warn!(%error, "no ZrayNative.ownerOf; rules naming apps will not match");
+        }
+    }
     match zero_core::set_socket_protector(Arc::new(JavaProtector { class, method })) {
         Ok(()) => {}
         // Installed through the C ABI already; that one wins.

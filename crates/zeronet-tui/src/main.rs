@@ -936,6 +936,10 @@ impl<'a> App<'a> {
             mux_concurrency: self.settings.mux_concurrency,
             fragment_enabled: self.settings.fragment_enabled,
             sni_spoof: self.settings.sni_spoof,
+            routing_rules: zeronet_tui::routing_profile::active_rules(
+                &zeronet_tui::routing_profile::load(&self.settings.routing_profiles),
+                &self.settings.routing_profile,
+            ),
             tls_fragment_size: self.settings.tls_fragment_size,
             keepalive_interval_secs: self.settings.keepalive_interval_secs,
             tcp_congestion: self.settings.tcp_congestion.clone(),
@@ -1779,6 +1783,27 @@ impl<'a> App<'a> {
         // At 200ms this is imperceptible, and it removes any chance of a
         // keystroke landing between dismissal and removal.
         if self.modal_state.is_active() && !self.modal_accepts_input() {
+            return Ok(());
+        }
+
+        // The routing profile editor reads every key itself: its lists,
+        // its form and its name field each give keys their own meaning.
+        if let ModalState::RoutingProfiles { editor, .. } = &mut self.modal_state {
+            match editor.on_key(key) {
+                zeronet_tui::routing_profile::Outcome::Stay => {}
+                zeronet_tui::routing_profile::Outcome::Paste => match self.clipboard.paste() {
+                    Ok(text) => {
+                        if let ModalState::RoutingProfiles { editor, .. } = &mut self.modal_state {
+                            editor.paste(text.trim());
+                        }
+                    }
+                    Err(e) => self.toasts.warning(e),
+                },
+                zeronet_tui::routing_profile::Outcome::Close => {
+                    self.close_modal();
+                    self.reapply_engine_settings().await?;
+                }
+            }
             return Ok(());
         }
 
@@ -3718,10 +3743,34 @@ impl App<'_> {
     ///
     /// Replaces the assignments that used to set `ModalState::None` directly:
     /// those made the dialog vanish between frames, which reads as a glitch.
+    /// Keep what the routing profile editor holds, if it is the dialog that
+    /// is up: the profiles, and which one is in use. Called whenever a dialog
+    /// closes, so the editor's changes survive Esc, the close button and a
+    /// click outside alike.
+    fn keep_routing_profiles(&mut self) {
+        let ModalState::RoutingProfiles { editor, .. } = &self.modal_state else {
+            return;
+        };
+        let profiles = zeronet_tui::routing_profile::save(&editor.profiles);
+        let active = editor.active.clone();
+        if profiles == self.settings.routing_profiles && active == self.settings.routing_profile {
+            return;
+        }
+        self.settings.routing_profiles = profiles;
+        let message = if active.is_empty() {
+            "Routing profiles saved; none in use".to_string()
+        } else {
+            format!("Routing profile {active} in use")
+        };
+        self.settings.routing_profile = active;
+        self.save_and_report(message);
+    }
+
     fn close_modal(&mut self) {
         if !self.modal_state.is_active() {
             return;
         }
+        self.keep_routing_profiles();
         self.modal_anim.begin_close(self.effects.current_tick());
     }
 
@@ -3761,7 +3810,8 @@ impl App<'_> {
             ModalState::Connection { .. } => self.start_connection_test(),
             ModalState::AshesWarning { .. }
             | ModalState::Help { .. }
-            | ModalState::ShareConfig { .. } => self.close_modal(),
+            | ModalState::ShareConfig { .. }
+            | ModalState::RoutingProfiles { .. } => self.close_modal(),
             ModalState::ImageView { findings, .. } => {
                 let findings = findings.clone();
                 self.close_modal();
@@ -4873,6 +4923,17 @@ impl App<'_> {
                     "Anti-sanction DNS: {}",
                     self.settings.anti_sanction
                 ));
+            }
+            ComponentId::SettingRoutingProfiles => {
+                let editor = zeronet_tui::routing_profile::Editor::new(
+                    zeronet_tui::routing_profile::load(&self.settings.routing_profiles),
+                    self.settings.routing_profile.clone(),
+                );
+                self.modal_state = ModalState::RoutingProfiles {
+                    editor: Box::new(editor),
+                    created_tick: self.effects.current_tick(),
+                };
+                self.open_modal_effect();
             }
             ComponentId::SettingDomainStrategyCycle => {
                 self.settings.domain_strategy = cycle(

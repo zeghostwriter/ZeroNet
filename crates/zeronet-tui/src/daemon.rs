@@ -145,6 +145,9 @@ pub struct EngineOptions {
     /// the system allows neither the engine skips the decoy
     /// and the connection goes out unchanged.
     pub sni_spoof: bool,
+    /// The active routing profile's rules, put in front of every other rule
+    /// (see `crate::routing_profile`). Empty when no profile is active.
+    pub routing_rules: Vec<zero_config::UserRule>,
     /// Bytes per fragment. Clamped into a range the engine accepts at the
     /// boundary; see [`EngineOptions::fragment_length_range`].
     pub tls_fragment_size: u16,
@@ -192,6 +195,7 @@ impl Default for EngineOptions {
             fragment_enabled: false,
             tls_fragment_size: 60,
             sni_spoof: false,
+            routing_rules: Vec::new(),
             keepalive_interval_secs: 30,
             tcp_congestion: String::new(),
             custom_dns: String::new(),
@@ -1060,6 +1064,10 @@ fn apply_engine_options(config: &mut serde_json::Value, options: &EngineOptions)
             apply_sockopt(outbound, options);
         }
     }
+
+    // ---- the user's routing profile, ahead of the configuration's own
+    // rules but behind the IPv6 drop below, which goes in front of it
+    crate::routing_profile::apply(map, &options.routing_rules);
 
     // ---- IPv6 off under TUN: captured, then dropped (never leaked)
     if options.tun_mode && !options.ipv6_enabled {
@@ -1988,6 +1996,7 @@ mod tests {
             mux_concurrency: 24,
             fragment_enabled: true,
             sni_spoof: true,
+            routing_rules: Vec::new(),
             tls_fragment_size: 300,
             keepalive_interval_secs: 75,
             tcp_congestion: "cubic".into(),
@@ -2351,6 +2360,31 @@ mod tests {
         );
         // Compiles + validates: REALITY accepts the decoy (a separate packet),
         // unlike fragmentation which it rejects.
+        assert_eq!(validate_profile(LINK, &opts), Ok(()));
+    }
+
+    /// The active routing profile reaches the engine in front of the
+    /// preset's rules, behind the IPv6 drop that keeps v6 from leaking, and
+    /// the whole thing still compiles.
+    #[test]
+    fn a_routing_profile_goes_in_front_but_behind_the_ipv6_drop() {
+        let opts = EngineOptions {
+            tun_mode: true,
+            ipv6_enabled: false,
+            routing_rules: serde_json::from_value(serde_json::json!([
+                {"action": "direct", "domain": ["keyword:bank"]},
+                {"action": "block", "process": ["telemetry"]},
+            ]))
+            .unwrap(),
+            ..EngineOptions::default()
+        };
+        let json = prepare_runnable_config_with(LINK, &opts).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let rules = v["routing"]["rules"].as_array().unwrap();
+        assert_eq!(rules[0]["ip"], serde_json::json!(["::/0"]));
+        assert_eq!(rules[1]["domain"], serde_json::json!(["keyword:bank"]));
+        assert_eq!(rules[1]["outboundTag"], serde_json::json!("direct"));
+        assert_eq!(rules[2]["process"], serde_json::json!(["telemetry"]));
         assert_eq!(validate_profile(LINK, &opts), Ok(()));
     }
 

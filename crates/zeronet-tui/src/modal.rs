@@ -108,6 +108,13 @@ pub enum ModalState {
         checks: Vec<zero_discovery::selftest::Check>,
         created_tick: u64,
     },
+    /// The routing profile editor. It reads raw keys itself (see
+    /// `crate::routing_profile::Editor`); what it holds is saved when it
+    /// closes, however it closes.
+    RoutingProfiles {
+        editor: Box<crate::routing_profile::Editor>,
+        created_tick: u64,
+    },
 }
 
 /// Where the WARP dialog stands.
@@ -259,7 +266,8 @@ impl ModalState {
             | ModalState::ImageView { created_tick, .. }
             | ModalState::Update { created_tick, .. }
             | ModalState::Warp { created_tick, .. }
-            | ModalState::Connection { created_tick, .. } => *created_tick,
+            | ModalState::Connection { created_tick, .. }
+            | ModalState::RoutingProfiles { created_tick, .. } => *created_tick,
             ModalState::None => 0,
         }
     }
@@ -282,6 +290,13 @@ impl ModalState {
                     InputContext::Dialog
                 }
             }
+            ModalState::RoutingProfiles { editor, .. } => {
+                if editor.typing() {
+                    InputContext::Editing
+                } else {
+                    InputContext::Dialog
+                }
+            }
             _ => InputContext::Dialog,
         }
     }
@@ -297,7 +312,10 @@ impl ModalState {
     pub fn dismiss_on_backdrop(&self) -> bool {
         !matches!(
             self,
-            ModalState::ManualProfile { .. } | ModalState::SudoPassword { .. } | ModalState::None
+            ModalState::ManualProfile { .. }
+                | ModalState::SudoPassword { .. }
+                | ModalState::RoutingProfiles { .. }
+                | ModalState::None
         )
     }
 
@@ -318,6 +336,7 @@ impl ModalState {
             ModalState::Update { .. } => "UPDATE",
             ModalState::Warp { .. } => "CLOUDFLARE WARP",
             ModalState::Connection { .. } => "CONNECTION TEST",
+            ModalState::RoutingProfiles { .. } => "ROUTING PROFILES",
         }
     }
 }

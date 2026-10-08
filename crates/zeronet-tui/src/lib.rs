@@ -24,6 +24,7 @@ pub mod path_map;
 pub mod ping;
 pub mod qr;
 pub mod race_lanes;
+pub mod routing_profile;
 pub mod scroll;
 pub mod scrollbar;
 pub mod sharelink;

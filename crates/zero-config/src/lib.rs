@@ -13,7 +13,7 @@ pub mod xhttp;
 pub mod xray_json;
 
 pub use model::*;
-pub use presets::{AntiSanctionDns, IranPreset, LocalDns, RemoteDns};
+pub use presets::{AntiSanctionDns, IranPreset, LocalDns, RemoteDns, RuleAction, UserRule};
 pub use share_link::{parse_link, parse_subscription, ShareLink};
 pub use xray_json::{compile_config, parse_config, parse_config_array, Diagnostic, ParseOutput};
 

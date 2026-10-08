@@ -58,6 +58,46 @@ object ZrayNative {
     /** Called from Rust for every outbound socket Zray opens. */
     @JvmStatic
     fun protect(fd: Int): Boolean = SocketProtection.protect(fd)
+
+    /** Called from Rust when a routing rule names apps: the package name of
+     *  the app that owns this connection, or null when it cannot be told. */
+    @JvmStatic
+    fun ownerOf(tcp: Boolean, sourceIp: String, sourcePort: Int, destinationIp: String, destinationPort: Int): String? =
+        ConnectionOwners.ownerOf(tcp, sourceIp, sourcePort, destinationIp, destinationPort)
+}
+
+/**
+ * Tells which app opened a connection through the tunnel, for routing rules
+ * that name apps. Only the VPN app that is running may ask Android this
+ * (ConnectivityManager.getConnectionOwnerUid, Android 10 and later), so the
+ * live VpnService installs itself here and removes itself when it stops.
+ *
+ * Below Android 10, with no service, or for an app this one may not see (only
+ * launchable apps are visible to it), the answer is null and a rule naming
+ * apps simply does not match.
+ */
+object ConnectionOwners {
+    @Volatile private var context: android.content.Context? = null
+
+    fun install(context: android.content.Context?) {
+        this.context = context?.applicationContext
+    }
+
+    fun ownerOf(tcp: Boolean, sourceIp: String, sourcePort: Int, destinationIp: String, destinationPort: Int): String? {
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.Q) return null
+        val context = context ?: return null
+        return runCatching {
+            val connectivity = context.getSystemService(android.net.ConnectivityManager::class.java) ?: return null
+            // Literal addresses: InetAddress.getByName does not look anything up for these.
+            val uid = connectivity.getConnectionOwnerUid(
+                if (tcp) android.system.OsConstants.IPPROTO_TCP else android.system.OsConstants.IPPROTO_UDP,
+                java.net.InetSocketAddress(java.net.InetAddress.getByName(sourceIp), sourcePort),
+                java.net.InetSocketAddress(java.net.InetAddress.getByName(destinationIp), destinationPort),
+            )
+            if (uid == android.os.Process.INVALID_UID) null
+            else context.packageManager.getPackagesForUid(uid)?.firstOrNull()
+        }.getOrNull()
+    }
 }
 
 /**

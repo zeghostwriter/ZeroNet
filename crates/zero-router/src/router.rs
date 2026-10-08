@@ -12,6 +12,8 @@ use zero_config::RuntimeConfig;
 use zero_core::{Network, SessionContext};
 
 use crate::matcher::{DomainMatcher, GeoData, IpMatcher};
+use crate::process::ProcessInfo;
+use zero_config::routing::ProcessPattern;
 
 /// What the router decided for a session.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -31,6 +33,7 @@ struct CompiledRule {
     networks: Vec<Network>,
     inbound_tags: Vec<Box<str>>,
     protocols: Vec<Box<str>>,
+    processes: Vec<ProcessPattern>,
     target: RuleTarget,
     /// True when every selector this rule declared was unusable (e.g. it was
     /// nothing but geosite tags and no geodata is loaded). Such a rule must
@@ -74,7 +77,8 @@ impl Router {
                 || !r.source_ports.is_empty()
                 || !r.networks.is_empty()
                 || !r.inbound_tags.is_empty()
-                || !r.protocols.is_empty();
+                || !r.protocols.is_empty()
+                || !r.processes.is_empty();
             let inert = declared_something && !usable_something && !other_selectors;
 
             rules.push(CompiledRule {
@@ -86,6 +90,7 @@ impl Router {
                 networks: r.networks.clone(),
                 inbound_tags: r.inbound_tags.clone(),
                 protocols: r.protocols.clone(),
+                processes: r.processes.clone(),
                 target: r.target.clone(),
                 inert,
             });
@@ -108,11 +113,14 @@ impl Router {
 
     /// Evaluate a session. Falls back to the first outbound.
     pub fn route(&self, ctx: &SessionContext, resolved: Option<IpAddr>) -> Decision {
+        // Who opened the connection, asked of the system at most once per
+        // session and only if a rule naming programs is reached.
+        let mut owner: Option<Option<ProcessInfo>> = None;
         for rule in &self.rules {
             if rule.inert {
                 continue;
             }
-            if self.rule_matches(rule, ctx, resolved) {
+            if self.rule_matches(rule, ctx, resolved, &mut owner) {
                 return match &rule.target {
                     RuleTarget::Outbound(t) => Decision::Outbound(t.clone()),
                     RuleTarget::Balancer(t) => Decision::Balancer(t.clone()),
@@ -131,6 +139,7 @@ impl Router {
         rule: &CompiledRule,
         ctx: &SessionContext,
         resolved: Option<IpAddr>,
+        owner: &mut Option<Option<ProcessInfo>>,
     ) -> bool {
         if !rule.networks.is_empty() && !rule.networks.contains(&ctx.destination.network) {
             return false;
@@ -188,8 +197,32 @@ impl Router {
             }
         }
 
+        // Last: the only selector that asks the system anything.
+        if !rule.processes.is_empty() {
+            let info = owner.get_or_insert_with(|| session_owner(ctx));
+            match info {
+                Some(info) if crate::process::matches(&rule.processes, info) => {}
+                _ => return false,
+            }
+        }
+
         true
     }
+}
+
+/// The program behind `ctx`, from its source address and the address it
+/// dialled (before sniffing replaced it with a name).
+fn session_owner(ctx: &SessionContext) -> Option<ProcessInfo> {
+    let source = ctx.source?;
+    let dialled = ctx
+        .original_destination
+        .as_ref()
+        .unwrap_or(&ctx.destination);
+    let destination = dialled
+        .address
+        .as_ip()
+        .map(|ip| std::net::SocketAddr::new(ip, dialled.port));
+    crate::process::find(ctx.destination.network, source, destination)
 }
 
 #[cfg(test)]
@@ -242,6 +275,30 @@ mod tests {
         let r = Router::build(&cfg(vec![]));
         assert_eq!(
             r.route(&ctx("example.com", 443), None),
+            Decision::Outbound(Arc::from("proxy"))
+        );
+    }
+
+    /// A rule naming a program routes that program's connections and no
+    /// one else's; a session with no source never matches it.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_process_rule_routes_the_program_that_opened_the_connection() {
+        use zero_config::routing::ProcessPattern;
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let client = std::net::TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let mut other = Rule::new(RuleTarget::Outbound(Arc::from("direct")));
+        other.processes = vec![ProcessPattern::parse("some-other-program").unwrap()];
+        let mut mine = Rule::new(RuleTarget::Block);
+        mine.processes = vec![ProcessPattern::parse("self/").unwrap()];
+        let r = Router::build(&cfg(vec![other, mine]));
+
+        let mut session = ctx("example.com", 443);
+        session.source = Some(client.local_addr().unwrap());
+        assert_eq!(r.route(&session, None), Decision::Block);
+        session.source = None;
+        assert_eq!(
+            r.route(&session, None),
             Decision::Outbound(Arc::from("proxy"))
         );
     }

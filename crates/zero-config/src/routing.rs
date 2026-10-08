@@ -87,6 +87,47 @@ impl DomainPattern {
     }
 }
 
+/// Which program a rule's `process` entry names, in Xray's syntax:
+///
+/// ```text
+/// "chrome"                        Name: the program's file name
+/// "/usr/bin/curl"                 Path: that exact program
+/// "C:/Program Files/App/"         Folder: any program under it
+/// "self/"                         This core itself
+/// "org.telegram.messenger"        Name: on Android, an app's package name
+/// ```
+///
+/// Everything is case-sensitive, and a name never includes `.exe`: Windows
+/// program names are compared with the suffix taken off. Windows paths are
+/// written with forward slashes, as JSON would otherwise need every
+/// backslash doubled.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProcessPattern {
+    Name(Box<str>),
+    Path(Box<str>),
+    Folder(Box<str>),
+    SelfProcess,
+}
+
+impl ProcessPattern {
+    /// Parse one `process` entry; `None` for an empty one.
+    pub fn parse(s: &str) -> Option<Self> {
+        let s = s.trim();
+        if s.is_empty() {
+            return None;
+        }
+        Some(if s == "self/" {
+            ProcessPattern::SelfProcess
+        } else if !s.contains('/') {
+            ProcessPattern::Name(s.strip_suffix(".exe").unwrap_or(s).into())
+        } else if s.ends_with('/') {
+            ProcessPattern::Folder(s.into())
+        } else {
+            ProcessPattern::Path(s.into())
+        })
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum IpPattern {
     Cidr(ipnet_lite::Cidr),
@@ -105,6 +146,8 @@ pub struct Rule {
     pub networks: Vec<Network>,
     pub inbound_tags: Vec<Box<str>>,
     pub protocols: Vec<Box<str>>,
+    /// The program that opened the connection (see [`ProcessPattern`]).
+    pub processes: Vec<ProcessPattern>,
     pub target: RuleTarget,
 }
 
@@ -119,6 +162,7 @@ impl Rule {
             networks: Vec::new(),
             inbound_tags: Vec::new(),
             protocols: Vec::new(),
+            processes: Vec::new(),
             target,
         }
     }
@@ -134,6 +178,7 @@ impl Rule {
             && self.networks.is_empty()
             && self.inbound_tags.is_empty()
             && self.protocols.is_empty()
+            && self.processes.is_empty()
     }
 }
 

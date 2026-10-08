@@ -620,7 +620,7 @@ object Engine {
 
     private fun routing(s: Settings) = listOf(
         s.iranDirect, s.blockQuic, s.evasion, s.sniDecoy, s.fragmentPackets, s.remoteDns, s.customDns,
-        s.antiSanctionDns, s.customAntiSanction, s.blockAds, s.logs,
+        s.antiSanctionDns, s.customAntiSanction, s.blockAds, s.logs, s.activeRoutingRules,
     )
 
     /**
@@ -1202,6 +1202,8 @@ object Engine {
             .put("clean_ips", JSONArray((scan.value.results.take(10).map { "${it.ip}:${it.port}" } + crowdCleanIps).distinct().take(20)))
             .put("log_level", if (s.logs) "info" else "warning")
             .put("warp_order", s.warpOrder.wire)
+            // The user's routing profile, ahead of the built-in rules.
+            .put("routing_rules", JSONArray(s.activeRoutingRules.map { it.toJson() }))
         val result = JSONObject(ZrayNative.buildConfig(request.toString()))
         if (result.has("error")) {
             EngineLog.e("buildConfig: ${result.optString("error")}")

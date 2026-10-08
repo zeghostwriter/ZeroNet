@@ -354,6 +354,150 @@ pub struct IranPreset {
     /// Bounded CDN edge candidates for clean-IP measurement, as `ip:port`.
     pub clean_ip_candidates: Vec<String>,
     pub clean_ip_host: String,
+    /// The user's own rules (their routing profile), tried before every
+    /// rule of the preset, in order. See [`UserRule`].
+    pub user_rules: Vec<UserRule>,
+}
+
+/// Where a [`UserRule`] sends what it matches.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RuleAction {
+    /// Through the tunnel, even what the preset would send direct.
+    #[default]
+    Proxy,
+    /// Straight out, not through the tunnel.
+    Direct,
+    /// Nowhere: the connection is refused.
+    Block,
+}
+
+/// One rule of a routing profile, as the apps store it and the user writes
+/// it. Every list uses Xray's syntax, so a rule copied from another client
+/// works here:
+///
+/// ```json
+/// {"action": "direct", "domain": ["geosite:category-ir", "regexp:\\.ir$"]}
+/// {"action": "block",  "ip": ["1.2.3.0/24", "geoip:cn"]}
+/// {"action": "proxy",  "process": ["telegram", "org.telegram.messenger"]}
+/// {"action": "direct", "domain": ["keyword:bank"], "port": "443"}
+/// ```
+///
+/// `geosite:` and `geoip:` name the lists in the rule files the app has
+/// loaded; a tag those files do not have matches nothing (the core reports
+/// it), it never matches everything.
+///
+/// What is filled in must all match (domain *and* port, say); within one
+/// list, any entry may. A rule needs at least one of `domain`, `ip`,
+/// `process` or `port` ([`UserRule::check`]), so a rule left empty never
+/// takes every connection.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct UserRule {
+    pub action: RuleAction,
+    /// `example.com` (and its subdomains), `full:`, `keyword:`, `regexp:` or
+    /// `geosite:`.
+    pub domain: Vec<String>,
+    /// An address or CIDR range, or `geoip:`.
+    pub ip: Vec<String>,
+    /// A program name, path or folder, or on Android a package name
+    /// (`zero_config::routing::ProcessPattern`).
+    pub process: Vec<String>,
+    /// `443`, `80,443` or `1000-2000`; empty for any.
+    pub port: String,
+    /// `tcp`, `udp`, or empty for both.
+    pub network: String,
+    /// Off keeps the rule in the profile without using it.
+    #[serde(skip_serializing_if = "is_true")]
+    pub enabled: Enabled,
+}
+
+/// A `bool` that is `true` when left out, so stored rules without the field
+/// stay on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
+pub struct Enabled(pub bool);
+
+impl Default for Enabled {
+    fn default() -> Self {
+        Self(true)
+    }
+}
+
+fn is_true(enabled: &Enabled) -> bool {
+    enabled.0
+}
+
+impl UserRule {
+    /// Why this rule cannot be used, or `Ok` when it can.
+    pub fn check(&self) -> Result<(), String> {
+        let lists = [&self.domain, &self.ip, &self.process];
+        if lists
+            .iter()
+            .any(|list| list.iter().any(|entry| entry.trim().is_empty()))
+        {
+            return Err("a rule has an empty entry".into());
+        }
+        if lists.iter().all(|list| list.is_empty()) && self.port.trim().is_empty() {
+            return Err("a rule needs a domain, an address, a program or a port".into());
+        }
+        let port_ok = self.port.trim().is_empty()
+            || self
+                .port
+                .split(',')
+                .all(|part| crate::routing::PortRange::parse(part.trim()).is_some());
+        if !port_ok {
+            return Err(format!("{:?} is not a port, a list or a range", self.port));
+        }
+        if !matches!(self.network.trim(), "" | "tcp" | "udp" | "tcp,udp") {
+            return Err(format!("{:?} is not tcp or udp", self.network));
+        }
+        Ok(())
+    }
+
+    /// The rule in Xray's JSON, sending matches to `proxy`, `direct` or
+    /// `block` (the preset's own outbound tags).
+    fn to_json(&self) -> Value {
+        self.to_json_with(&json!({"outboundTag": PROXY_TAG}), DIRECT_TAG, BLOCK_TAG)
+    }
+
+    /// The rule in Xray's JSON for a configuration whose outbounds have
+    /// other names: `proxy` is the target object for "through the tunnel"
+    /// (`{"outboundTag": …}` or `{"balancerTag": …}`), `direct` and `block`
+    /// the tags of its freedom and blackhole outbounds.
+    pub fn to_json_with(&self, proxy: &Value, direct: &str, block: &str) -> Value {
+        let mut rule = serde_json::Map::new();
+        rule.insert("type".into(), json!("field"));
+        let mut list = |key: &str, entries: &[String]| {
+            if !entries.is_empty() {
+                let entries: Vec<&str> = entries.iter().map(|e| e.trim()).collect();
+                rule.insert(key.into(), json!(entries));
+            }
+        };
+        list("domain", &self.domain);
+        list("ip", &self.ip);
+        list("process", &self.process);
+        if !self.port.trim().is_empty() {
+            rule.insert("port".into(), json!(self.port.trim()));
+        }
+        if !self.network.trim().is_empty() {
+            rule.insert("network".into(), json!(self.network.trim()));
+        }
+        match self.action {
+            RuleAction::Proxy => {
+                if let Some(target) = proxy.as_object() {
+                    rule.extend(target.clone());
+                }
+            }
+            RuleAction::Direct => {
+                rule.insert("outboundTag".into(), json!(direct));
+            }
+            RuleAction::Block => {
+                rule.insert("outboundTag".into(), json!(block));
+            }
+        }
+        Value::Object(rule)
+    }
 }
 
 impl Default for IranPreset {
@@ -374,6 +518,7 @@ impl Default for IranPreset {
             asset_directory: None,
             clean_ip_candidates: Vec::new(),
             clean_ip_host: "www.speedtest.net".into(),
+            user_rules: Vec::new(),
         }
     }
 }
@@ -592,7 +737,15 @@ impl IranPreset {
     }
 
     fn rules(&self) -> Value {
-        let mut rules: Vec<Value> = Vec::new();
+        // The user's profile first: it is there to override the defaults.
+        // A rule that cannot be used is left out rather than failing the
+        // whole connection; the apps check rules when they are saved.
+        let mut rules: Vec<Value> = self
+            .user_rules
+            .iter()
+            .filter(|rule| rule.enabled.0 && rule.check().is_ok())
+            .map(UserRule::to_json)
+            .collect();
 
         if self.block_ads {
             rules.push(json!({
@@ -1107,5 +1260,65 @@ mod tests {
         assert!(CDN_HTTPS_PORTS.contains(&8443));
         assert!(!CDN_HTTPS_PORTS.contains(&80));
         assert!(CDN_HTTP_PORTS.contains(&8880));
+    }
+
+    /// The user's rules come first, in order, in Xray's form; one that
+    /// cannot be used, or is switched off, is left out; and the result
+    /// compiles with the process selector intact.
+    #[test]
+    fn user_rules_come_before_the_presets_own() {
+        let rules: Vec<UserRule> = serde_json::from_value(json!([
+            {"action": "direct", "domain": ["geosite:category-ir", "regexp:\\.ir$"]},
+            {"action": "block", "ip": ["1.2.3.0/24"], "network": "udp"},
+            {"action": "proxy", "process": ["telegram"], "port": "443,8443"},
+            {"action": "block"},
+            {"action": "block", "domain": ["x.example"], "enabled": false},
+        ]))
+        .unwrap();
+        assert_eq!(rules[0].check(), Ok(()));
+        assert!(rules[3].check().is_err(), "a rule with nothing to match");
+        assert!(!rules[4].enabled.0);
+        let preset = IranPreset {
+            outbounds: vec![vless_outbound()],
+            user_rules: rules,
+            ..IranPreset::default()
+        };
+        let config = preset.build();
+        let built = config["routing"]["rules"].as_array().unwrap();
+        assert_eq!(
+            built[0],
+            json!({"type": "field", "domain": ["geosite:category-ir", "regexp:\\.ir$"], "outboundTag": "direct"})
+        );
+        assert_eq!(
+            built[1],
+            json!({"type": "field", "ip": ["1.2.3.0/24"], "network": "udp", "outboundTag": "block"})
+        );
+        assert_eq!(
+            built[2],
+            json!({"type": "field", "process": ["telegram"], "port": "443,8443", "outboundTag": "proxy"})
+        );
+        // Then the preset's own, starting with the ad block.
+        assert_eq!(built[3]["domain"], json!(["geosite:category-ads-all"]));
+        let (compiled, _) = parse_config(&config).unwrap();
+        assert_eq!(
+            compiled.routing.rules[2].processes,
+            vec![crate::routing::ProcessPattern::Name("telegram".into())]
+        );
+        // Stored without the field, a rule is on; saved, `enabled` is left
+        // out while it is on.
+        let stored: UserRule = serde_json::from_str(r#"{"action":"proxy","port":"22"}"#).unwrap();
+        assert!(stored.enabled.0);
+        assert!(!serde_json::to_string(&stored).unwrap().contains("enabled"));
+    }
+
+    #[test]
+    fn a_user_rule_is_checked_before_it_is_used() {
+        let rule = |value: Value| serde_json::from_value::<UserRule>(value).unwrap().check();
+        assert!(rule(json!({"domain": ["a.example"]})).is_ok());
+        assert!(rule(json!({"port": "1000-2000"})).is_ok());
+        assert!(rule(json!({"domain": [" "]})).is_err());
+        assert!(rule(json!({"port": "http"})).is_err());
+        assert!(rule(json!({"domain": ["a.example"], "network": "icmp"})).is_err());
+        assert!(serde_json::from_value::<UserRule>(json!({"action": "reject"})).is_err());
     }
 }

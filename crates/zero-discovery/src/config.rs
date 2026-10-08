@@ -118,6 +118,9 @@ struct BuildRequest {
     /// A password for the app's own use of the local proxy in VPN mode (see
     /// [`LocalAuth`]). Empty leaves the local proxy open, as before.
     local_auth: LocalAuth,
+    /// The rules of the user's routing profile, tried before the built-in
+    /// ones (`zero_config::UserRule`).
+    routing_rules: Vec<zero_config::UserRule>,
 }
 
 /// The password the host app will use on its own requests through the local
@@ -164,6 +167,7 @@ impl Default for BuildRequest {
             assets_dir: None,
             warp_order: None,
             local_auth: LocalAuth::default(),
+            routing_rules: Vec::new(),
         }
     }
 }
@@ -493,6 +497,7 @@ pub fn build_config_with_assets(
             .map(|entry| entry.trim().to_string())
             .filter(|entry| !entry.is_empty())
             .collect(),
+        user_rules: request.routing_rules.clone(),
         ..IranPreset::default()
     };
     let mut config = preset.build();
@@ -606,6 +611,16 @@ pub fn build_config_with_assets(
     }
     let multi = proxy_count > 1;
     if multi {
+        // A profile rule that says "through the tunnel" means whichever
+        // server the balancer picked, not the first one.
+        for rule in &mut rules {
+            if rule.get("outboundTag") == Some(&json!("proxy")) {
+                if let Some(rule) = rule.as_object_mut() {
+                    rule.remove("outboundTag");
+                    rule.insert("balancerTag".into(), json!("auto"));
+                }
+            }
+        }
         rules.push(json!({
             "type": "field",
             "network": "tcp,udp",
@@ -1378,6 +1393,38 @@ mod tests {
         );
         assert_eq!(mode(Some("warp-first")), zero_config::HybridMode::WarpFirst);
         assert!(build_config(&json!({"links": [account], "warp_order": "sideways"})).is_err());
+    }
+
+    /// A routing profile's rules come right after the DNS capture and ahead
+    /// of the built-in ones; "through the tunnel" is the balancer when there
+    /// is one and the proxy when there is not.
+    #[test]
+    fn profile_rules_come_first_and_proxy_follows_the_balancer() {
+        let profile = json!([
+            {"action": "proxy", "domain": ["domain:digikala.com"]},
+            {"action": "block", "process": ["self/"]},
+        ]);
+        let single = build_config(&json!({
+            "links": [SS], "evasion": "off", "routing_rules": profile,
+        }))
+        .unwrap();
+        compile(&single);
+        let rules = single["routing"]["rules"].as_array().unwrap();
+        assert_eq!(rules[0]["outboundTag"], json!("dns-out"));
+        assert_eq!(rules[1]["domain"], json!(["domain:digikala.com"]));
+        assert_eq!(rules[1]["outboundTag"], json!("proxy"));
+        assert_eq!(rules[2]["process"], json!(["self/"]));
+        assert_eq!(rules[2]["outboundTag"], json!("block"));
+
+        let several = build_config(&json!({
+            "links": [SS, WS_TLS], "routing_rules": profile,
+        }))
+        .unwrap();
+        compile(&several);
+        let rules = several["routing"]["rules"].as_array().unwrap();
+        assert_eq!(rules[1]["balancerTag"], json!("auto"));
+        assert!(rules[1].get("outboundTag").is_none());
+        assert_eq!(rules[2]["outboundTag"], json!("block"));
     }
 
     #[test]
