@@ -29,10 +29,10 @@ jobs:
     outputs:
       found: ${{ steps.test.outputs.found }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # Most runs reuse the binaries built for this commit's sources.
       - id: bin
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: bin
           key: harvest-bin-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'crates/**') }}
@@ -67,7 +67,7 @@ jobs:
             echo "::warning::Could not read the priority channels; the list stays as it is."
           fi
       - if: steps.test.outputs.found == 'yes'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: fresh
           path: |
@@ -87,8 +87,8 @@ jobs:
       group: crowd-data
       cancel-in-progress: false
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
         with:
           name: fresh
           path: new
