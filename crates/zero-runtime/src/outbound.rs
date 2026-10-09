@@ -258,7 +258,16 @@ fn shaped(tcp: TcpStream, stream: &StreamSettings, injected: bool) -> BoxStream 
     use zero_config::SniMethod;
     if let Some(spoof) = stream.evasion.sni_desync.as_ref().filter(|_| !injected) {
         use zero_evasion::choice::{self, Way};
-        let decoy = zero_evasion::decoy::supported();
+        let policy = zero_evasion::DecoyPolicy {
+            name: spoof.fake_sni.clone(),
+            fooling: match spoof.fooling {
+                zero_config::DecoyFooling::Auto => zero_evasion::Fooling::Auto,
+                zero_config::DecoyFooling::Md5 => zero_evasion::Fooling::Md5,
+                zero_config::DecoyFooling::Ttl => zero_evasion::Fooling::Ttl,
+            },
+            ttl: spoof.ttl,
+        };
+        let decoy = policy.sendable();
         let urgent = zero_evasion::urgent::supported();
         let peer = tcp.peer_addr().ok();
         let way = match spoof.method {
@@ -273,9 +282,7 @@ fn shaped(tcp: TcpStream, stream: &StreamSettings, injected: bool) -> BoxStream 
             },
         };
         match (way, spoof.method, peer) {
-            (Some(Way::Decoy), ..) => {
-                return boxed(zero_evasion::DecoyStream::new(tcp, &spoof.fake_sni))
-            }
+            (Some(Way::Decoy), ..) => return boxed(zero_evasion::DecoyStream::new(tcp, policy)),
             // Only an urgent byte the device chose is watched: one the
             // configuration asked for is kept whatever happens.
             (Some(Way::Urgent), SniMethod::Auto, Some(peer)) => {
@@ -662,26 +669,30 @@ async fn connect_resolved(
     }
     let t_resolve = t0.elapsed();
 
-    let t1 = std::time::Instant::now();
-    let tcp = dial_tcp(
-        &addrs,
-        &race_policy(&outbound.stream),
-        &socket_options(&outbound.stream),
-    )
-    .await?;
-    let t_dial = t1.elapsed();
+    let out = if reuses_h2_stream_one(outbound) {
+        connect_xhttp_stream_one(outbound, destination, &address, &addrs).await?
+    } else {
+        let t1 = std::time::Instant::now();
+        let tcp = dial_tcp(
+            &addrs,
+            &race_policy(&outbound.stream),
+            &socket_options(&outbound.stream),
+        )
+        .await?;
+        let t_dial = t1.elapsed();
 
-    let t2 = std::time::Instant::now();
-    let out = build_stack(outbound, destination, tcp.stream, &address.host_string()).await;
-    tracing::debug!(
-        resolve_ms = t_resolve.as_millis(),
-        dial_ms = t_dial.as_millis(),
-        stack_ms = t2.elapsed().as_millis(),
-        candidates = addrs.len(),
-        attempts = tcp.attempts,
-        "outbound timing"
-    );
-    let out = out?;
+        let t2 = std::time::Instant::now();
+        let out = build_stack(outbound, destination, tcp.stream, &address.host_string()).await;
+        tracing::debug!(
+            resolve_ms = t_resolve.as_millis(),
+            dial_ms = t_dial.as_millis(),
+            stack_ms = t2.elapsed().as_millis(),
+            candidates = addrs.len(),
+            attempts = tcp.attempts,
+            "outbound timing"
+        );
+        out?
+    };
     if outbound.mux.enabled {
         return zero_protocol::mux::spawn_client(out, destination.clone())
             .await
@@ -963,9 +974,13 @@ async fn protect_socket(
 ) -> Result<BoxStream, Failure> {
     let stream = &outbound.stream;
     let mut injected = false;
-    // A raw decoy is a decoy: the urgent-byte method sends none.
-    let wants_decoy =
-        |config: &&zero_config::SniDesyncConfig| config.method != zero_config::SniMethod::Urgent;
+    // A raw decoy is a decoy: the urgent-byte method sends none. Nor does a
+    // decoy asked to expire by TTL, which is a way of its own that auto mode
+    // tests separately; a raw packet in its place would test something else.
+    let wants_decoy = |config: &&zero_config::SniDesyncConfig| {
+        config.method != zero_config::SniMethod::Urgent
+            && config.fooling != zero_config::DecoyFooling::Ttl
+    };
     if let Some(config) = stream.evasion.sni_desync.as_ref().filter(wants_decoy) {
         let config = zero_evasion::SniDesyncConfig {
             fake_sni: config.fake_sni.to_string(),
@@ -1119,15 +1134,22 @@ async fn connect_xhttp_split(
             None => resolve_endpoint(&download_address, download_port).await?,
         }
     };
-    let download = dial_tcp(
-        &download_addrs,
-        &race_policy(&download_outbound.stream),
-        &socket_options(&download_outbound.stream),
-    )
-    .await?;
     let download_fallback = download_address.host_string();
-    let download = protect_socket(&download_outbound, download.stream, &download_fallback).await?;
+    // The download is set up first, as before: a plain connection for
+    // HTTP/1.1, an HTTP/2 carrier (from the XMUX pool when it reuses) for
+    // HTTP/2.
+    let dial_download = || async {
+        let download = dial_tcp(
+            &download_addrs,
+            &race_policy(&download_outbound.stream),
+            &socket_options(&download_outbound.stream),
+        )
+        .await?;
+        protect_socket(&download_outbound, download.stream, &download_fallback).await
+    };
     let fallback_host = address.host_string();
+    // The connections this proxied request runs on, kept with it to the end.
+    let mut leases = Vec::new();
     let upload_cfg = xhttp_ws_config(settings, &fallback_host, &outbound.stream.security);
     let download_cfg = xhttp_ws_config(
         download_transport,
@@ -1136,32 +1158,38 @@ async fn connect_xhttp_split(
     );
     let carrier = match (settings.xhttp_http_version, settings.xhttp_mode) {
         (XhttpHttpVersion::Http2, XhttpMode::StreamUp) => {
-            let upload = dial_tcp(
-                addrs,
-                &race_policy(&outbound.stream),
-                &socket_options(&outbound.stream),
+            let download = xhttp_h2_carrier(
+                &download_outbound,
+                &download_address,
+                &download_addrs,
+                &download_fallback,
+                &mut leases,
             )
             .await?;
-            let upload = protect_socket(outbound, upload.stream, &fallback_host).await?;
-            xhttp::connect_stream_up_h2(upload, download, &upload_cfg, &download_cfg).await
+            let upload =
+                xhttp_h2_carrier(outbound, address, addrs, &fallback_host, &mut leases).await?;
+            xhttp::connect_stream_up_h2(&upload, &download, &upload_cfg, &download_cfg).await
         }
         (XhttpHttpVersion::Http2, XhttpMode::PacketUp) => {
+            let download = xhttp_h2_carrier(
+                &download_outbound,
+                &download_address,
+                &download_addrs,
+                &download_fallback,
+                &mut leases,
+            )
+            .await?;
             // Uploads ride the download's connection unless the download
             // comes from another server.
             let upload = if settings.xhttp_download.is_some() {
-                let upload = dial_tcp(
-                    addrs,
-                    &race_policy(&outbound.stream),
-                    &socket_options(&outbound.stream),
-                )
-                .await?;
-                Some(protect_socket(outbound, upload.stream, &fallback_host).await?)
+                Some(xhttp_h2_carrier(outbound, address, addrs, &fallback_host, &mut leases).await?)
             } else {
                 None
             };
             xhttp::connect_packet_up_h2(download, &download_cfg, &upload_cfg, upload).await
         }
         (XhttpHttpVersion::Http1, XhttpMode::StreamUp) => {
+            let download = dial_download().await?;
             let upload = dial_tcp(
                 addrs,
                 &race_policy(&outbound.stream),
@@ -1172,6 +1200,7 @@ async fn connect_xhttp_split(
             xhttp::connect_stream_up(upload, download, &upload_cfg, &download_cfg).await
         }
         (XhttpHttpVersion::Http1, XhttpMode::Auto | XhttpMode::PacketUp) => {
+            let download = dial_download().await?;
             let template = outbound.clone();
             let candidates = addrs.to_vec();
             let fallback = fallback_host.clone();
@@ -1195,20 +1224,123 @@ async fn connect_xhttp_split(
             xhttp::connect_packet_up(download, &download_cfg, &upload_cfg, dialer).await
         }
         _ => unreachable!("split helper called for stream-one or auto"),
-    }
-    .map_err(|error| {
+    };
+    // A request that failed on a reused connection retires it, so the next
+    // one does not find out the same way.
+    let carrier = carrier.map_err(|error| {
+        leases.iter().for_each(crate::xmux::Lease::retire);
         Failure::new(FailureKind::HttpMalformed, Stage::RequestSent).with_detail(error)
     })?;
+    wrap_protocol(outbound, destination, crate::xmux::hold(carrier, leases)).await
+}
+
+/// The protocol's own layer over an XHTTP carrier: the VMess handshake, the
+/// VLESS Encryption one, or the plain request header in front of the first
+/// payload.
+async fn wrap_protocol(
+    outbound: &Outbound,
+    destination: &Destination,
+    carrier: BoxStream,
+) -> Result<BoxStream, Failure> {
     let header = protocol_header(outbound, destination)?;
     if let OutboundProtocol::Vmess(vmess) = &outbound.protocol {
         return wrap_vmess(carrier, vmess, destination).await;
     }
     if let OutboundProtocol::Vless(v) = &outbound.protocol {
         if v.encrypted() {
-            return send_vless(boxed(carrier), v, destination, &header).await;
+            return send_vless(carrier, v, destination, &header).await;
         }
     }
     Ok(with_header(carrier, header))
+}
+
+/// An HTTP/2 connection for XHTTP to `outbound`'s server: one from its XMUX
+/// pool when the outbound reuses connections (its lease pushed onto
+/// `leases`, to be held as long as the proxied request runs), or a new one
+/// of its own when it does not.
+async fn xhttp_h2_carrier(
+    outbound: &Outbound,
+    address: &Address,
+    addrs: &[SocketAddr],
+    fallback_host: &str,
+    leases: &mut Vec<crate::xmux::Lease>,
+) -> Result<xhttp::H2Carrier, Failure> {
+    let Transport::Xhttp(settings) = &outbound.stream.transport else {
+        unreachable!("XHTTP carrier asked for another transport")
+    };
+    let xmux = &settings.xhttp.xmux;
+    let dial = || async {
+        let tcp = dial_tcp(
+            addrs,
+            &race_policy(&outbound.stream),
+            &socket_options(&outbound.stream),
+        )
+        .await?;
+        protect_socket(outbound, tcp.stream, fallback_host).await
+    };
+    if !xmux.reuses() {
+        return xhttp::H2Carrier::open_with_keepalive(dial().await?, xmux.h_keep_alive_period)
+            .await
+            .map_err(|error| {
+                Failure::new(FailureKind::HttpMalformed, Stage::RequestSent).with_detail(error)
+            });
+    }
+    let key = mux_pool_key(outbound, address, addrs);
+    let lease = crate::xmux::lease(&key, xmux, dial).await?;
+    let carrier = lease.carrier().clone();
+    leases.push(lease);
+    Ok(carrier)
+}
+
+/// Whether `outbound` is XHTTP stream-one over HTTP/2 with connection reuse,
+/// which [`connect_xhttp_stream_one`] serves from the XMUX pool.
+fn reuses_h2_stream_one(outbound: &Outbound) -> bool {
+    matches!(
+        &outbound.stream.transport,
+        Transport::Xhttp(zero_config::WebSocketConfig {
+            xhttp_http_version: XhttpHttpVersion::Http2,
+            xhttp_mode: XhttpMode::Auto | XhttpMode::StreamOne,
+            xhttp,
+            ..
+        }) if xhttp.xmux.reuses()
+    )
+}
+
+/// XHTTP stream-one over a pooled HTTP/2 connection: the proxied request is
+/// one more stream on a connection the pool already has open, or on a new
+/// one it opens. A reused connection may have died since it was last asked,
+/// so a stream that cannot be opened on one gets one more try on another.
+async fn connect_xhttp_stream_one(
+    outbound: &Outbound,
+    destination: &Destination,
+    address: &Address,
+    addrs: &[SocketAddr],
+) -> Result<BoxStream, Failure> {
+    let Transport::Xhttp(settings) = &outbound.stream.transport else {
+        unreachable!("stream-one helper called for another transport")
+    };
+    let fallback_host = address.host_string();
+    let config = xhttp_ws_config(settings, &fallback_host, &outbound.stream.security);
+    let mut tries = 0;
+    loop {
+        let mut leases = Vec::new();
+        let carrier =
+            xhttp_h2_carrier(outbound, address, addrs, &fallback_host, &mut leases).await?;
+        match carrier.stream_one(&config).await {
+            Ok(stream) => {
+                return wrap_protocol(outbound, destination, crate::xmux::hold(stream, leases))
+                    .await
+            }
+            Err(error) => {
+                leases.iter().for_each(crate::xmux::Lease::retire);
+                tries += 1;
+                if tries == 2 {
+                    return Err(Failure::new(FailureKind::HttpMalformed, Stage::RequestSent)
+                        .with_detail(error));
+                }
+            }
+        }
+    }
 }
 
 async fn connect_xhttp_h3(

@@ -936,6 +936,8 @@ impl<'a> App<'a> {
             mux_concurrency: self.settings.mux_concurrency,
             fragment_enabled: self.settings.fragment_enabled,
             sni_spoof: self.settings.sni_spoof,
+            decoy_ttl: self.settings.decoy_ttl,
+            xhttp_reuse: self.settings.xhttp_reuse,
             routing_rules: zeronet_tui::routing_profile::active_rules(
                 &zeronet_tui::routing_profile::load(&self.settings.routing_profiles),
                 &self.settings.routing_profile,
@@ -3902,6 +3904,7 @@ impl App<'_> {
                         | "tun_mtu"
                         | "mux_concurrency"
                         | "tls_fragment_size"
+                        | "decoy_ttl"
                         | "keepalive_interval_secs"
                 ) {
                     self.reapply_engine_settings().await?;
@@ -4727,6 +4730,15 @@ impl App<'_> {
                     self.settings.tls_fragment_size as u64,
                 )
             }
+            ComponentId::SettingDecoyTtlValue => {
+                self.modal_state = number(
+                    "Decoy Reach (hops, 0 = off)",
+                    "decoy_ttl",
+                    0,
+                    64,
+                    u64::from(self.settings.decoy_ttl),
+                )
+            }
             ComponentId::SettingJitterValue => {
                 self.modal_state = number(
                     "Jitter Delay (ms)",
@@ -4876,6 +4888,16 @@ impl App<'_> {
             ComponentId::SettingFragmentPlus => {
                 self.settings.tls_fragment_size = (self.settings.tls_fragment_size + 25).min(1500);
                 self.save_and_report(format!("TLS fragment {}B", self.settings.tls_fragment_size));
+                self.reapply_engine_settings().await?;
+            }
+            ComponentId::SettingDecoyTtlMinus => {
+                self.settings.decoy_ttl = self.settings.decoy_ttl.saturating_sub(1);
+                self.save_and_report(decoy_ttl_report(self.settings.decoy_ttl));
+                self.reapply_engine_settings().await?;
+            }
+            ComponentId::SettingDecoyTtlPlus => {
+                self.settings.decoy_ttl = (self.settings.decoy_ttl + 1).min(64);
+                self.save_and_report(decoy_ttl_report(self.settings.decoy_ttl));
                 self.reapply_engine_settings().await?;
             }
             ComponentId::SettingJitterMinus => {
@@ -5079,6 +5101,16 @@ impl App<'_> {
                     }
                 } else {
                     "SNI spoofing off".to_string()
+                });
+                self.reapply_engine_settings().await?;
+            }
+            ComponentId::SettingXhttpReuseToggle => {
+                self.settings.xhttp_reuse = !self.settings.xhttp_reuse;
+                self.save_and_report(if self.settings.xhttp_reuse {
+                    "XHTTP reuse on: new connections ride open ones, and a server where that stalls gets its own for a while"
+                        .to_string()
+                } else {
+                    "XHTTP reuse off: every connection opens its own".to_string()
                 });
                 self.reapply_engine_settings().await?;
             }
@@ -5452,12 +5484,24 @@ fn cycle(current: &str, options: &[&str]) -> String {
     options[(idx + 1) % options.len()].to_string()
 }
 
+/// What the status line says after the decoy's hop count changes.
+fn decoy_ttl_report(ttl: u8) -> String {
+    match ttl {
+        0 => "Decoy reach off: no decoy where only a TTL could stop it".to_string(),
+        _ if zero_evasion::decoy::supported() => {
+            format!("Decoy reach {ttl} hops (unused here: this system has MD5)")
+        }
+        _ => format!("Decoy reach {ttl} hops"),
+    }
+}
+
 fn apply_number_setting(key: &str, val: u64, settings: &mut AppSettings) {
     match key {
         "tun_mtu" => settings.tun_mtu = val as u16,
         "socks_port" => settings.socks_port = val as u16,
         "http_port" => settings.http_port = val as u16,
         "tls_fragment_size" => settings.tls_fragment_size = val as u16,
+        "decoy_ttl" => settings.decoy_ttl = val.min(64) as u8,
         "jitter_delay_ms" => settings.jitter_delay_ms = val,
         "scanner_concurrency" => settings.scanner_concurrency = val as usize,
         "mux_concurrency" => settings.mux_concurrency = val as u16,
@@ -5896,6 +5940,7 @@ mod tests {
             "socks_port",
             "http_port",
             "tls_fragment_size",
+            "decoy_ttl",
             "jitter_delay_ms",
             "scanner_concurrency",
             "mux_concurrency",

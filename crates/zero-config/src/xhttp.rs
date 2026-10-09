@@ -33,6 +33,7 @@ pub struct XhttpSettings {
     pub no_sse_header: bool,
     pub sc_max_each_post_bytes: (u32, u32),
     pub sc_min_posts_interval_ms: (u32, u32),
+    pub xmux: XmuxConfig,
 }
 
 impl Default for XhttpSettings {
@@ -58,8 +59,171 @@ impl Default for XhttpSettings {
             no_sse_header: false,
             sc_max_each_post_bytes: (1_000_000, 1_000_000),
             sc_min_posts_interval_ms: (30, 30),
+            xmux: XmuxConfig::DEFAULTS,
         }
     }
+}
+
+/// XHTTP's connection-reuse controls: `extra.xmux`.
+///
+/// Xray rotates its connections on purpose, and for two reasons that both
+/// matter here.
+///
+/// The first is reliability. A reverse proxy caps a reused connection —
+/// Nginx allows about 1000 requests on one connection and retires it after
+/// about an hour — so a connection held past that is cut by something the
+/// client cannot see, which arrives as a stalled session rather than an
+/// error. A middlebox that expires flows kills it too.
+///
+/// The second is that a connection which never rotates is a fingerprint.
+/// Xray draws these limits as ranges, so two connections from one client
+/// roll over at different moments and the start times never line up.
+///
+/// `(0, 0)` and `0` mean "no limit" for every field.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct XmuxConfig {
+    /// Proxied requests one connection may carry at once. When a connection
+    /// reaches this the next request opens a new connection. The alternative
+    /// to [`Self::max_connections`], which caps how many are open instead;
+    /// the two cannot both be set.
+    pub max_concurrency: (u32, u32),
+    /// Connections open at once. While below this, every new proxied request
+    /// opens a new connection; from here on connections are reused.
+    pub max_connections: (u32, u32),
+    /// How many times one connection may be handed out.
+    pub c_max_reuse_times: (u32, u32),
+    /// HTTP requests one connection may serve before it stops taking more.
+    pub h_max_request_times: (u32, u32),
+    /// Seconds one connection may be reused for.
+    pub h_max_reusable_secs: (u32, u32),
+    /// Seconds between keepalive PINGs on HTTP/2 or HTTP/3. Negative turns
+    /// them off, zero means the browser's own (45 s for HTTP/2, 10 s for
+    /// HTTP/3). The one field that takes no range.
+    pub h_keep_alive_period: i32,
+}
+
+impl XmuxConfig {
+    /// What a config that leaves every field at zero gets, which is Xray's
+    /// rule: an `xmux` that is absent, empty or all zeros is the same thing.
+    pub const DEFAULTS: Self = Self {
+        max_concurrency: (0, 0),
+        max_connections: (3, 3),
+        c_max_reuse_times: (0, 0),
+        h_max_request_times: (600, 900),
+        h_max_reusable_secs: (1800, 3000),
+        h_keep_alive_period: 0,
+    };
+
+    /// No reuse at all: every proxied request gets a connection of its own,
+    /// handed out once, with no keepalive PINGs. Not something Xray can
+    /// spell in one word; the app's switch for "do not reuse" writes this.
+    pub const OFF: Self = Self {
+        max_concurrency: (0, 0),
+        max_connections: (0, 0),
+        c_max_reuse_times: (0, 0),
+        h_max_request_times: (1, 1),
+        h_max_reusable_secs: (0, 0),
+        h_keep_alive_period: -1,
+    };
+
+    /// Every field at zero: nothing limits anything.
+    pub const NONE: Self = Self {
+        max_concurrency: (0, 0),
+        max_connections: (0, 0),
+        c_max_reuse_times: (0, 0),
+        h_max_request_times: (0, 0),
+        h_max_reusable_secs: (0, 0),
+        h_keep_alive_period: 0,
+    };
+}
+
+impl XmuxConfig {
+    /// Whether a connection may ever carry a second proxied request. False
+    /// when it may serve only one HTTP request, which is no reuse at all and
+    /// needs no pool. (`cMaxReuseTimes` of one still allows a second use:
+    /// Xray does not count the first.)
+    pub fn reuses(&self) -> bool {
+        self.h_max_request_times != (1, 1)
+    }
+
+    /// The `xmux` overlay on a link outbound: `false` for no reuse, `true`
+    /// for what the link says (or Xray's defaults), an object for those
+    /// settings instead. A link cannot say how this network wants its
+    /// connections reused, so the app lays it on, as it does `evasion`.
+    pub fn overlay(&self, value: &Value) -> Result<Self, String> {
+        match value {
+            Value::Bool(false) => Ok(Self::OFF),
+            Value::Bool(true) => Ok(*self),
+            Value::Object(object) => parse_xmux(object),
+            _ => Err("xmux must be true, false or an object".into()),
+        }
+    }
+}
+
+impl Default for XmuxConfig {
+    fn default() -> Self {
+        Self::DEFAULTS
+    }
+}
+
+/// Parse `extra.xmux` the way Xray does.
+///
+/// Every field starts at zero and takes what the object names. A result that
+/// is still all zeros (an empty object, or one that names only zeros) takes
+/// [`XmuxConfig::DEFAULTS`]; anything else is used as written, so a config
+/// that names one field gets no limits on the others. `maxConnections` and
+/// `maxConcurrency` cannot both be above zero.
+///
+/// ```text
+/// {}                         -> DEFAULTS (3 connections, rotated)
+/// {"maxConcurrency": "4-8"}  -> 4 to 8 requests per connection, nothing else
+/// ```
+fn parse_xmux(o: &Map<String, Value>) -> Result<XmuxConfig, String> {
+    let mut x = XmuxConfig::NONE;
+    let ranges = [
+        (
+            "maxConcurrency",
+            "xmux.maxConcurrency",
+            &mut x.max_concurrency,
+        ),
+        (
+            "maxConnections",
+            "xmux.maxConnections",
+            &mut x.max_connections,
+        ),
+        (
+            "cMaxReuseTimes",
+            "xmux.cMaxReuseTimes",
+            &mut x.c_max_reuse_times,
+        ),
+        (
+            "hMaxRequestTimes",
+            "xmux.hMaxRequestTimes",
+            &mut x.h_max_request_times,
+        ),
+        (
+            "hMaxReusableSecs",
+            "xmux.hMaxReusableSecs",
+            &mut x.h_max_reusable_secs,
+        ),
+    ];
+    for (key, name, field) in ranges {
+        if let Some(v) = o.get(key) {
+            *field = range(v, name)?;
+        }
+    }
+    if let Some(v) = o.get("hKeepAlivePeriod") {
+        let n = v.as_i64().ok_or("xmux.hKeepAlivePeriod must be a number")?;
+        x.h_keep_alive_period = n.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32;
+    }
+    if x.max_connections.1 > 0 && x.max_concurrency.1 > 0 {
+        return Err("xmux.maxConnections cannot be set together with xmux.maxConcurrency".into());
+    }
+    Ok(if x == XmuxConfig::NONE {
+        XmuxConfig::DEFAULTS
+    } else {
+        x
+    })
 }
 
 /// Xray's `Int32Range`: a number, a `"from-to"` string, or `{from, to}`.
@@ -256,6 +420,12 @@ pub fn parse_settings(o: &Map<String, Value>, mode: XhttpMode) -> Result<XhttpSe
     if interval.1 > 0 {
         s.sc_min_posts_interval_ms = interval;
     }
+    if let Some(xmux) = o.get("xmux") {
+        let object = xmux
+            .as_object()
+            .ok_or("xhttpSettings.xmux must be an object")?;
+        s.xmux = parse_xmux(object)?;
+    }
     Ok(s)
 }
 
@@ -318,6 +488,53 @@ mod tests {
             (&*s.seq_placement, &*s.seq_key),
             ("header", "Upload-Offset")
         );
+    }
+
+    /// Xray's rule: absent, empty and all-zero `xmux` are the defaults; one
+    /// named field takes away the defaults of the others.
+    #[test]
+    fn xmux_follows_xray_defaults() {
+        let m = XhttpMode::StreamOne;
+        assert_eq!(parse("{}", m).unwrap().xmux, XmuxConfig::DEFAULTS);
+        assert_eq!(
+            parse(r#"{"xmux":{}}"#, m).unwrap().xmux,
+            XmuxConfig::DEFAULTS
+        );
+        assert_eq!(
+            parse(r#"{"xmux":{"maxConnections":0}}"#, m).unwrap().xmux,
+            XmuxConfig::DEFAULTS
+        );
+        let x = parse(r#"{"xmux":{"maxConcurrency":"4-8"}}"#, m)
+            .unwrap()
+            .xmux;
+        assert_eq!(x.max_concurrency, (4, 8));
+        assert_eq!(x.max_connections, (0, 0));
+        assert_eq!(x.h_max_request_times, (0, 0));
+        let x = parse(r#"{"xmux":{"hKeepAlivePeriod":-1}}"#, m)
+            .unwrap()
+            .xmux;
+        assert_eq!(x.h_keep_alive_period, -1);
+        assert_eq!(x.max_connections, (0, 0));
+        // Zero on one side of the pair is not "set".
+        assert!(parse(r#"{"xmux":{"maxConcurrency":8,"maxConnections":0}}"#, m).is_ok());
+        assert!(parse(r#"{"xmux":{"maxConcurrency":8,"maxConnections":2}}"#, m).is_err());
+        assert!(parse(r#"{"xmux":5}"#, m).is_err());
+        assert!(parse(r#"{"xmux":{"hKeepAlivePeriod":"x"}}"#, m).is_err());
+    }
+
+    #[test]
+    fn the_xmux_overlay_switches_reuse_off_and_on() {
+        let own = XmuxConfig {
+            max_concurrency: (2, 4),
+            ..XmuxConfig::NONE
+        };
+        assert_eq!(own.overlay(&Value::Bool(false)).unwrap(), XmuxConfig::OFF);
+        assert!(!XmuxConfig::OFF.reuses());
+        assert_eq!(own.overlay(&Value::Bool(true)).unwrap(), own);
+        assert!(own.reuses() && XmuxConfig::DEFAULTS.reuses());
+        let custom: Value = serde_json::from_str(r#"{"maxConnections": 2}"#).unwrap();
+        assert_eq!(own.overlay(&custom).unwrap().max_connections, (2, 2));
+        assert!(own.overlay(&Value::from(3)).is_err());
     }
 
     #[test]

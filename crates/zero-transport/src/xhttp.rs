@@ -192,35 +192,23 @@ fn response_status(head: &str) -> Option<u16> {
 /// each uplink read becomes a fixed-length POST on the same connection, as
 /// Xray multiplexes them.
 ///
-/// `upload` is a separate connection for the uploads when the download comes
+/// Both legs are streams on carriers ([`H2Carrier`]), so they can share a
+/// connection with other proxied requests (XMUX). `upload` is a separate
+/// carrier for the uploads when the download comes
 /// from another server (`downloadSettings`); otherwise the uploads share the
 /// download's connection.
 pub async fn connect_packet_up_h2(
-    download: BoxStream,
+    download: H2Carrier,
     download_config: &WsConfig,
     upload_config: &WsConfig,
-    upload: Option<BoxStream>,
+    upload: Option<H2Carrier>,
 ) -> Result<BoxStream, String> {
     let session = download_config.xhttp.new_session_id();
-    let (mut sender, connection) = h2::client::Builder::new()
-        .initial_window_size(H2_FLOW_CONTROL_WINDOW)
-        .initial_connection_window_size(H2_FLOW_CONTROL_WINDOW)
-        .handshake::<_, Bytes>(download)
-        .await
-        .map_err(|error| format!("XHTTP H2 packet download handshake: {error}"))?;
-    tokio::spawn(async move {
-        if let Err(error) = connection.await {
-            tracing::debug!(%error, "XHTTP H2 packet download connection ended");
-        }
-    });
-    sender = sender
-        .ready()
-        .await
-        .map_err(|error| format!("XHTTP H2 packet download capacity: {error}"))?;
     let request = h2_request(download_config, RequestKind::StreamDown, Some(&session))?;
-    let (response, _send) = sender
-        .send_request(request, true)
-        .map_err(|error| format!("XHTTP H2 packet download request: {error}"))?;
+    let (response, _send) = download
+        .send(request, true)
+        .await
+        .map_err(|error| format!("XHTTP H2 packet download: {error}"))?;
 
     // Await the response before returning: the server opens the packet
     // session while handling this GET and answers only afterwards, so the
@@ -238,23 +226,7 @@ pub async fn connect_packet_up_h2(
         ));
     }
 
-    let upload_sender = match upload {
-        None => sender,
-        Some(upload) => {
-            let (upload_sender, connection) = h2::client::Builder::new()
-                .initial_window_size(H2_FLOW_CONTROL_WINDOW)
-                .initial_connection_window_size(H2_FLOW_CONTROL_WINDOW)
-                .handshake::<_, Bytes>(upload)
-                .await
-                .map_err(|error| format!("XHTTP H2 packet upload handshake: {error}"))?;
-            tokio::spawn(async move {
-                if let Err(error) = connection.await {
-                    tracing::debug!(%error, "XHTTP H2 packet upload connection ended");
-                }
-            });
-            upload_sender
-        }
-    };
+    let upload_carrier = upload.unwrap_or(download);
     let (app, worker) = tokio::io::duplex(128 * 1024);
     let upload_config = upload_config.clone();
     tokio::spawn(run_packet_exchange_h2(
@@ -262,7 +234,7 @@ pub async fn connect_packet_up_h2(
         worker,
         upload_config,
         session,
-        upload_sender,
+        upload_carrier,
     ));
     Ok(zero_core::boxed(app))
 }
@@ -272,7 +244,7 @@ async fn run_packet_exchange_h2(
     app: tokio::io::DuplexStream,
     upload_config: WsConfig,
     session: String,
-    sender: h2::client::SendRequest<Bytes>,
+    carrier: H2Carrier,
 ) {
     let (mut app_read, app_write) = tokio::io::split(app);
     let download = h2_download_body(body, app_write);
@@ -306,14 +278,10 @@ async fn run_packet_exchange_h2(
             );
             let body_len = if request.body { n } else { 0 };
             let request = http_request(&upload_config, &request, Some(body_len), scheme)?;
-            let mut sender = sender
-                .clone()
-                .ready()
+            let (response, mut send) = carrier
+                .send(request, body_len == 0)
                 .await
-                .map_err(|error| format!("XHTTP H2 packet upload capacity: {error}"))?;
-            let (response, mut send) = sender
-                .send_request(request, body_len == 0)
-                .map_err(|error| format!("XHTTP H2 packet upload request: {error}"))?;
+                .map_err(|error| format!("XHTTP H2 packet upload: {error}"))?;
             if body_len > 0 {
                 send.send_data(Bytes::copy_from_slice(&buffer[..n]), true)
                     .map_err(|error| format!("XHTTP H2 packet upload body: {error}"))?;
@@ -1185,31 +1153,173 @@ pub async fn accept(mut stream: BoxStream, config: &WsConfig) -> Result<BoxStrea
 /// release the peer's flow-control credit as soon as application bytes are
 /// copied, so one stalled logical flow cannot consume the connection window.
 pub async fn connect_h2(stream: BoxStream, config: &WsConfig) -> Result<BoxStream, String> {
-    let (mut sender, connection) = h2::client::Builder::new()
-        .initial_window_size(H2_FLOW_CONTROL_WINDOW)
-        .initial_connection_window_size(H2_FLOW_CONTROL_WINDOW)
-        .handshake::<_, Bytes>(stream)
-        .await
-        .map_err(|error| format!("XHTTP HTTP/2 handshake: {error}"))?;
-    tokio::spawn(async move {
-        if let Err(error) = connection.await {
-            tracing::debug!(%error, "XHTTP HTTP/2 connection ended");
-        }
-    });
+    let carrier = H2Carrier::open(stream).await?;
+    carrier.stream_one(config).await
+}
 
-    sender = sender
-        .ready()
-        .await
-        .map_err(|error| format!("XHTTP HTTP/2 stream capacity: {error}"))?;
+/// Chrome's HTTP/2 keepalive, which an `hKeepAlivePeriod` of zero means.
+const CHROME_H2_KEEP_ALIVE: Duration = Duration::from_secs(45);
 
-    let request = h2_request(config, RequestKind::StreamOne, None)?;
-    let (response, send_stream) = sender
-        .send_request(request, false)
-        .map_err(|error| format!("XHTTP HTTP/2 request: {error}"))?;
+/// One open HTTP/2 connection that XHTTP opens proxied requests on.
+///
+/// [`Self::open`] does the handshake and starts the task that drives the
+/// connection; nothing is sent until a request is opened, so a carrier may be
+/// prepared ahead of need. [`Self::stream_one`] opens one proxied request as
+/// a new stream on the same connection, which is what XMUX reuses — see
+/// `zero_config::XmuxConfig`.
+///
+/// Dropping the carrier does not close the connection: streams already
+/// opened on it keep it alive, and h2 ends the connection by itself once the
+/// last stream and the last send handle are gone.
+///
+/// The counters are what a pool rotates on: [`Self::requests`] against
+/// `hMaxRequestTimes` and [`Self::age`] against `hMaxReusableSecs`, because a
+/// reverse proxy in front of the server caps a reused connection too and a
+/// client that never rotates is recognisable.
+#[derive(Clone)]
+pub struct H2Carrier {
+    /// Cheap to clone: each request clones it, so requests never wait on
+    /// one another for the handle, only for the connection's own capacity.
+    sender: h2::client::SendRequest<Bytes>,
+    /// Shared by every clone, so a request counts against the connection
+    /// whichever handle opened it.
+    stats: Arc<CarrierStats>,
+}
 
-    let (app, worker) = tokio::io::duplex(128 * 1024);
-    tokio::spawn(run_h2_exchange(response, send_stream, worker));
-    Ok(zero_core::boxed(app))
+struct CarrierStats {
+    /// HTTP requests opened on this connection.
+    requests: std::sync::atomic::AtomicU32,
+    /// When the connection was opened.
+    born: std::time::Instant,
+}
+
+impl H2Carrier {
+    /// Handshake over an already-established `stream`, with no keepalive
+    /// PINGs. Nothing is sent.
+    pub async fn open(stream: BoxStream) -> Result<Self, String> {
+        Self::open_with_keepalive(stream, -1).await
+    }
+
+    /// [`Self::open`], with a PING every `keep_alive_secs` seconds while the
+    /// connection lives: `hKeepAlivePeriod`'s meaning, where negative is
+    /// none and zero is Chrome's 45 s. A PING keeps a NAT or middlebox from
+    /// forgetting a quiet connection.
+    pub async fn open_with_keepalive(
+        stream: BoxStream,
+        keep_alive_secs: i32,
+    ) -> Result<Self, String> {
+        let (sender, mut connection) = h2::client::Builder::new()
+            .initial_window_size(H2_FLOW_CONTROL_WINDOW)
+            .initial_connection_window_size(H2_FLOW_CONTROL_WINDOW)
+            .handshake::<_, Bytes>(stream)
+            .await
+            .map_err(|error| format!("XHTTP HTTP/2 handshake: {error}"))?;
+        let period = match keep_alive_secs {
+            0 => Some(CHROME_H2_KEEP_ALIVE),
+            n if n > 0 => Some(Duration::from_secs(n.unsigned_abs().into())),
+            _ => None,
+        };
+        let pings = period.and_then(|period| Some((period, connection.ping_pong()?)));
+        tokio::spawn(async move {
+            let run = async {
+                if let Err(error) = connection.await {
+                    tracing::debug!(%error, "XHTTP HTTP/2 connection ended");
+                }
+            };
+            let Some((period, mut ping)) = pings else {
+                return run.await;
+            };
+            let keep = async move {
+                let mut tick =
+                    tokio::time::interval_at(tokio::time::Instant::now() + period, period);
+                loop {
+                    tick.tick().await;
+                    if ping.ping(h2::Ping::opaque()).await.is_err() {
+                        break;
+                    }
+                }
+                // A failed PING means the connection is going; let `run`
+                // report how, rather than cutting it short here.
+                std::future::pending::<()>().await
+            };
+            tokio::select! {
+                () = run => {}
+                () = keep => {}
+            }
+        });
+        let sender = sender
+            .ready()
+            .await
+            .map_err(|error| format!("XHTTP HTTP/2 stream capacity: {error}"))?;
+        Ok(Self {
+            sender,
+            stats: Arc::new(CarrierStats {
+                requests: std::sync::atomic::AtomicU32::new(0),
+                born: std::time::Instant::now(),
+            }),
+        })
+    }
+
+    /// Open one proxied request as a stream-one exchange: the request body is
+    /// the uplink and the response body the downlink.
+    pub async fn stream_one(&self, config: &WsConfig) -> Result<BoxStream, String> {
+        let request = h2_request(config, RequestKind::StreamOne, None)?;
+        self.request(request).await
+    }
+
+    /// Open one already-built HTTP/2 request on this connection and pump its
+    /// two directions. Which requests are opened is the caller's business;
+    /// this only puts them on one connection.
+    pub async fn request(&self, request: Request<()>) -> Result<BoxStream, String> {
+        let (response, send_stream) = self.send(request, false).await?;
+        let (app, worker) = tokio::io::duplex(128 * 1024);
+        tokio::spawn(run_h2_exchange(response, send_stream, worker));
+        Ok(zero_core::boxed(app))
+    }
+
+    /// Send one request on this connection, waiting for a free stream slot
+    /// first, and count it. `end` says the request has no body. Every
+    /// request a mode makes goes through here, so [`Self::requests`] is the
+    /// number `hMaxRequestTimes` is held against.
+    pub async fn send(
+        &self,
+        request: Request<()>,
+        end: bool,
+    ) -> Result<(h2::client::ResponseFuture, h2::SendStream<Bytes>), String> {
+        self.stats
+            .requests
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let mut sender = self
+            .sender
+            .clone()
+            .ready()
+            .await
+            .map_err(|error| format!("XHTTP HTTP/2 stream capacity: {error}"))?;
+        sender
+            .send_request(request, end)
+            .map_err(|error| format!("XHTTP HTTP/2 request: {error}"))
+    }
+
+    /// HTTP requests opened on this connection so far.
+    pub fn requests(&self) -> u32 {
+        self.stats
+            .requests
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// How long this connection has been open.
+    pub fn age(&self) -> Duration {
+        self.stats.born.elapsed()
+    }
+
+    /// Whether the connection can still take a request, asked without a
+    /// round trip: h2 reports a dead connection when asked for capacity.
+    /// A connection that is only out of stream slots right now still counts.
+    pub fn is_usable(&self) -> bool {
+        let mut sender = self.sender.clone();
+        let mut cx = std::task::Context::from_waker(futures::task::noop_waker_ref());
+        !matches!(sender.poll_ready(&mut cx), std::task::Poll::Ready(Err(_)))
+    }
 }
 
 /// Accept XHTTP stream-one over HTTP/2. The request body is the uplink and the
@@ -2050,14 +2160,16 @@ async fn pair_h3_server_legs(upload: BoxStream, download: BoxStream) -> BoxStrea
     zero_core::boxed(app)
 }
 
-/// Open XHTTP stream-up over two independent HTTP/2 connections.
+/// Open XHTTP stream-up over HTTP/2.
 ///
 /// The upload leg is a POST whose request body is the logical uplink. The
 /// download leg is a GET whose response body is the logical downlink. Each
-/// leg owns its own HTTP/2 connection, matching Xray's split resource model.
+/// leg is one stream on the carrier it is given: two carriers for two
+/// connections, or the same one twice when XMUX hands both legs one
+/// connection, as Xray's shared HTTP client does.
 pub async fn connect_stream_up_h2(
-    upload: BoxStream,
-    download: BoxStream,
+    upload: &H2Carrier,
+    download: &H2Carrier,
     upload_config: &WsConfig,
     download_config: &WsConfig,
 ) -> Result<BoxStream, String> {
@@ -2092,29 +2204,15 @@ enum H2LegKind {
 }
 
 async fn connect_h2_upload_leg(
-    stream: BoxStream,
+    carrier: &H2Carrier,
     config: &WsConfig,
     session: &str,
 ) -> Result<BoxStream, String> {
-    let (mut sender, connection) = h2::client::Builder::new()
-        .initial_window_size(H2_FLOW_CONTROL_WINDOW)
-        .initial_connection_window_size(H2_FLOW_CONTROL_WINDOW)
-        .handshake::<_, Bytes>(stream)
-        .await
-        .map_err(|error| format!("XHTTP H2 upload handshake: {error}"))?;
-    tokio::spawn(async move {
-        if let Err(error) = connection.await {
-            tracing::debug!(%error, "XHTTP H2 upload connection ended");
-        }
-    });
-    sender = sender
-        .ready()
-        .await
-        .map_err(|error| format!("XHTTP H2 upload capacity: {error}"))?;
     let request = h2_request(config, RequestKind::StreamUp, Some(session))?;
-    let (response, send) = sender
-        .send_request(request, false)
-        .map_err(|error| format!("XHTTP H2 upload request: {error}"))?;
+    let (response, send) = carrier
+        .send(request, false)
+        .await
+        .map_err(|error| format!("XHTTP H2 upload: {error}"))?;
     let (app, worker) = tokio::io::duplex(128 * 1024);
     tokio::spawn(async move {
         let (app_read, _) = tokio::io::split(worker);
@@ -2144,29 +2242,15 @@ async fn connect_h2_upload_leg(
 }
 
 async fn connect_h2_download_leg(
-    stream: BoxStream,
+    carrier: &H2Carrier,
     config: &WsConfig,
     session: &str,
 ) -> Result<BoxStream, String> {
-    let (mut sender, connection) = h2::client::Builder::new()
-        .initial_window_size(H2_FLOW_CONTROL_WINDOW)
-        .initial_connection_window_size(H2_FLOW_CONTROL_WINDOW)
-        .handshake::<_, Bytes>(stream)
-        .await
-        .map_err(|error| format!("XHTTP H2 download handshake: {error}"))?;
-    tokio::spawn(async move {
-        if let Err(error) = connection.await {
-            tracing::debug!(%error, "XHTTP H2 download connection ended");
-        }
-    });
-    sender = sender
-        .ready()
-        .await
-        .map_err(|error| format!("XHTTP H2 download capacity: {error}"))?;
     let request = h2_request(config, RequestKind::StreamDown, Some(session))?;
-    let (response, _send) = sender
-        .send_request(request, true)
-        .map_err(|error| format!("XHTTP H2 download request: {error}"))?;
+    let (response, _send) = carrier
+        .send(request, true)
+        .await
+        .map_err(|error| format!("XHTTP H2 download: {error}"))?;
     let (app, worker) = tokio::io::duplex(128 * 1024);
     tokio::spawn(async move {
         let (_, app_write) = tokio::io::split(worker);
@@ -3098,6 +3182,75 @@ mod tests {
         server_task.abort();
     }
 
+    /// Several proxied requests share one carrier, the carrier going away
+    /// does not take its open streams with it, keepalive PINGs leave the
+    /// connection working, and a closed connection reads as unusable.
+    #[tokio::test]
+    async fn one_h2_carrier_carries_several_requests_and_outlives_its_handle() {
+        let (client, server) = tokio::io::duplex(128 * 1024);
+        let server_task = tokio::spawn(async move {
+            let mut connection = h2::server::handshake(server).await.unwrap();
+            while let Some(result) = connection.accept().await {
+                tokio::spawn(async move {
+                    let (request, mut respond) = result.unwrap();
+                    let mut body = request.into_body();
+                    let response = http::Response::builder().status(200).body(()).unwrap();
+                    let mut send = respond.send_response(response, false).unwrap();
+                    while let Some(chunk) = body.data().await {
+                        let chunk = chunk.unwrap();
+                        body.flow_control().release_capacity(chunk.len()).unwrap();
+                        if !chunk.is_empty() {
+                            send.send_data(chunk, true).unwrap();
+                            break;
+                        }
+                    }
+                });
+            }
+        });
+        let config = WsConfig::new("/x", "example.com");
+        let carrier = H2Carrier::open_with_keepalive(zero_core::boxed(client), 1)
+            .await
+            .unwrap();
+        let mut first = carrier.stream_one(&config).await.unwrap();
+        let mut second = carrier.stream_one(&config).await.unwrap();
+        assert_eq!(carrier.requests(), 2);
+        assert!(carrier.is_usable());
+        // Past one keepalive period, with a PING sent and answered.
+        tokio::time::sleep(Duration::from_millis(1300)).await;
+        let mut third = carrier.stream_one(&config).await.unwrap();
+        drop(carrier);
+        for (stream, word) in [
+            (&mut first, b"one!"),
+            (&mut second, b"two!"),
+            (&mut third, b"tri!"),
+        ] {
+            stream.write_all(word).await.unwrap();
+            stream.flush().await.unwrap();
+            let mut echo = [0u8; 4];
+            stream.read_exact(&mut echo).await.unwrap();
+            assert_eq!(&echo, word);
+        }
+
+        let (client, server) = tokio::io::duplex(64 * 1024);
+        let closing = tokio::spawn(async move {
+            let mut connection = h2::server::handshake(server).await.unwrap();
+            connection.abrupt_shutdown(h2::Reason::NO_ERROR);
+            let _ = connection.accept().await;
+        });
+        let carrier = H2Carrier::open(zero_core::boxed(client)).await.unwrap();
+        closing.await.unwrap();
+        let mut gone = false;
+        for _ in 0..50 {
+            if !carrier.is_usable() {
+                gone = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        assert!(gone, "a closed connection must not read as usable");
+        server_task.abort();
+    }
+
     #[tokio::test]
     async fn accepts_h2_stream_one_and_relays_bidirectional_bytes() {
         let (client, server) = tokio::io::duplex(128 * 1024);
@@ -3232,14 +3385,15 @@ mod tests {
             .unwrap()
         });
 
-        let mut client = connect_stream_up_h2(
-            zero_core::boxed(client_upload),
-            zero_core::boxed(client_download),
-            &config,
-            &config,
-        )
-        .await
-        .unwrap();
+        let upload = H2Carrier::open(zero_core::boxed(client_upload))
+            .await
+            .unwrap();
+        let download = H2Carrier::open(zero_core::boxed(client_download))
+            .await
+            .unwrap();
+        let mut client = connect_stream_up_h2(&upload, &download, &config, &config)
+            .await
+            .unwrap();
         // The paired stream comes out of the download leg's connection; the
         // upload leg's connection stays open for further requests.
         let mut server = download_task.await.unwrap().expect("download leg");
@@ -3330,10 +3484,12 @@ mod tests {
             .expect("download leg")
         });
         // Uploads share the download's connection, as Xray's do.
-        let mut client =
-            connect_packet_up_h2(zero_core::boxed(client_download), &config, &config, None)
-                .await
-                .unwrap();
+        let download = H2Carrier::open(zero_core::boxed(client_download))
+            .await
+            .unwrap();
+        let mut client = connect_packet_up_h2(download, &config, &config, None)
+            .await
+            .unwrap();
         let mut server = download_task.await.unwrap();
         let server_task = tokio::spawn(async move {
             let mut request = [0u8; 4];

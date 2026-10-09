@@ -404,6 +404,13 @@
     <string name="settings_decoy_always_hint">Every connection hides its server name from the filter, the quick way first. Only a server that does not answer that way gets the slower one, which starts each connection about a third of a second later.</string>
     <string name="option_always">Always</string>
     <string name="settings_decoy_test">Test on this phone</string>
+    <string name="settings_decoy_ttl">Decoy reach (routers)</string>
+    <string name="settings_decoy_ttl_hint">Only for phones that cannot stop the decoy name another way: it is sent to fade out after this many routers, before it reaches the server. Auto tries it as a server of its own and keeps it only if it gets through.</string>
+    <string name="settings_decoy_ttl_off_hint">Phones that cannot stop the decoy name another way send none.</string>
+    <string name="settings_reuse">Reuse connections (XHTTP)</string>
+    <string name="settings_reuse_off_hint">Every connection opens its own link to the server.</string>
+    <string name="settings_reuse_auto_hint">Reuses open links where that works and keeps whichever way answers faster. A server whose reused links stall goes back to links of its own.</string>
+    <string name="settings_reuse_on_hint">New connections ride links that are already open, so they start faster. A server whose reused links stall goes back to links of its own for a while.</string>
     <string name="decoy_test_running">Testing…</string>
     <string name="decoy_test_unsupported">This phone can\'t hide the server name; its system doesn\'t allow it. ZeroNet uses its other methods instead.</string>
     <string name="decoy_test_broken">This phone tried to hide the name, but the connection didn\'t arrive right in a test inside the phone, so it can\'t be relied on here.</string>

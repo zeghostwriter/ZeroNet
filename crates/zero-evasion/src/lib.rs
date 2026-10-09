@@ -13,7 +13,7 @@ pub mod rand_between;
 pub mod sni_desync;
 pub mod urgent;
 
-pub use decoy::DecoyStream;
+pub use decoy::{DecoyPolicy, DecoyStream, Fooling};
 pub use fragment::{FragmentPolicy, FragmentStream, Packets};
 pub use keepalive::{
     KeepaliveAction, KeepaliveCarrier, KeepalivePolicy, KeepaliveState, KeepaliveStream,

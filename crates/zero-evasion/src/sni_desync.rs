@@ -25,7 +25,9 @@ pub struct SniDesyncConfig {
 impl Default for SniDesyncConfig {
     fn default() -> Self {
         Self {
-            fake_sni: "www.microsoft.com".into(),
+            // The same allow-listed name the decoy and the REALITY masker
+            // use: it resolves on many networks and nobody throttles it.
+            fake_sni: "www.speedtest.net".into(),
             sequence: 0,
         }
     }
@@ -36,11 +38,15 @@ impl Default for SniDesyncConfig {
 /// The shape is the public MIT-licensed template used by the reference
 /// `sni-spoofing-rust` implementation. Only the SNI, random, session ID and
 /// X25519 key share are varied; the padding keeps the packet at 517 bytes.
+/// `?`, `#` and `*` in `sni` are drawn per call, as for the socket decoy
+/// ([`crate::decoy::draw_wildcards`]).
 pub fn build_fake_client_hello(sni: &str) -> Result<Vec<u8>, String> {
-    let sni = sni.as_bytes();
-    if sni.is_empty() || sni.len() > 219 || !sni.iter().all(|byte| *byte > 0x20) {
+    if sni.is_empty() || sni.len() > 219 || !sni.bytes().all(|byte| byte > 0x20) {
         return Err("fake SNI must be 1..=219 visible bytes".into());
     }
+    let mut sni = sni.as_bytes().to_vec();
+    crate::decoy::draw_wildcards(&mut sni);
+    let sni = &sni[..];
     let template = template_bytes();
     let template_sni = b"mci.ir";
     let mut random = [0u8; 32];
@@ -418,6 +424,24 @@ mod tests {
         assert!(build_fake_client_hello("").is_err());
         assert!(build_fake_client_hello(&"a".repeat(220)).is_err());
         assert!(build_fake_client_hello("bad\nname").is_err());
+    }
+
+    /// The raw decoy draws `?`, `#` and `*` like the socket decoy does, so a
+    /// wildcard never reaches the wire as itself.
+    #[test]
+    fn fake_sni_wildcards_are_drawn() {
+        let hello = build_fake_client_hello("www.???##*.com").unwrap();
+        assert_eq!(hello.len(), 517);
+        let at = hello
+            .windows(4)
+            .position(|w| w == b"www.")
+            .expect("the name is in the hello");
+        let name = &hello[at..at + 14];
+        assert!(name.starts_with(b"www.") && name.ends_with(b".com"));
+        assert!(
+            name[4..10].iter().all(u8::is_ascii_alphanumeric),
+            "{name:?}"
+        );
     }
 }
 

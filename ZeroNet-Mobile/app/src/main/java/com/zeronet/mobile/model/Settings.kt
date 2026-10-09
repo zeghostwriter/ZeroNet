@@ -67,6 +67,22 @@ enum class EvasionLevel { Off, Auto, Strong }
 enum class DecoyMode { Off, Auto, Always }
 
 /**
+ * Reusing XHTTP's connections to a server (XMUX): a new connection through
+ * the tunnel becomes one more request on a link that is already open, which
+ * skips the handshakes that make up most of a new connection's wait.
+ *
+ * [Off] gives every connection a link of its own, as before. [Auto]
+ * (default) adds a reusing copy of each XHTTP server next to the others under
+ * Auto evasion and keeps whichever answers the probes faster, and reuses
+ * otherwise. [On] always reuses. Either way the core stops reusing for a
+ * server whose reused links stall, for ten minutes at a time.
+ */
+enum class ReuseMode { Off, Auto, On }
+
+/** Hop limits offered for the TTL decoy; 0 is off. */
+val DECOY_TTL_OPTIONS = listOf(0, 4, 6, 8, 12)
+
+/**
  * Slowest download ZeroNet tolerates before moving to another server.
  *
  * Only real traffic is measured: a config counts as slow while the phone is
@@ -157,6 +173,11 @@ data class Settings(
     // Anti-censorship
     val evasion: EvasionLevel = EvasionLevel.Auto,
     val sniDecoy: DecoyMode = DecoyMode.Auto,
+    /** How many routers a decoy name travels before it expires, on a phone
+     *  that cannot stop it any other way (no MD5 option in its kernel). The
+     *  core tests it as its own server variant under Auto. 0 turns it off. */
+    val decoyTtl: Int = 8,
+    val xhttpReuse: ReuseMode = ReuseMode.Auto,
     val blockQuic: Boolean = true,
     val remoteDns: RemoteDns = RemoteDns.Auto,
     /** A user-supplied resolver that overrides [remoteDns] when non-blank.
@@ -244,6 +265,8 @@ data class Settings(
         .put("lanPass", lanPass)
         .put("evasion", evasion.name)
         .put("sniDecoy", sniDecoy.name)
+        .put("decoyTtl", decoyTtl)
+        .put("xhttpReuse", xhttpReuse.name)
         .put("blockQuic", blockQuic)
         .put("remoteDns", remoteDns.name)
         .put("remoteDnsChosen", true)
@@ -309,6 +332,8 @@ data class Settings(
                 lanPass = o.optString("lanPass", d.lanPass),
                 evasion = o.enumOr("evasion", d.evasion),
                 sniDecoy = o.enumOr("sniDecoy", d.sniDecoy),
+                decoyTtl = o.optInt("decoyTtl", d.decoyTtl).coerceIn(0, 64),
+                xhttpReuse = o.enumOr("xhttpReuse", d.xhttpReuse),
                 blockQuic = o.optBoolean("blockQuic", d.blockQuic),
                 // Google saved before "Auto" existed was the old default;
                 // move it once. A choice saved since is kept.

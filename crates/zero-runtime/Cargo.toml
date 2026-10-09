@@ -64,6 +64,10 @@ base64 = { workspace = true }
 libc = { workspace = true }
 # The DNS oracle stands up its own DoQ server to compare both clients against.
 quinn = { workspace = true }
+# The XMUX pool tests stand up an HTTP/2 server to count the connections the
+# pool opens against it.
+h2 = { workspace = true }
+http = { workspace = true }
 
 # The WARP route tests run a tunnel against the loopback edge stand-ins.
 zero-transport = { workspace = true, features = ["test-util"] }

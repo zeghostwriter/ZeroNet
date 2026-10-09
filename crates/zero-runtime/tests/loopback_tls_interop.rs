@@ -491,6 +491,40 @@ async fn xhttp_over_http2_keeps_concurrent_flows_separate() {
     }
 }
 
+/// The split modes over HTTP/2 with XMUX: every flow's GET and POSTs ride
+/// the pooled connections, and no flow's bytes reach another.
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+async fn xhttp_split_modes_over_reused_http2_keep_flows_separate() {
+    for mode in ["packet-up", "stream-up"] {
+        let tunnel = tunnel("vless", false, xhttp(mode, "h2")).await;
+        let mut tasks = Vec::new();
+        for index in 0..12 {
+            let socks = tunnel.socks;
+            let echo = tunnel.echo;
+            tasks.push(tokio::spawn(async move {
+                let mut stream = socks_connect(socks, echo).await.unwrap();
+                round_trip(&mut stream, &payload(index as u8, 24 * 1024)).await;
+            }));
+        }
+        for task in tasks {
+            task.await.unwrap();
+        }
+    }
+}
+
+/// With reuse switched off every flow gets a connection of its own, and
+/// still carries its bytes intact.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn xhttp_over_http2_without_reuse_carries_payload_intact() {
+    let mut transport = xhttp("stream-one", "h2");
+    transport["xhttpSettings"]["xmux"] = json!({"hMaxRequestTimes": 1});
+    let tunnel = tunnel("vless", false, transport).await;
+    for index in 0..3 {
+        let mut stream = socks_connect(tunnel.socks, tunnel.echo).await.unwrap();
+        round_trip(&mut stream, &payload(index, 32 * 1024)).await;
+    }
+}
+
 // ---------------------------------------------------------------- QUIC
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

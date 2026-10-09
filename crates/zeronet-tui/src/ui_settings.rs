@@ -21,7 +21,7 @@ const VALUE_WIDTH: usize = 20;
 /// Rows when Advanced is folded: four headings plus the everyday settings.
 pub(crate) const SETTINGS_ROWS_BASIC: usize = 33;
 /// Rows when Advanced is open, including the edge-scanner block.
-pub(crate) const SETTINGS_ROWS: usize = 63;
+pub(crate) const SETTINGS_ROWS: usize = 65;
 
 impl UiRenderer<'_> {
     /// Total lines the settings page needs, for the scrollbar.
@@ -582,6 +582,37 @@ impl UiRenderer<'_> {
                 ComponentId::SettingSniSpoofToggle,
                 "SNI Spoofing",
                 self.settings.sni_spoof,
+                "ACTIVE",
+                "INACTIVE",
+            );
+            let decoy_ttl = if self.settings.decoy_ttl == 0 {
+                "off".to_string()
+            } else {
+                format!("{} hops", self.settings.decoy_ttl)
+            };
+            self.stepper_row(
+                frame,
+                row(),
+                "Decoy Reach (TTL)",
+                &decoy_ttl,
+                ComponentId::SettingDecoyTtlMinus,
+                ComponentId::SettingDecoyTtlValue,
+                ComponentId::SettingDecoyTtlPlus,
+                self.theme.text,
+                // Only a kernel without the MD5 option needs a hop count;
+                // say when this one does not, rather than show a dead knob.
+                if zero_evasion::decoy::supported() {
+                    "unused: this system has MD5"
+                } else {
+                    "decoy expires before the server"
+                },
+            );
+            self.toggle_row(
+                frame,
+                row(),
+                ComponentId::SettingXhttpReuseToggle,
+                "XHTTP Connection Reuse",
+                self.settings.xhttp_reuse,
                 "ACTIVE",
                 "INACTIVE",
             );

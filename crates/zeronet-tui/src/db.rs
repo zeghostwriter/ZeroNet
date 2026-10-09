@@ -133,6 +133,13 @@ pub struct AppSettings {
     /// desync). Sent with a raw socket or from the connection itself; where the
     /// system allows neither the decoy is skipped.
     pub sni_spoof: bool,
+    /// Hops a decoy travels before it expires, on a system whose kernel has
+    /// no MD5 option to stop it with. 0 turns that decoy off.
+    pub decoy_ttl: u8,
+    /// Reuse XHTTP's HTTP/2 connections (XMUX) as each profile describes,
+    /// or Xray's defaults; the pool stops reusing by itself for a server
+    /// whose reused connections stall. Off gives every connection its own.
+    pub xhttp_reuse: bool,
     /// Every routing profile, as JSON (`crate::routing_profile`).
     pub routing_profiles: String,
     /// The name of the active routing profile; empty for none.
@@ -230,6 +237,8 @@ impl Default for AppSettings {
             utls_fingerprint: "chrome".into(),
             fragment_enabled: false,
             sni_spoof: false,
+            decoy_ttl: 8,
+            xhttp_reuse: true,
             routing_profiles: String::new(),
             routing_profile: String::new(),
             tun_auto_route: true,
@@ -601,6 +610,12 @@ impl Database {
                     "utls_fingerprint" => settings.utls_fingerprint = item.1,
                     "fragment_enabled" => settings.fragment_enabled = truthy(&item.1),
                     "sni_spoof" => settings.sni_spoof = truthy(&item.1),
+                    "decoy_ttl" => {
+                        if let Ok(v) = item.1.parse::<u8>() {
+                            settings.decoy_ttl = v.min(64);
+                        }
+                    }
+                    "xhttp_reuse" => settings.xhttp_reuse = truthy(&item.1),
                     "routing_profiles" => settings.routing_profiles = item.1,
                     "routing_profile" => settings.routing_profile = item.1,
                     "tun_auto_route" => settings.tun_auto_route = truthy(&item.1),
@@ -749,6 +764,8 @@ impl Database {
                 if settings.fragment_enabled { "1" } else { "0" },
             ),
             ("sni_spoof", if settings.sni_spoof { "1" } else { "0" }),
+            ("decoy_ttl", &settings.decoy_ttl.to_string()),
+            ("xhttp_reuse", if settings.xhttp_reuse { "1" } else { "0" }),
             ("routing_profiles", &settings.routing_profiles),
             ("routing_profile", &settings.routing_profile),
             (
@@ -1464,6 +1481,8 @@ mod tests {
             utls_fingerprint: "firefox".into(),
             fragment_enabled: true,
             sni_spoof: true,
+            decoy_ttl: 6,
+            xhttp_reuse: false,
             routing_profiles:
                 r#"[{"name":"Work","rules":[{"action":"block","domain":["x.example"]}]}]"#.into(),
             routing_profile: "Work".into(),

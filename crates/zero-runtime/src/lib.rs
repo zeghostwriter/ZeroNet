@@ -14,6 +14,7 @@ pub mod server;
 pub mod tide_users;
 pub mod warm;
 pub mod warp;
+mod xmux;
 
 pub use relay::{relay, RelayOutcome, Transferred};
 

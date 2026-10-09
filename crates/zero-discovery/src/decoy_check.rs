@@ -25,8 +25,6 @@ use std::time::Duration;
 use serde_json::{json, Value};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-/// The name the decoy carries; any name the filter lets through will do.
-const DECOY_NAME: &str = "www.microsoft.com";
 /// Sites whose names are filtered in Iran, each with an address that serves
 /// it. Two different networks (Fastly, Cloudflare), so one being unreachable
 /// does not end the check.
@@ -151,10 +149,13 @@ async fn local_round_trip(way: Way) -> bool {
                 .write_all(&real)
                 .await
                 .ok()?,
-            Way::Decoy => zero_evasion::DecoyStream::new(client, DECOY_NAME)
-                .write_all(&real)
-                .await
-                .ok()?,
+            Way::Decoy => {
+                let policy = zero_evasion::DecoyPolicy::default();
+                zero_evasion::DecoyStream::new(client, policy)
+                    .write_all(&real)
+                    .await
+                    .ok()?
+            }
         }
         Some(reading.await.ok()? == real)
     };
@@ -202,7 +203,8 @@ async fn send(address: SocketAddr, name: &str, hidden: Option<Way>) -> Fate {
         let mut first = [0u8; 1];
         match hidden {
             Some(Way::Decoy) => {
-                let mut stream = zero_evasion::DecoyStream::new(tcp, DECOY_NAME);
+                let mut stream =
+                    zero_evasion::DecoyStream::new(tcp, zero_evasion::DecoyPolicy::default());
                 stream.write_all(&hello).await.ok()?;
                 stream.read_exact(&mut first).await.ok()
             }

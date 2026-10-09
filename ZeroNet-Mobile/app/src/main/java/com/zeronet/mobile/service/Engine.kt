@@ -619,7 +619,7 @@ object Engine {
     private fun topology(s: Settings) = listOf(s.lanShare, s.lanUser, s.lanPass, s.socksPort, s.httpPort)
 
     private fun routing(s: Settings) = listOf(
-        s.iranDirect, s.blockQuic, s.evasion, s.sniDecoy, s.fragmentPackets, s.remoteDns, s.customDns,
+        s.iranDirect, s.blockQuic, s.evasion, s.sniDecoy, s.decoyTtl, s.xhttpReuse, s.fragmentPackets, s.remoteDns, s.customDns,
         s.antiSanctionDns, s.customAntiSanction, s.blockAds, s.logs, s.activeRoutingRules,
     )
 
@@ -1196,6 +1196,11 @@ object Engine {
             // Left to the core under Auto.
             .put("sni_spoof", s.sniDecoy == DecoyMode.Always)
             .apply { if (s.sniDecoy == DecoyMode.Off) put("auto_decoy", false) }
+            // The decoy's hop limit on a phone with no MD5 option, tested as
+            // a variant of its own under Auto.
+            .put("decoy_ttl", s.decoyTtl)
+            // Reusing XHTTP connections: Auto tests it next to the usual way.
+            .put("xmux", s.xhttpReuse.name.lowercase())
             .put("fragment_packets", s.fragmentPackets.trim().ifEmpty { "1-1" })
             .put("dns", JSONObject().put("remote", s.remoteDns.name.lowercase()).put("custom", s.customDns.trim()).put("local", "google").put("anti_sanction", s.antiSanctionDns.name.lowercase()).put("custom_anti_sanction", s.customAntiSanction.trim()).put("fakedns", s.fakeDns))
             // The user's own scan first, then what others found on this network.

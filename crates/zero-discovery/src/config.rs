@@ -55,6 +55,19 @@ const AUTO_FRAGMENT_LENGTHS: [&str; 2] = [EMPTY_RECORD, "40-80"];
 /// in the same write (`zero_config::FragmentConfig::empty_record`).
 const EMPTY_RECORD: &str = "empty";
 
+/// What the builder does about XHTTP connection reuse (`xmux` in the
+/// request).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Xmux {
+    /// A connection per proxied request on every variant.
+    Off,
+    /// Each link's own reuse settings, or Xray's defaults.
+    On,
+    /// A reusing variant beside the others under `evasion = "auto"`; `On`
+    /// without it.
+    Auto,
+}
+
 /// How much the builder layers ClientHello fragmentation onto TLS links.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Evasion {
@@ -103,6 +116,21 @@ struct BuildRequest {
     /// its server name (an urgent byte, a decoy). Left out, the device is
     /// asked which of them it can do.
     auto_decoy: Option<bool>,
+    /// The hop limit for a decoy that has to expire on the way, on a device
+    /// whose kernel has no MD5 option to stop it with. Zero turns the TTL
+    /// decoy off. Used by `sni_spoof` on such a device, and by the variant
+    /// `auto` adds for it.
+    decoy_ttl: u8,
+    /// Whether `auto` adds the TTL-decoy variant. Left out, the device is
+    /// asked (it is added only where the kernel has no MD5 option).
+    auto_ttl_decoy: Option<bool>,
+    /// Reuse of XHTTP's HTTP/2 connections (XMUX): `off` (a connection per
+    /// proxied request, as before), `on` (what each link says, or Xray's
+    /// defaults), or `auto`, which under `evasion = "auto"` adds a reusing
+    /// variant beside the others and lets the balancer's probes decide, and
+    /// is `on` otherwise. Reuse that stalls on this network switches itself
+    /// off per server either way (see `zero_runtime`'s XMUX pool).
+    xmux: String,
     dns: DnsRequest,
     log_level: String,
     /// Scanner results (`ip:port`), ranked by the observatory for CDN-fronted
@@ -161,6 +189,9 @@ impl Default for BuildRequest {
             fragment_first: false,
             sni_spoof: false,
             auto_decoy: None,
+            decoy_ttl: zero_evasion::decoy::DEFAULT_TTL,
+            auto_ttl_decoy: None,
+            xmux: "auto".into(),
             dns: DnsRequest::default(),
             log_level: "warning".into(),
             clean_ips: Vec::new(),
@@ -294,6 +325,16 @@ pub fn build_config_with_assets(
             ));
         }
     };
+    let xmux = match request.xmux.as_str() {
+        "" | "auto" => Xmux::Auto,
+        "on" => Xmux::On,
+        "off" => Xmux::Off,
+        other => {
+            return Err(format!(
+                "xmux must be \"auto\", \"on\" or \"off\", got {other:?}"
+            ))
+        }
+    };
     let remote_dns = RemoteDns::parse(&request.dns.remote)
         .ok_or_else(|| format!("unknown remote DNS {:?}", request.dns.remote))?;
     let local_dns = LocalDns::parse(&request.dns.local)
@@ -368,8 +409,15 @@ pub fn build_config_with_assets(
         // REALITY (see `fragmentable`); SNI spoofing rides any TLS/REALITY
         // carrier (it adds a decoy packet without touching the real hello).
         let can_fragment = fragmentable(&parsed.outbound);
-        let spoof = (request.sni_spoof && sni_spoofable(&parsed.outbound))
-            .then(|| json!({"fakeSni": SPOOF_DECOY_SNI}));
+        // The hop count rides along for a device without the MD5 option;
+        // one with it never uses it (`zero_evasion::Fooling::Auto`).
+        let spoof = (request.sni_spoof && sni_spoofable(&parsed.outbound)).then(|| {
+            let mut spoof = json!({"fakeSni": SPOOF_DECOY_SNI});
+            if request.decoy_ttl > 0 {
+                spoof["ttl"] = json!(request.decoy_ttl);
+            }
+            spoof
+        });
         // Compose one outbound's evasion object from an optional fragment length
         // and the optional SNI decoy; `None` when neither applies.
         let evasion_block = |length: Option<&str>| -> Option<Value> {
@@ -411,6 +459,14 @@ pub fn build_config_with_assets(
             evasion == Evasion::Auto && spoof.is_none() && sni_spoofable(&parsed.outbound);
         let auto_urgent = hide_name && request.auto_decoy.unwrap_or_else(urgent_available);
         let auto_decoy = hide_name && request.auto_decoy.unwrap_or_else(decoy_available);
+        // The TTL decoy, for a device that cannot send the MD5 one: its own
+        // variant, so a hop count that is wrong for this network costs
+        // nothing but a failed probe. Off with the decoy, or with no count.
+        let auto_ttl_decoy = hide_name
+            && request.decoy_ttl > 0
+            && request.auto_decoy != Some(false)
+            && request.auto_ttl_decoy.unwrap_or_else(ttl_decoy_available);
+        let first = outbounds.len();
         match evasion {
             Evasion::Auto if can_fragment => {
                 // Plain first, fragmented after — or the other way round when
@@ -442,6 +498,38 @@ pub fn build_config_with_assets(
                 "link": parsed.link,
                 "evasion": {"sniSpoof": {"fakeSni": SPOOF_DECOY_SNI, "method": "decoy"}},
             }));
+        }
+        if auto_ttl_decoy {
+            outbounds.push(json!({
+                "link": parsed.link,
+                "evasion": {"sniSpoof": {
+                    "fakeSni": SPOOF_DECOY_SNI,
+                    "method": "decoy",
+                    "fooling": "ttl",
+                    "ttl": request.decoy_ttl,
+                }},
+            }));
+        }
+        // Connection reuse, for a link that has an HTTP/2 connection to
+        // reuse. Under `auto` with auto evasion every variant above keeps a
+        // connection per request, and one more variant, a copy of the first
+        // that reuses, goes right after it: on a network where reuse works it
+        // answers the probes fastest and the balancer moves to it; where
+        // something on the path cuts reused connections it fails them and is
+        // left. Without auto evasion there are no variants to choose among,
+        // so `auto` reuses, and the pool stops reusing for a server whose
+        // reused connections stall.
+        if reuses_connections(&parsed.outbound) {
+            let tested = xmux == Xmux::Auto && evasion == Evasion::Auto;
+            let reusing = tested.then(|| outbounds[first].clone());
+            if xmux == Xmux::Off || tested {
+                for outbound in &mut outbounds[first..] {
+                    outbound["xmux"] = json!(false);
+                }
+            }
+            if let Some(reusing) = reusing {
+                outbounds.insert(first + 1, reusing);
+            }
         }
     }
     // The balancer is keyed off how many proxy outbounds exist, not how many
@@ -712,13 +800,33 @@ fn fragmentable(outbound: &zero_config::Outbound) -> bool {
 /// The decoy SNI stamped into a spoofed ClientHello: a widely-allow-listed
 /// name, so a DPI parser sees an unblocked destination. The real hello (and
 /// its true SNI) still reaches the server untouched.
-pub(crate) const SPOOF_DECOY_SNI: &str = "www.microsoft.com";
+///
+/// A speed test host, the same one the REALITY masker, the clean-IP scanner
+/// and the HTTP/2 SNI default all use: it resolves on many networks, nobody
+/// throttles it, and a censor that probes it finds a real site.
+pub(crate) const SPOOF_DECOY_SNI: &str = "www.speedtest.net";
 
 /// Whether this device can send a decoy ClientHello at all. Unit tests get a
 /// fixed "no", so what they build does not depend on the kernel they run on;
 /// the ones about the decoy ask for it with `auto_decoy`.
 fn decoy_available() -> bool {
     !cfg!(test) && zero_evasion::decoy::available()
+}
+
+/// Whether the TTL decoy is worth a variant here: the device has name hiding
+/// on, can set a hop limit and has no MD5 option. A fixed "no" in tests.
+fn ttl_decoy_available() -> bool {
+    !cfg!(test) && zero_evasion::decoy::ttl_available()
+}
+
+/// Whether `outbound` runs over an HTTP/2 connection that XMUX can reuse:
+/// XHTTP over HTTP/2, in any mode.
+fn reuses_connections(outbound: &zero_config::Outbound) -> bool {
+    matches!(
+        &outbound.stream.transport,
+        zero_config::Transport::Xhttp(xhttp)
+            if xhttp.xhttp_http_version == zero_config::XhttpHttpVersion::Http2
+    )
 }
 
 /// The same question for the urgent byte, with the same fixed "no" in tests.
@@ -1227,6 +1335,82 @@ mod tests {
 
     /// `auto` on a device that can send a decoy: every link with a readable
     /// name gets one more variant behind it, REALITY too, after the others.
+    /// On a device without the MD5 option the TTL decoy is a variant of its
+    /// own, with the user's hop count, and never on top of the switches that
+    /// turn it off.
+    #[test]
+    fn auto_adds_a_ttl_decoy_variant_where_asked() {
+        let spoofs = |request: Value| -> Vec<zero_config::SniDesyncConfig> {
+            compile(&build_config(&request).unwrap())
+                .outbounds
+                .iter()
+                .filter_map(|o| o.stream.evasion.sni_desync.clone())
+                .collect()
+        };
+        let ttl = spoofs(json!({
+            "links": [REALITY], "evasion": "auto", "auto_ttl_decoy": true, "decoy_ttl": 6,
+        }));
+        let last = ttl.last().expect("a TTL decoy variant");
+        assert_eq!(last.method, zero_config::SniMethod::Decoy);
+        assert_eq!(last.fooling, zero_config::DecoyFooling::Ttl);
+        assert_eq!(last.ttl, 6);
+        let no_ttl = |request: Value| {
+            !spoofs(request)
+                .iter()
+                .any(|spoof| spoof.fooling == zero_config::DecoyFooling::Ttl)
+        };
+        assert!(no_ttl(json!({
+            "links": [REALITY], "evasion": "auto", "auto_ttl_decoy": true, "decoy_ttl": 0,
+        })));
+        assert!(no_ttl(json!({
+            "links": [REALITY], "evasion": "auto", "auto_ttl_decoy": true, "auto_decoy": false,
+        })));
+        assert!(no_ttl(json!({"links": [REALITY], "evasion": "auto"})));
+        // The user's own switch carries the hop count for a device that
+        // needs it, and leaves the MD5 option first where there is one.
+        let always = spoofs(json!({"links": [REALITY], "sni_spoof": true, "decoy_ttl": 5}));
+        assert_eq!(always.len(), 1);
+        assert_eq!(always[0].fooling, zero_config::DecoyFooling::Auto);
+        assert_eq!(always[0].ttl, 5);
+    }
+
+    /// XHTTP over HTTP/2: `auto` keeps every variant on a connection of its
+    /// own and adds one that reuses, right after the first; `off` and `on`
+    /// add nothing and say the same for every variant.
+    #[test]
+    fn xmux_auto_adds_a_reusing_variant_for_xhttp_over_http2() {
+        let reuse = |request: Value| -> Vec<bool> {
+            compile(&build_config(&request).unwrap())
+                .outbounds
+                .iter()
+                .filter_map(|o| match &o.stream.transport {
+                    zero_config::Transport::Xhttp(x) => Some(x.xhttp.xmux.reuses()),
+                    _ => None,
+                })
+                .collect()
+        };
+        let link = crate::link::tests::XHTTP_EXTRA;
+        let auto = reuse(json!({"links": [link], "evasion": "auto"}));
+        assert!(auto.len() >= 3, "{auto:?}");
+        assert_eq!(auto[..2], [false, true]);
+        assert_eq!(auto.iter().filter(|reuses| **reuses).count(), 1);
+        let off = reuse(json!({"links": [link], "evasion": "auto", "xmux": "off"}));
+        assert_eq!(off.len(), auto.len() - 1);
+        assert!(off.iter().all(|reuses| !reuses));
+        let on = reuse(json!({"links": [link], "evasion": "auto", "xmux": "on"}));
+        assert!(on.iter().all(|reuses| *reuses));
+        // Without auto's variants there is nothing to choose among, so
+        // `auto` reuses (the pool watches it); `off` still means off.
+        assert_eq!(reuse(json!({"links": [link], "evasion": "off"})), [true]);
+        assert_eq!(
+            reuse(json!({"links": [link], "evasion": "off", "xmux": "off"})),
+            [false]
+        );
+        // Another transport is left alone, and a bad value is named.
+        assert!(reuse(json!({"links": [REALITY], "evasion": "auto"})).is_empty());
+        assert!(build_config(&json!({"links": [link], "xmux": "sometimes"})).is_err());
+    }
+
     #[test]
     fn auto_adds_a_decoy_variant_where_the_device_can_send_one() {
         let decoys = |request: Value| -> Vec<bool> {

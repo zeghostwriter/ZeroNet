@@ -81,11 +81,13 @@ import com.zeronet.mobile.model.AntiSanctionDns
 import com.zeronet.mobile.model.AutoConnect
 import com.zeronet.mobile.model.ConnectionMode
 import com.zeronet.mobile.model.ConnectionProfile
+import com.zeronet.mobile.model.DECOY_TTL_OPTIONS
 import com.zeronet.mobile.model.DecoyMode
 import com.zeronet.mobile.model.EvasionLevel
 import com.zeronet.mobile.model.MotionLevel
 import com.zeronet.mobile.model.Palette
 import com.zeronet.mobile.model.RemoteDns
+import com.zeronet.mobile.model.ReuseMode
 import com.zeronet.mobile.model.Settings
 import com.zeronet.mobile.model.SpeedFloor
 import com.zeronet.mobile.model.WarpConsent
@@ -266,7 +268,8 @@ private val SPLIT_KEYS = intArrayOf(
 )
 private val SHARE_KEYS = intArrayOf(R.string.settings_share, R.string.settings_share_toggle, R.string.settings_share_auth, R.string.kw_share)
 private val EVASION_KEYS = intArrayOf(
-    R.string.settings_evasion, R.string.settings_evasion_level, R.string.settings_decoy, R.string.settings_block_quic,
+    R.string.settings_evasion, R.string.settings_evasion_level, R.string.settings_decoy, R.string.settings_decoy_ttl,
+    R.string.settings_reuse, R.string.settings_block_quic,
     R.string.settings_remote_dns, R.string.settings_block_ads, R.string.kw_evasion,
 )
 private val APPEARANCE_KEYS = intArrayOf(
@@ -813,6 +816,46 @@ private fun EvasionCard(s: Settings, q: SettingsQuery, reconnect: Boolean, actio
                 )
                 Spacer(Modifier.height(8.dp))
                 DecoyTest()
+            }
+        }
+        if (s.sniDecoy != DecoyMode.Off && f.show(R.string.settings_decoy_ttl)) {
+            val locale = currentLocale()
+            LabeledBlock(
+                stringResource(R.string.settings_decoy_ttl),
+                subtitle = stringResource(
+                    if (s.decoyTtl == 0) R.string.settings_decoy_ttl_off_hint else R.string.settings_decoy_ttl_hint,
+                ),
+            ) {
+                val selected = DECOY_TTL_OPTIONS.minByOrNull { kotlin.math.abs(it - s.decoyTtl) } ?: 8
+                Segmented(
+                    DECOY_TTL_OPTIONS, selected, { v -> actions.onChange { it.copy(decoyTtl = v) } },
+                    label = { if (it == 0) stringResource(R.string.option_off) else Num.int(it, locale) },
+                )
+            }
+        }
+        if (f.show(R.string.settings_reuse)) {
+            LabeledBlock(
+                stringResource(R.string.settings_reuse),
+                subtitle = stringResource(
+                    when (s.xhttpReuse) {
+                        ReuseMode.Off -> R.string.settings_reuse_off_hint
+                        ReuseMode.Auto -> R.string.settings_reuse_auto_hint
+                        ReuseMode.On -> R.string.settings_reuse_on_hint
+                    },
+                ),
+            ) {
+                Segmented(
+                    ReuseMode.entries, s.xhttpReuse, { v -> actions.onChange { it.copy(xhttpReuse = v) } },
+                    label = {
+                        stringResource(
+                            when (it) {
+                                ReuseMode.Off -> R.string.option_off
+                                ReuseMode.Auto -> R.string.option_auto
+                                ReuseMode.On -> R.string.option_on
+                            },
+                        )
+                    },
+                )
             }
         }
         if (f.show(R.string.settings_block_quic)) {

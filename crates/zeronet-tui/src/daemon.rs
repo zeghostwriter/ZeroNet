@@ -145,6 +145,14 @@ pub struct EngineOptions {
     /// the system allows neither the engine skips the decoy
     /// and the connection goes out unchanged.
     pub sni_spoof: bool,
+    /// Hops the decoy travels before it expires, used only where the kernel
+    /// has no MD5 option to stop it with; 0 sends no decoy there.
+    pub decoy_ttl: u8,
+    /// Reuse XHTTP's HTTP/2 connections (XMUX) as each profile describes.
+    /// Off stamps "no reuse" on every XHTTP outbound. On is safe without a
+    /// test first: the pool stops reusing for a server whose reused
+    /// connections stall.
+    pub xhttp_reuse: bool,
     /// The active routing profile's rules, put in front of every other rule
     /// (see `crate::routing_profile`). Empty when no profile is active.
     pub routing_rules: Vec<zero_config::UserRule>,
@@ -195,6 +203,8 @@ impl Default for EngineOptions {
             fragment_enabled: false,
             tls_fragment_size: 60,
             sni_spoof: false,
+            decoy_ttl: 8,
+            xhttp_reuse: true,
             routing_rules: Vec::new(),
             keepalive_interval_secs: 30,
             tcp_congestion: String::new(),
@@ -1350,10 +1360,12 @@ fn apply_evasion(outbound: &mut serde_json::Value, options: &EngineOptions) {
             evasion.remove("fragment");
         }
         if want_spoof {
-            evasion.insert(
-                "sniSpoof".into(),
-                serde_json::json!({ "fakeSni": SNI_SPOOF_DECOY }),
-            );
+            let mut spoof = serde_json::json!({ "fakeSni": SNI_SPOOF_DECOY });
+            // Only read on a kernel without the MD5 option.
+            if options.decoy_ttl > 0 {
+                spoof["ttl"] = serde_json::json!(options.decoy_ttl);
+            }
+            evasion.insert("sniSpoof".into(), spoof);
         } else {
             evasion.remove("sniSpoof");
         }
@@ -1368,8 +1380,16 @@ fn apply_evasion(outbound: &mut serde_json::Value, options: &EngineOptions) {
         if evasion.is_empty() {
             object.remove("evasion");
         }
+        // A link's XHTTP reuse is laid on beside `evasion`, and ignored by
+        // the parser for any other transport.
+        if options.xhttp_reuse {
+            object.remove("xmux");
+        } else {
+            object.insert("xmux".into(), serde_json::json!(false));
+        }
         return;
     }
+    apply_xmux(outbound, options.xhttp_reuse);
 
     let mut desired: Vec<serde_json::Value> = Vec::new();
     if want_fragment {
@@ -1412,6 +1432,46 @@ fn apply_evasion(outbound: &mut serde_json::Value, options: &EngineOptions) {
         }
     } else if !desired.is_empty() {
         stream.insert("finalmask".into(), serde_json::json!({"tcp": desired}));
+    }
+}
+
+/// The `xmux` an expanded XHTTP outbound gets with reuse switched off: one
+/// HTTP request per connection, which is no reuse at all.
+const XMUX_OFF: &str = r#"{"hMaxRequestTimes":1}"#;
+
+/// Switch XHTTP connection reuse off on an expanded outbound, or take that
+/// back off. Only the value this function writes is ever removed: an `xmux`
+/// the profile carries itself is the profile's, and stays when reuse is on.
+fn apply_xmux(outbound: &mut serde_json::Value, reuse: bool) {
+    let Some(stream) = outbound
+        .get_mut("streamSettings")
+        .and_then(|stream| stream.as_object_mut())
+        .filter(|stream| {
+            matches!(
+                stream.get("network").and_then(|n| n.as_str()),
+                Some("xhttp" | "splithttp")
+            )
+        })
+    else {
+        return;
+    };
+    let off: serde_json::Value = serde_json::from_str(XMUX_OFF).expect("a literal object");
+    if !reuse {
+        if let Some(xhttp) = stream
+            .entry("xhttpSettings")
+            .or_insert_with(|| serde_json::json!({}))
+            .as_object_mut()
+        {
+            xhttp.insert("xmux".into(), off);
+        }
+    } else if let Some(xhttp) = stream
+        .get_mut("xhttpSettings")
+        .and_then(|xhttp| xhttp.as_object_mut())
+    {
+        // Written only by this function, so only this exact value is ours.
+        if xhttp.get("xmux") == Some(&off) {
+            xhttp.remove("xmux");
+        }
     }
 }
 
@@ -1474,7 +1534,11 @@ fn outbound_can_sni_spoof(outbound: &serde_json::Value) -> bool {
 
 /// The decoy SNI stamped into a spoofed ClientHello: a widely-allow-listed
 /// name a DPI parser reads instead of the real destination.
-const SNI_SPOOF_DECOY: &str = "www.microsoft.com";
+///
+/// A speed test host, the same one the REALITY masker, the clean-IP scanner
+/// and the HTTP/2 SNI default all use: it resolves on many networks, nobody
+/// throttles it, and a censor that probes it finds a real site.
+const SNI_SPOOF_DECOY: &str = "www.speedtest.net";
 
 /// Whether ClientHello fragmentation would do anything for this outbound.
 ///
@@ -1806,6 +1870,8 @@ fn ensure_tun_inbound(inbounds: &mut Vec<serde_json::Value>, options: &EngineOpt
 mod tests {
     use super::*;
 
+    const XHTTP_LINK: &str = "vless://00000000-0000-0000-0000-000000000003@x.example.com:443\
+        ?security=tls&sni=x.example.com&type=xhttp&path=%2Fx&mode=auto&encryption=none#xhttp";
     const LINK: &str = "vless://245abd35-7efa-4bc8-85d4-a04f3798329f@155.117.13.26:443?encryption=none&flow=xtls-rprx-vision&security=reality&sni=www.googletagmanager.com&fp=chrome&pbk=F6PK1mARGsyeoVDKws76F0tNoIC1wd9sEG20c7yF2wY&sid=7963d08380d47375&type=tcp&headerType=none#AmneziaVPN";
 
     fn inbound_ports(json: &str) -> Vec<(String, u64)> {
@@ -1996,6 +2062,8 @@ mod tests {
             mux_concurrency: 24,
             fragment_enabled: true,
             sni_spoof: true,
+            decoy_ttl: 6,
+            xhttp_reuse: false,
             routing_rules: Vec::new(),
             tls_fragment_size: 300,
             keepalive_interval_secs: 75,
@@ -2337,6 +2405,88 @@ mod tests {
             proxy["evasion"].get("fragment").is_none(),
             "a REALITY outbound was given ClientHello fragmentation: {proxy}"
         );
+    }
+
+    /// The decoy's hop count rides along with SNI spoofing, for a kernel
+    /// without the MD5 option; zero leaves it out.
+    #[test]
+    fn sni_spoof_carries_the_decoy_hop_count() {
+        let stamped = |decoy_ttl| {
+            let opts = EngineOptions {
+                sni_spoof: true,
+                decoy_ttl,
+                ..EngineOptions::default()
+            };
+            let v: serde_json::Value =
+                serde_json::from_str(&prepare_runnable_config_with(LINK, &opts).unwrap()).unwrap();
+            v["outbounds"][0]["evasion"]["sniSpoof"].clone()
+        };
+        assert_eq!(stamped(6)["ttl"], serde_json::json!(6));
+        assert!(stamped(0).get("ttl").is_none());
+        let opts = EngineOptions {
+            sni_spoof: true,
+            decoy_ttl: 6,
+            ..EngineOptions::default()
+        };
+        assert_eq!(validate_profile(LINK, &opts), Ok(()));
+    }
+
+    /// Reuse off stamps "no reuse" on an XHTTP link and on an expanded XHTTP
+    /// outbound; back on, the link's overlay goes and so does the value this
+    /// wrote, while an `xmux` of the profile's own is kept.
+    #[test]
+    fn xhttp_reuse_off_reaches_links_and_expanded_outbounds() {
+        let off = EngineOptions {
+            xhttp_reuse: false,
+            ..EngineOptions::default()
+        };
+        let on = EngineOptions::default();
+        let mut link = serde_json::json!({"link": XHTTP_LINK});
+        apply_evasion(&mut link, &off);
+        assert_eq!(link["xmux"], serde_json::json!(false));
+        let compiled = zero_config::compile_config(
+            &serde_json::json!({"outbounds": [link.clone()]}),
+            zero_core::GenerationId(1),
+        )
+        .unwrap()
+        .0
+        .config;
+        let zero_config::Transport::Xhttp(xhttp) = &compiled.outbounds[0].stream.transport else {
+            panic!("an XHTTP outbound");
+        };
+        assert!(!xhttp.xhttp.xmux.reuses());
+        apply_evasion(&mut link, &on);
+        assert!(link.get("xmux").is_none());
+
+        let mut expanded = serde_json::json!({
+            "protocol": "vless",
+            "streamSettings": {"network": "xhttp", "xhttpSettings": {"path": "/x"}},
+        });
+        apply_evasion(&mut expanded, &off);
+        assert_eq!(
+            expanded["streamSettings"]["xhttpSettings"]["xmux"],
+            serde_json::json!({"hMaxRequestTimes": 1})
+        );
+        apply_evasion(&mut expanded, &on);
+        assert!(expanded["streamSettings"]["xhttpSettings"]
+            .get("xmux")
+            .is_none());
+        let mut own = serde_json::json!({
+            "protocol": "vless",
+            "streamSettings": {"network": "xhttp", "xhttpSettings": {"xmux": {"maxConnections": 2}}},
+        });
+        apply_evasion(&mut own, &on);
+        assert_eq!(
+            own["streamSettings"]["xhttpSettings"]["xmux"],
+            serde_json::json!({"maxConnections": 2})
+        );
+        // Another transport is left exactly as it was.
+        let mut ws = serde_json::json!({
+            "protocol": "vless",
+            "streamSettings": {"network": "ws"},
+        });
+        apply_evasion(&mut ws, &off);
+        assert!(ws["streamSettings"].get("xhttpSettings").is_none());
     }
 
     #[test]

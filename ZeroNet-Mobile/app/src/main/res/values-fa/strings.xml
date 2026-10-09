@@ -127,7 +127,7 @@
     <string name="picker_subscriptions">اشتراک‌های شما</string>
     <string name="picker_lists_hint">چند تا رو انتخاب کنید تا با هم جستجو بشن</string>
     <plurals name="picker_use_lists">
-        <item quantity="one">جستجو در این لیست</item>
+        <item quantity="one">جستجو در %s لیست</item>
         <item quantity="other">جستجو در این %s لیست</item>
     </plurals>
     <string name="server_subscription_hint">فقط بین کانفیگ‌های همین اشتراک جابه‌جا می‌شود</string>
@@ -389,6 +389,13 @@
     <string name="settings_decoy_always_hint">هر اتصال نام سرورش را از فیلتر پنهان می‌کند، اول با راه سریع. فقط سروری که با این راه جواب نمی‌دهد راه کندتر را می‌گیرد که هر اتصال را حدود یک‌سوم ثانیه دیرتر شروع می‌کند.</string>
     <string name="option_always">همیشه</string>
     <string name="settings_decoy_test">آزمایش روی این گوشی</string>
+    <string name="settings_decoy_ttl">برد نام جعلی (تعداد روتر)</string>
+    <string name="settings_decoy_ttl_hint">فقط برای گوشی‌هایی که راه دیگری برای متوقف کردن نام جعلی ندارند: نام جعلی طوری فرستاده می‌شود که بعد از این تعداد روتر، پیش از رسیدن به سرور، از بین برود. حالت خودکار آن را مثل یک سرور جدا امتحان می‌کند و فقط اگر رد شود نگهش می‌دارد.</string>
+    <string name="settings_decoy_ttl_off_hint">گوشی‌هایی که راه دیگری برای متوقف کردن نام جعلی ندارند، آن را نمی‌فرستند.</string>
+    <string name="settings_reuse">استفاده‌ی دوباره از اتصال‌ها (XHTTP)</string>
+    <string name="settings_reuse_off_hint">هر اتصال راه جدای خودش را تا سرور باز می‌کند.</string>
+    <string name="settings_reuse_auto_hint">هر جا جواب بدهد از راه‌های باز دوباره استفاده می‌کند و هر روشی که سریع‌تر جواب بدهد را نگه می‌دارد. سروری که راه‌های دوباره‌استفاده‌شده‌اش گیر کنند، به راه‌های جدای خودش برمی‌گردد.</string>
+    <string name="settings_reuse_on_hint">اتصال‌های تازه از راه‌هایی که از قبل باز هستند می‌روند و زودتر شروع می‌شوند. سروری که راه‌های دوباره‌استفاده‌شده‌اش گیر کنند، تا مدتی به راه‌های جدای خودش برمی‌گردد.</string>
     <string name="decoy_test_running">در حال آزمایش…</string>
     <string name="decoy_test_unsupported">این گوشی نمی‌تواند نام سرور را پنهان کند؛ سیستمش اجازه نمی‌دهد. ZeroNet به‌جایش از روش‌های دیگرش استفاده می‌کند.</string>
     <string name="decoy_test_broken">این گوشی سعی کرد نام را پنهان کند، ولی در آزمایش داخل خود گوشی اتصال درست نرسید، پس اینجا نمی‌شود به آن تکیه کرد.</string>

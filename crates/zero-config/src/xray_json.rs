@@ -843,6 +843,18 @@ fn parse_outbound(v: &Value, idx: usize, out: &mut ParseOutput) -> R<Outbound> {
         if let Some(mux) = v.get("mux") {
             outbound.mux = parse_mux(Some(mux), &path)?;
         }
+        // How XHTTP reuses its connections is this network's business as
+        // much as the server's: the app turns it off or on per variant.
+        // Nothing to do for another transport.
+        if let Some(xmux) = v.get("xmux") {
+            if let crate::model::Transport::Xhttp(xhttp) = &mut outbound.stream.transport {
+                xhttp.xhttp.xmux = xhttp
+                    .xhttp
+                    .xmux
+                    .overlay(xmux)
+                    .map_err(|error| format!("{path}.{error}"))?;
+            }
+        }
         // A share link cannot carry a sockopt either — it describes the
         // server, not how this machine should dial it. Same reason as
         // `evasion` above: layer the one key that matters on without
@@ -2823,6 +2835,17 @@ fn parse_legacy_freedom_evasion(settings: Option<&Value>, path: &str) -> R<Evasi
 /// ClientHello, or `{"method": "urgent"}` for the urgent-byte method, which
 /// has no decoy and so needs no `fakeSni`. Without `method` the device
 /// decides (`SniMethod::Auto`).
+///
+/// `fakeSni` accepts `?` (a letter), `#` (a digit) and `*` (either), drawn
+/// once per connection, so one process never spells the same decoy name twice.
+///
+/// `fooling` says how the decoy is kept from the server: `md5`, `ttl`, or
+/// `auto` (MD5 where the kernel has it). `ttl` is the hop limit for a decoy
+/// that has to expire on the way; `"fooling": "ttl"` without one takes 8.
+/// The hop limit a TTL decoy takes when its configuration names none: the
+/// number the other userspace tools ship.
+const DEFAULT_DECOY_TTL: u8 = 8;
+
 fn parse_sni_spoof(value: &Value, path: &str) -> R<SniDesyncConfig> {
     let method = match value.get("method").and_then(Value::as_str) {
         None | Some("auto") => crate::model::SniMethod::Auto,
@@ -2840,7 +2863,7 @@ fn parse_sni_spoof(value: &Value, path: &str) -> R<SniDesyncConfig> {
         .and_then(Value::as_str)
     {
         Some(name) => name,
-        None if method == crate::model::SniMethod::Urgent => "www.microsoft.com",
+        None if method == crate::model::SniMethod::Urgent => "www.speedtest.net",
         None => return Err(format!("{path}.fakeSni is required")),
     };
     // Match the injector's own bound (zero_evasion::build_fake_client_hello):
@@ -2853,10 +2876,35 @@ fn parse_sni_spoof(value: &Value, path: &str) -> R<SniDesyncConfig> {
         .and_then(Value::as_u64)
         .map(|s| s as u32)
         .unwrap_or(0);
+    let fooling = match value.get("fooling").and_then(Value::as_str) {
+        None | Some("auto") => crate::model::DecoyFooling::Auto,
+        Some("md5") => crate::model::DecoyFooling::Md5,
+        Some("ttl") => crate::model::DecoyFooling::Ttl,
+        Some(other) => {
+            return Err(format!(
+                "{path}.fooling must be auto, md5 or ttl, not {other:?}"
+            ))
+        }
+    };
+    let ttl = match value.get("ttl") {
+        None => match fooling {
+            crate::model::DecoyFooling::Ttl => DEFAULT_DECOY_TTL,
+            _ => 0,
+        },
+        Some(ttl) => match ttl.as_u64() {
+            Some(ttl @ 0..=255) => ttl as u8,
+            _ => return Err(format!("{path}.ttl must be a hop count from 0 to 255")),
+        },
+    };
+    if fooling == crate::model::DecoyFooling::Ttl && ttl == 0 {
+        return Err(format!("{path}.ttl must be above zero for fooling \"ttl\""));
+    }
     Ok(SniDesyncConfig {
         fake_sni: fake_sni.into(),
         sequence,
         method,
+        fooling,
+        ttl,
     })
 }
 

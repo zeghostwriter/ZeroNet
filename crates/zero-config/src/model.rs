@@ -410,6 +410,27 @@ pub struct SniDesyncConfig {
     pub sequence: u32,
     /// Which way the name is kept from the filter.
     pub method: SniMethod,
+    /// How a decoy is kept from the server (`zero_evasion::Fooling`).
+    pub fooling: DecoyFooling,
+    /// The hop limit for a decoy stopped by expiry. Zero means no hop count
+    /// is known: no TTL decoy is sent, so under [`DecoyFooling::Auto`] a
+    /// device without the MD5 option sends no decoy at all. A guess that
+    /// reaches the server is worse than none.
+    pub ttl: u8,
+}
+
+/// What keeps a decoy ClientHello from the server it is addressed to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DecoyFooling {
+    /// The MD5 option where the kernel has it, otherwise the TTL when one is
+    /// given, otherwise no decoy.
+    #[default]
+    Auto,
+    /// The MD5 option only.
+    Md5,
+    /// A hop limit that expires between the filter and the server, for a
+    /// kernel without the MD5 option. Needs `ttl`.
+    Ttl,
 }
 
 /// The ways of keeping a server name from a filter that reads it.
@@ -454,9 +475,11 @@ impl SniDesyncConfig {
 impl Default for SniDesyncConfig {
     fn default() -> Self {
         Self {
-            fake_sni: "www.microsoft.com".into(),
+            fake_sni: "www.speedtest.net".into(),
             sequence: 0,
             method: SniMethod::Auto,
+            fooling: DecoyFooling::Auto,
+            ttl: 0,
         }
     }
 }
