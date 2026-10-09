@@ -38,8 +38,8 @@ data/          SettingsStore (settings.json)         notification, network track
 **Requirements.**
 - JDK 17+.
 - Android SDK: platform 37, build-tools 37, NDK r29.
-- Rust (see `../rust-toolchain.toml`) with targets `aarch64-linux-android`,
-  `armv7-linux-androideabi` and `x86_64-linux-android`.
+- Rust (see `../rust-toolchain.toml`) with targets `aarch64-linux-android`
+  and `armv7-linux-androideabi`.
 - `cargo install cargo-ndk`.
 
 `local.properties` (not committed):

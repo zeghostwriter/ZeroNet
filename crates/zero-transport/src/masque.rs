@@ -55,6 +55,17 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(6);
 /// mobile networks are short; the keep-alive is what holds them.
 const IDLE_TIMEOUT: Duration = Duration::from_secs(45);
 const KEEP_ALIVE: Duration = Duration::from_secs(15);
+/// HTTP/2 liveness. A TCP connection can freeze without closing: a middlebox
+/// stops forwarding it, or loss pushes TCP's retransmission timer out to a
+/// minute or more, and every connection in the tunnel hangs with it while
+/// nothing reports an error. So the session asks for a PING when it has heard
+/// nothing for [`PING_WHEN_QUIET`], or as soon as packets went out and nothing
+/// came back for [`PING_WHEN_UNANSWERED`]; a PING not answered within
+/// [`PING_DEADLINE`] ends the session, and the supervisor reconnects at once
+/// on a fresh connection.
+const PING_WHEN_QUIET: Duration = Duration::from_secs(10);
+const PING_WHEN_UNANSWERED: Duration = Duration::from_secs(3);
+const PING_DEADLINE: Duration = Duration::from_secs(4);
 /// QUIC's first packet, sized like the official client's so the handshake
 /// does not stand out.
 const INITIAL_MTU: u16 = 1242;
@@ -670,6 +681,8 @@ fn get_varint(input: &[u8]) -> Option<(u64, usize)> {
 
 struct H2Session {
     connection: h2::client::Connection<tokio_rustls::client::TlsStream<zero_core::BoxStream>>,
+    /// The connection's PING handle (see [`PING_WHEN_QUIET`]).
+    pings: Option<h2::PingPong>,
     _client: h2::client::SendRequest<Bytes>,
     send: h2::SendStream<Bytes>,
     recv: h2::RecvStream,
@@ -703,7 +716,7 @@ impl H2Session {
             .connect(server_name, io)
             .await
             .map_err(|error| format!("TLS: {error}"))?;
-        let (mut client, connection) = h2::client::Builder::new()
+        let (mut client, mut connection) = h2::client::Builder::new()
             .initial_window_size(1 << 20)
             .initial_connection_window_size(4 << 20)
             .handshake::<_, Bytes>(tls)
@@ -720,8 +733,8 @@ impl H2Session {
         let (response, send) = client
             .send_request(request, false)
             .map_err(|error| format!("request: {error}"))?;
+        let pings = connection.ping_pong();
         // The connection has to be driven for the response to arrive.
-        let mut connection = connection;
         let response = tokio::select! {
             response = response => response.map_err(|error| format!("response: {error}"))?,
             result = &mut connection => {
@@ -736,6 +749,7 @@ impl H2Session {
         }
         Ok(Self {
             connection,
+            pings,
             _client: client,
             send,
             recv: response.into_body(),
@@ -749,16 +763,72 @@ impl H2Session {
         down: &mpsc::Sender<Vec<u8>>,
         rebind: &Notify,
     ) -> End {
+        type Flight =
+            std::pin::Pin<Box<dyn std::future::Future<Output = (h2::PingPong, bool)> + Send>>;
+        let mut idle = self.pings.take();
+        let mut flight: Option<(Flight, tokio::time::Instant)> = None;
+        let mut last_in = tokio::time::Instant::now();
+        let mut last_out = last_in;
         loop {
+            // Sleep until the next moment a PING could be due, not on a fixed
+            // tick: an idle phone then wakes once per `PING_WHEN_QUIET`
+            // instead of every second. Every event re-runs this, so a packet
+            // sent just now moves the deadline to `PING_WHEN_UNANSWERED`.
+            let due = match &flight {
+                Some((_, deadline)) => Some(*deadline),
+                None if idle.is_some() => Some(if last_out > last_in {
+                    last_in + PING_WHEN_UNANSWERED
+                } else {
+                    last_in + PING_WHEN_QUIET
+                }),
+                None => None,
+            };
+            let wake = async {
+                match due {
+                    Some(at) => tokio::time::sleep_until(at).await,
+                    None => std::future::pending().await,
+                }
+            };
+            let answered = async {
+                match flight.as_mut() {
+                    Some((ping, _)) => ping.await,
+                    None => std::future::pending().await,
+                }
+            };
             tokio::select! {
+                (handle, ok) = answered => {
+                    flight = None;
+                    if !ok {
+                        return End::Lost;
+                    }
+                    // A PONG proves the path both ways, like any byte in.
+                    last_in = tokio::time::Instant::now();
+                    idle = Some(handle);
+                }
+                _ = wake => {
+                    let now = tokio::time::Instant::now();
+                    if flight.is_some() {
+                        tracing::debug!("MASQUE HTTP/2 connection stopped answering; reconnecting");
+                        return End::Lost;
+                    }
+                    if let Some(mut handle) = idle.take() {
+                        let ping: Flight = Box::pin(async move {
+                            let ok = handle.ping(h2::Ping::opaque()).await.is_ok();
+                            (handle, ok)
+                        });
+                        flight = Some((ping, now + PING_DEADLINE));
+                    }
+                }
                 packet = up.recv() => {
                     let Some(packet) = packet else { return End::Stack };
                     if self.write_capsule(&packet).await.is_err() {
                         return End::Lost;
                     }
+                    last_out = tokio::time::Instant::now();
                 }
                 chunk = self.recv.data() => {
                     let Some(Ok(chunk)) = chunk else { return End::Lost };
+                    last_in = tokio::time::Instant::now();
                     let length = chunk.len();
                     self.pending.extend_from_slice(&chunk);
                     if self.recv.flow_control().release_capacity(length).is_err() {

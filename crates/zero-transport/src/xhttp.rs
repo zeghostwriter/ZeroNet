@@ -1159,6 +1159,9 @@ pub async fn connect_h2(stream: BoxStream, config: &WsConfig) -> Result<BoxStrea
 
 /// Chrome's HTTP/2 keepalive, which an `hKeepAlivePeriod` of zero means.
 const CHROME_H2_KEEP_ALIVE: Duration = Duration::from_secs(45);
+/// How long a keepalive PING may go unanswered before the connection counts
+/// as frozen and is closed (see `open_with_keepalive`).
+const PING_DEADLINE: Duration = Duration::from_secs(10);
 
 /// One open HTTP/2 connection that XHTTP opens proxied requests on.
 ///
@@ -1234,13 +1237,21 @@ impl H2Carrier {
                     tokio::time::interval_at(tokio::time::Instant::now() + period, period);
                 loop {
                     tick.tick().await;
-                    if ping.ping(h2::Ping::opaque()).await.is_err() {
-                        break;
+                    match tokio::time::timeout(PING_DEADLINE, ping.ping(h2::Ping::opaque())).await {
+                        Ok(Ok(_)) => {}
+                        // A failed PING means the connection is going; let
+                        // `run` report how, rather than cutting it short here.
+                        Ok(Err(_)) => std::future::pending::<()>().await,
+                        // No answer: the connection froze without closing.
+                        // Ending the driver here closes it, so every request
+                        // on it fails now and the pool opens a fresh one,
+                        // instead of hanging until TCP gives up.
+                        Err(_) => {
+                            tracing::debug!("XHTTP HTTP/2 connection stopped answering PINGs");
+                            return;
+                        }
                     }
                 }
-                // A failed PING means the connection is going; let `run`
-                // report how, rather than cutting it short here.
-                std::future::pending::<()>().await
             };
             tokio::select! {
                 () = run => {}
@@ -3180,6 +3191,54 @@ mod tests {
         stream.read_exact(&mut reply).await.unwrap();
         assert_eq!(&reply, b"reply");
         server_task.abort();
+    }
+
+    /// A connection that freezes without closing (the path stops forwarding
+    /// it) is found by its unanswered keepalive PING and closed, so the pool
+    /// stops handing it out instead of hanging every request on it.
+    #[tokio::test]
+    async fn a_carrier_whose_pings_go_unanswered_is_closed() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let (client, relay_near) = tokio::io::duplex(64 * 1024);
+        let (relay_far, server) = tokio::io::duplex(64 * 1024);
+        let frozen = Arc::new(AtomicBool::new(false));
+        // A relay between the two that can stop forwarding while staying open.
+        let pipe = |mut from: tokio::io::ReadHalf<tokio::io::DuplexStream>,
+                    mut to: tokio::io::WriteHalf<tokio::io::DuplexStream>,
+                    frozen: Arc<AtomicBool>| async move {
+            let mut buffer = vec![0u8; 16 * 1024];
+            while let Ok(n @ 1..) = from.read(&mut buffer).await {
+                if frozen.load(Ordering::SeqCst) {
+                    std::future::pending::<()>().await;
+                }
+                if to.write_all(&buffer[..n]).await.is_err() {
+                    break;
+                }
+            }
+        };
+        let (near_read, near_write) = tokio::io::split(relay_near);
+        let (far_read, far_write) = tokio::io::split(relay_far);
+        tokio::spawn(pipe(near_read, far_write, Arc::clone(&frozen)));
+        tokio::spawn(pipe(far_read, near_write, Arc::clone(&frozen)));
+        tokio::spawn(async move {
+            let mut connection = h2::server::handshake(server).await.unwrap();
+            while connection.accept().await.is_some() {}
+        });
+        let carrier = H2Carrier::open_with_keepalive(zero_core::boxed(client), 1)
+            .await
+            .unwrap();
+        tokio::time::sleep(Duration::from_millis(1300)).await;
+        assert!(carrier.is_usable(), "answered PINGs keep it in use");
+
+        frozen.store(true, Ordering::SeqCst);
+        let deadline = tokio::time::Instant::now() + PING_DEADLINE + Duration::from_secs(4);
+        while carrier.is_usable() {
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "a frozen connection is still handed out"
+            );
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
     }
 
     /// Several proxied requests share one carrier, the carrier going away

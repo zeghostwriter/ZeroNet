@@ -3,6 +3,7 @@ package com.zeronet.mobile.service
 import android.content.Context
 import android.os.ParcelFileDescriptor
 import android.os.PowerManager
+import android.os.SystemClock
 import android.telephony.TelephonyManager
 import android.util.Log
 import com.zeronet.mobile.core.LocalProxyAuth
@@ -185,6 +186,9 @@ object Engine {
         return if (code.length == 2) code else ""
     }
     private const val HEALTH_INTERVAL_MS = 45_000L
+
+    /** The monitor's sleep with the screen off and no traffic. */
+    private const val IDLE_NAP_MS = 5_000L
     /** When every server fails a health check, test again this much later before believing it. */
     private const val HEALTH_RETEST_MS = 3_000L
     /** Failed health checks in a row before a chosen config is reported as not answering. */
@@ -230,10 +234,6 @@ object Engine {
     /** Active seconds out of [SPEED_WINDOW] before the adaptive floor treats
      *  the window as a bulk transfer worth measuring. */
     private const val SUSTAINED_SAMPLES = 10
-    /** Silence this long, with connections still open, counts as a stall. */
-    private const val STALL_AFTER_MS = 15_000L
-    /** Past this, the silence is ordinary idleness, not a stalled download. */
-    private const val STALL_GIVEUP_MS = 45_000L
     /** A server switched away from for being slow is not used again until this passes. */
     private const val SLOW_COOLDOWN_MS = 10 * 60_000L
     /** Saved servers per family the self-test tries. */
@@ -308,10 +308,8 @@ object Engine {
      * throughput). A cooldown expired entry is simply ignored, so no sweep.
      */
     private val slowUntil = ConcurrentHashMap<String, Long>()
-    /** Last time real traffic moved, for stall detection. */
-    private var lastActiveAt = 0L
-    /** Consecutive seconds a stall has lasted. */
-    private var stallSeconds = 0
+    /** Tells a stalled tunnel from an idle phone (see [StallWatch]). */
+    private val stallWatch = StallWatch()
     /** Last time a server was dropped for being slow, so decisions don't flap. */
     private var lastSlowSwitchAt = 0L
     /** Learns recent configs' delivered speeds for [SpeedFloor.Adaptive]. */
@@ -653,8 +651,7 @@ object Engine {
         crowdResults.clear()
         chosenFailures = 0
         slowUntil.clear()
-        stallSeconds = 0
-        lastActiveAt = System.currentTimeMillis()
+        stallWatch.reset()
         lastSlowSwitchAt = 0L
         homeCountry = detectHomeCountry()
         publish(ConnState.Searching(DiscoveryProgress()))
@@ -1238,11 +1235,16 @@ object Engine {
         val downHistory = ArrayDeque<Long>(60)
         val upHistory = ArrayDeque<Long>(60)
         var tick = 0L
-        lastActiveAt = System.currentTimeMillis()
+        var clock = 0L
+        var nextHealthAt = HEALTH_INTERVAL_MS
+        var napMs = 1000L
         val power = app.getSystemService(PowerManager::class.java)
         while (currentCoroutineContext().isActive && running) {
             // Sleep one second, or less when a network change asks for a health check now.
-            val forced = withTimeoutOrNull(1000) { healthNow.receive() } != null
+            val slept = SystemClock.elapsedRealtime()
+            val forced = withTimeoutOrNull(napMs) { healthNow.receive() } != null
+            val seconds = ((SystemClock.elapsedRealtime() - slept + 500) / 1000).coerceAtLeast(1)
+            clock += seconds * 1000
             tick++
             val interactive = power?.isInteractive ?: true
             // The counters are cheap atomic reads; they are read even with the
@@ -1254,8 +1256,12 @@ object Engine {
                 val up = o.optLong("up")
                 val down = o.optLong("down")
                 val sessions = o.optInt("sessions", 0)
-                val upRate = (up - lastUp).coerceAtLeast(0)
-                val downRate = (down - lastDown).coerceAtLeast(0)
+                val upRate = (up - lastUp).coerceAtLeast(0) / seconds
+                val downRate = (down - lastDown).coerceAtLeast(0) / seconds
+                // With the screen off and nothing moving there is nothing to
+                // watch for each second: wake every few seconds instead, and
+                // go back to every second the moment a byte moves.
+                napMs = if (!interactive && upRate + downRate == 0L) IDLE_NAP_MS else 1000L
                 lastUp = up; lastDown = down
                 if (downHistory.size == 60) downHistory.removeFirst()
                 if (upHistory.size == 60) upHistory.removeFirst()
@@ -1269,7 +1275,8 @@ object Engine {
                 maybeSwitchOnSpeed(downRate, upRate, sessions, downHistory)
                 if (settings.mode == ConnectionMode.Vpn) watchTunnelDevice(o.optBoolean("tun_lost"))
             }
-            if (forced || (settings.autoSwitch && tick * 1000 % HEALTH_INTERVAL_MS == 0L)) {
+            if (forced || (settings.autoSwitch && clock >= nextHealthAt)) {
+                nextHealthAt = clock + HEALTH_INTERVAL_MS
                 healthCheck(NetworkIdentity.current(app) ?: network)
             }
             maybeBackgroundFind(NetworkIdentity.current(app) ?: network)
@@ -1336,7 +1343,6 @@ object Engine {
         // retrying still "uploads". Upload alone only counts at a real upload
         // rate, otherwise a stalled connection never looks stalled.
         val moving = downRate > MIN_ACTIVE_BPS || upRate >= UPLOAD_ALIVE_BPS
-        if (moving) lastActiveAt = now
 
         // Adaptive floor: remember the best *sustained* download speed each
         // config reached, and judge the current one against what the recent
@@ -1375,24 +1381,13 @@ object Engine {
         // a server for being slow.
         if (!adaptive && floor <= 0) return
 
-        // Stall: connections are open, but nothing has moved for a while, and
-        // the silence began while a real transfer was in progress.
-        if (sessions > 0 && !moving) {
-            val silent = now - lastActiveAt
-            if (silent in STALL_AFTER_MS..STALL_GIVEUP_MS) {
-                stallSeconds++
-                // Silence this long means the stall started while a transfer
-                // was running, not during ordinary idleness.
-                if (stallSeconds >= (STALL_AFTER_MS / 1000).toInt() && now - lastSlowSwitchAt > SLOW_COOLDOWN_MS) {
-                    stallSeconds = 0
-                    dropPrimary("stalled")
-                }
-            } else {
-                stallSeconds = 0
-            }
+        // Stall: apps keep sending and nothing at all comes back. Quiet time
+        // on its own is a person reading, not a stall (see StallWatch).
+        if (stallWatch.observe(upRate, downRate, sessions) && now - lastSlowSwitchAt > SLOW_COOLDOWN_MS) {
+            dropPrimary("stalled")
             return
         }
-        stallSeconds = 0
+        if (sessions > 0 && !moving) return
 
         // Slow: the whole window of real transfer stayed under the floor.
         if (downHistory.size < SPEED_WINDOW) return
@@ -2328,8 +2323,7 @@ object Engine {
         running = false
         pool.clear()
         slowUntil.clear()
-        stallSeconds = 0
-        lastActiveAt = 0L
+        stallWatch.reset()
         stats.value = TrafficStats()
     }
 

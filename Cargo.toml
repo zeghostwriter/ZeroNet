@@ -70,7 +70,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 arc-swap = "1"
 aho-corasick = "1"
-regex = "1"
+regex = { version = "1", default-features = false, features = ["std", "unicode-case", "unicode-perl", "perf-cache", "perf-inline", "perf-literal", "perf-onepass", "perf-backtrack"] }
 ipnet = "2"
 socket2 = { version = "0.5", features = ["all"] }
 uuid = { version = "1", features = ["v4", "serde"] }

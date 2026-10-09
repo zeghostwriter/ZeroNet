@@ -1,9 +1,9 @@
 name: release
 
 # Push a tag like `v0.2.0` and every download people need lands on the
-# GitHub Releases page: the desktop app for Windows, Linux and macOS, the
-# Android APKs, and Zray Core, the command line engine on its own. Running it by hand builds the same files as workflow
-# artifacts without publishing a release.
+# GitHub Releases page: the desktop app for Windows and Linux, the Android
+# APKs, and Zray Core, the command line engine on its own. Running it by hand
+# builds the same files as workflow artifacts without publishing a release.
 on:
   push:
     tags: ["v*"]
@@ -125,53 +125,6 @@ jobs:
           name: linux-${{ matrix.label }}
           path: dist/*
 
-  macos:
-    name: macOS (universal)
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-apple-darwin, x86_64-apple-darwin
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
-      - run: |
-          cargo build --release -p zeronet-tui --target aarch64-apple-darwin
-          cargo build --release -p zeronet-tui --target x86_64-apple-darwin
-          cargo build --release -p zray-cli --target aarch64-apple-darwin
-          cargo build --release -p zray-cli --target x86_64-apple-darwin
-      - name: app bundle
-        run: |
-          version="${RELEASE_TAG#v}"
-          [[ -n "$version" ]] || version=0.0.0
-          app=dist/ZeroNet.app
-          mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
-          lipo -create -output "$app/Contents/MacOS/zeronet-tui" \
-            target/aarch64-apple-darwin/release/zeronet-tui \
-            target/x86_64-apple-darwin/release/zeronet-tui
-          sed "s/@VERSION@/$version/g" packaging/macos/Info.plist > "$app/Contents/Info.plist"
-          cp packaging/icons/zeronet.icns "$app/Contents/Resources/zeronet.icns"
-          # Ad-hoc signature: Apple Silicon refuses to run unsigned code.
-          codesign --force --deep --sign - "$app"
-          # The bare program, signed, which an installed copy updates itself
-          # from (it re-seals its own bundle afterwards).
-          cp "$app/Contents/MacOS/zeronet-tui" dist/ZeroNet-macOS-universal
-          (cd dist && ditto -c -k --keepParent ZeroNet.app ZeroNet-macOS-universal.zip)
-          rm -rf "$app"
-          # Zray Core: the engine without the app. A tarball keeps the
-          # executable bit; the ad-hoc signature is what Apple Silicon needs.
-          core=ZrayCore-macOS-universal
-          mkdir -p "$core"
-          lipo -create -output "$core/zray" \
-            target/aarch64-apple-darwin/release/zray \
-            target/x86_64-apple-darwin/release/zray
-          codesign --force --sign - "$core/zray"
-          cp LICENSE "$core/"
-          tar -czf "dist/$core.tar.gz" "$core"
-      - uses: actions/upload-artifact@v7
-        with:
-          name: macos
-          path: dist/*
-
   android:
     name: Android
     runs-on: ubuntu-latest
@@ -195,7 +148,7 @@ jobs:
         run: sdkmanager "ndk;29.0.14206865"
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-linux-android, armv7-linux-androideabi, x86_64-linux-android
+          targets: aarch64-linux-android, armv7-linux-androideabi
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       - run: cargo install cargo-ndk --locked
       # Optional: a real signing key from repository secrets, so installed
@@ -255,7 +208,6 @@ jobs:
           cp "$out/app-universal-release.apk"   dist/ZeroNet-Android-universal.apk
           cp "$out/app-arm64-v8a-release.apk"   dist/ZeroNet-Android-arm64-v8a.apk
           cp "$out/app-armeabi-v7a-release.apk" dist/ZeroNet-Android-armeabi-v7a.apk
-          cp "$out/app-x86_64-release.apk"      dist/ZeroNet-Android-x86_64.apk
       - uses: actions/upload-artifact@v7
         with:
           name: android
@@ -266,7 +218,7 @@ jobs:
     # A pushed tag, or a manual run given a version: the release action then
     # creates the tag on this commit.
     if: github.ref_type == 'tag' || inputs.version != ''
-    needs: [windows, linux, macos, android]
+    needs: [windows, linux, android]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v8
@@ -290,7 +242,6 @@ jobs:
             | 🪟 Windows | `ZeroNet-Windows-x64.zip` | Extract, double-click `ZeroNet.exe` |
             | 🐧 Linux, most computers (Intel / AMD) | `ZeroNet-Linux-x64.AppImage` | Make it executable, double-click |
             | 🐧 Linux on ARM (Raspberry Pi, ARM laptops) | `ZeroNet-Linux-ARM64.AppImage` | Make it executable, double-click |
-            | 🍎 macOS (Intel and Apple Silicon) | `ZeroNet-macOS-universal.zip` | Unzip, right-click `ZeroNet.app` → Open |
             | 🤖 Android, any phone | `ZeroNet-Android-universal.apk` | Install it |
 
             **Zray Core** is the same engine without the app, a command-line program for servers, routers and scripts (`zray run config.json`):
@@ -300,7 +251,6 @@ jobs:
             | 🪟 Windows | `ZrayCore-Windows-x64.zip` |
             | 🐧 Linux, Intel / AMD | `ZrayCore-Linux-x64.tar.gz` |
             | 🐧 Linux on ARM | `ZrayCore-Linux-ARM64.tar.gz` |
-            | 🍎 macOS (Intel and Apple Silicon) | `ZrayCore-macOS-universal.tar.gz` |
 
             **Not sure which Linux file?** Run `uname -m` in a terminal: `x86_64` → **x64**, `aarch64` → **ARM64**. "exec format error" means the other one.
             The other files are for the in-app updater and for experts: the bare programs, `.tar.gz` archives, and smaller Android APKs for one processor type (`arm64-v8a` fits almost every modern phone).

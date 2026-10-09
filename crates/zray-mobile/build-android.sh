@@ -7,7 +7,7 @@
 # Environment:
 #   ANDROID_NDK_HOME  NDK to use (default: newest under $ANDROID_HOME/ndk, then
 #                     ~/Android/Sdk/ndk)
-#   ZRAY_ABIS         space-separated ABIs (default: "arm64-v8a armeabi-v7a x86_64")
+#   ZRAY_ABIS         space-separated ABIs (default: "arm64-v8a armeabi-v7a")
 #   ZRAY_API          minimum API level (default: 30)
 #   ZRAY_PROFILE      cargo profile (default: release-mobile — release with
 #                     unwinding panics, so the JNI guards can catch them)
@@ -20,7 +20,7 @@ fi
 out="$1"
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 root="$(cd "$here/../.." && pwd)"
-abis="${ZRAY_ABIS:-arm64-v8a armeabi-v7a x86_64}"
+abis="${ZRAY_ABIS:-arm64-v8a armeabi-v7a}"
 api="${ZRAY_API:-30}"
 profile="${ZRAY_PROFILE:-release-mobile}"
 

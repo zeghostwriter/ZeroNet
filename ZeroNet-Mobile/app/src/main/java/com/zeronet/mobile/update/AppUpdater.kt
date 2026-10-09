@@ -190,7 +190,7 @@ class AppUpdater private constructor(private val context: Context) {
 
     /** The APK for this phone's CPU first, then the one that runs anywhere. */
     private fun apkCandidates(): List<String> {
-        val known = setOf("arm64-v8a", "armeabi-v7a", "x86_64")
+        val known = setOf("arm64-v8a", "armeabi-v7a")
         val abi = Build.SUPPORTED_ABIS.firstOrNull { it in known }
         return listOfNotNull(abi?.let { "ZeroNet-Android-$it.apk" }, "ZeroNet-Android-universal.apk")
     }

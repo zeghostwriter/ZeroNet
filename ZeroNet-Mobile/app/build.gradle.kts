@@ -64,7 +64,7 @@ android {
         abi {
             isEnable = true
             reset()
-            include("arm64-v8a", "armeabi-v7a", "x86_64")
+            include("arm64-v8a", "armeabi-v7a")
             isUniversalApk = true
         }
     }
@@ -158,7 +158,7 @@ android {
 val skipNative = providers.gradleProperty("zray.skipNative").map { it == "true" }.getOrElse(false)
 val buildZrayNative by tasks.registering(Exec::class) {
     group = "zray"
-    description = "Builds libzray_mobile.so for arm64-v8a, armeabi-v7a and x86_64 with cargo-ndk."
+    description = "Builds libzray_mobile.so for arm64-v8a and armeabi-v7a with cargo-ndk."
     val script = File(zrayCoreDir, "crates/zray-mobile/build-android.sh")
     val enabled = script.exists() && !skipNative
     onlyIf { enabled }

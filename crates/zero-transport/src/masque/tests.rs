@@ -487,3 +487,94 @@ async fn a_carried_tunnel_that_ends_opens_a_new_connection_through_the_hop() {
         "the rebuild skipped the hop"
     );
 }
+
+/// A hop like [`relay_hop`] whose first connection freezes on demand: it
+/// stays open but stops forwarding either way, the way a connection looks
+/// when a middlebox stops passing it or loss has pushed TCP's retransmission
+/// timer out to a minute. Nothing errors and nothing closes.
+async fn freezing_hop(
+    edge: std::net::SocketAddr,
+) -> (Opener, Arc<AtomicUsize>, Arc<std::sync::atomic::AtomicBool>) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let hop = listener.local_addr().unwrap();
+    let carried = Arc::new(AtomicUsize::new(0));
+    let frozen = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let (counter, freeze) = (Arc::clone(&carried), Arc::clone(&frozen));
+    tokio::spawn(async move {
+        while let Ok((client, _)) = listener.accept().await {
+            let nth = counter.fetch_add(1, Ordering::SeqCst);
+            let freeze = Arc::clone(&freeze);
+            tokio::spawn(async move {
+                let Ok(target) = tokio::net::TcpStream::connect(edge).await else {
+                    return;
+                };
+                let (mut client_read, mut client_write) = client.into_split();
+                let (mut target_read, mut target_write) = target.into_split();
+                // Only the first connection freezes; later ones carry on.
+                let stuck = move || nth == 0 && freeze.load(Ordering::SeqCst);
+                let stuck_too = stuck.clone();
+                let up = async move {
+                    let mut buffer = vec![0u8; 16 * 1024];
+                    while let Ok(n @ 1..) = client_read.read(&mut buffer).await {
+                        if stuck() {
+                            std::future::pending::<()>().await;
+                        }
+                        if target_write.write_all(&buffer[..n]).await.is_err() {
+                            break;
+                        }
+                    }
+                };
+                let down = async move {
+                    let mut buffer = vec![0u8; 16 * 1024];
+                    while let Ok(n @ 1..) = target_read.read(&mut buffer).await {
+                        if stuck_too() {
+                            std::future::pending::<()>().await;
+                        }
+                        if client_write.write_all(&buffer[..n]).await.is_err() {
+                            break;
+                        }
+                    }
+                };
+                tokio::join!(up, down);
+            });
+        }
+    });
+    let opener: Opener = Arc::new(move |_edge| {
+        Box::pin(async move {
+            tokio::net::TcpStream::connect(hop)
+                .await
+                .map(zero_core::boxed)
+                .map_err(|error| format!("hop: {error}"))
+        })
+    });
+    (opener, carried, frozen)
+}
+
+/// A connection that freezes without closing is noticed by its unanswered
+/// PING and replaced, so the tunnel carries traffic again within seconds
+/// instead of hanging until TCP gives up.
+#[tokio::test]
+async fn a_connection_that_freezes_without_closing_is_replaced() {
+    let server = MasqueKey::generate().unwrap();
+    let (edge, _, _) = h2_server(&server, false).await;
+    let (opener, carried, frozen) = freezing_hop(edge).await;
+    let spec = spec_to(&server, edge, true);
+    let mut link = start_over(spec, opener).await.unwrap();
+    let sent = probe(1);
+    assert_eq!(round_trip(&mut link, &sent).await, sent);
+
+    frozen.store(true, Ordering::SeqCst);
+    let started = tokio::time::Instant::now();
+    let sent = probe(2);
+    assert_eq!(round_trip(&mut link, &sent).await, sent);
+    assert!(
+        carried.load(Ordering::SeqCst) >= 2,
+        "a fresh connection carried it"
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(12),
+        "recovered in {:?}",
+        started.elapsed()
+    );
+}

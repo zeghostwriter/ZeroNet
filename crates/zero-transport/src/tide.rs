@@ -206,7 +206,7 @@ impl Carrier {
             return Ok((sender.clone(), None));
         }
         let (io, uncork) = Cork::new((self.dial)().await?);
-        let (sender, connection) = h2::client::Builder::new()
+        let (sender, mut connection) = h2::client::Builder::new()
             .initial_window_size(H2_WINDOW)
             .initial_connection_window_size(H2_WINDOW)
             .handshake::<_, Bytes>(io)
@@ -218,11 +218,8 @@ impl Carrier {
         // a 46-byte packet followed by the request.
         let page = front_page_request(sender.clone(), &self.host);
         uncork.store(true, std::sync::atomic::Ordering::Release);
-        tokio::spawn(async move {
-            if let Err(error) = connection.await {
-                tracing::debug!(%error, "tide connection ended");
-            }
-        });
+        let pings = connection.ping_pong();
+        tokio::spawn(drive(connection, pings, PING_EVERY, PING_DEADLINE));
         let time = front_page(page).await;
         *current = Some(sender.clone());
         Ok((sender, time))
@@ -231,6 +228,50 @@ impl Carrier {
     /// Forget the connection after a failure, so the next use redials.
     async fn invalidate(&self) {
         *self.current.lock().await = None;
+    }
+}
+
+/// How often a carrier's HTTP/2 connection is pinged, and how long a PING may
+/// go unanswered before the connection counts as frozen.
+const PING_EVERY: Duration = Duration::from_secs(12);
+const PING_DEADLINE: Duration = Duration::from_secs(8);
+
+/// Runs an HTTP/2 connection until it ends, pinging it every `period`.
+///
+/// A TCP connection can freeze without closing (a middlebox stops forwarding
+/// it, or loss stretches TCP's retransmit timer to minutes); every pipe on it
+/// then hangs with no error. A PING not answered within `deadline` ends the
+/// connection here: its requests fail at once, the pipes redial, and the
+/// session carries on over a fresh connection. An idle session is closed
+/// long before this matters, so the PINGs only run while it is in use.
+async fn drive(
+    connection: h2::client::Connection<Cork, Bytes>,
+    pings: Option<h2::PingPong>,
+    period: Duration,
+    deadline: Duration,
+) {
+    let keep = async {
+        let Some(mut pings) = pings else {
+            return std::future::pending::<()>().await;
+        };
+        let mut tick = tokio::time::interval_at(tokio::time::Instant::now() + period, period);
+        loop {
+            tick.tick().await;
+            match tokio::time::timeout(deadline, pings.ping(h2::Ping::opaque())).await {
+                Ok(Ok(_)) => {}
+                // The connection is going; `connection` reports how.
+                Ok(Err(_)) => return std::future::pending::<()>().await,
+                Err(_) => return,
+            }
+        }
+    };
+    tokio::select! {
+        result = connection => {
+            if let Err(error) = result {
+                tracing::debug!(%error, "tide connection ended");
+            }
+        }
+        () = keep => tracing::debug!("tide connection stopped answering PINGs"),
     }
 }
 
@@ -1137,6 +1178,59 @@ mod tests {
             assert_eq!(parse_http_date(&http_date(time)), Some(time), "{time}");
         }
         assert_eq!(parse_http_date("yesterday"), None);
+    }
+
+    /// A connection that freezes without closing is found by its unanswered
+    /// PING and ended, so the requests on it fail now instead of hanging.
+    #[tokio::test]
+    async fn a_connection_that_stops_answering_pings_is_ended() {
+        use std::sync::atomic::AtomicBool;
+        let (client, relay_near) = tokio::io::duplex(64 * 1024);
+        let (relay_far, server) = tokio::io::duplex(64 * 1024);
+        let frozen = Arc::new(AtomicBool::new(false));
+        // A relay between the two that can stop forwarding while staying open.
+        let pipe = |mut from: tokio::io::ReadHalf<tokio::io::DuplexStream>,
+                    mut to: tokio::io::WriteHalf<tokio::io::DuplexStream>,
+                    frozen: Arc<AtomicBool>| async move {
+            let mut buffer = vec![0u8; 16 * 1024];
+            while let Ok(n @ 1..) = from.read(&mut buffer).await {
+                if frozen.load(Ordering::SeqCst) {
+                    std::future::pending::<()>().await;
+                }
+                if to.write_all(&buffer[..n]).await.is_err() {
+                    break;
+                }
+            }
+        };
+        let (near_read, near_write) = tokio::io::split(relay_near);
+        let (far_read, far_write) = tokio::io::split(relay_far);
+        tokio::spawn(pipe(near_read, far_write, Arc::clone(&frozen)));
+        tokio::spawn(pipe(far_read, near_write, Arc::clone(&frozen)));
+        tokio::spawn(async move {
+            let mut connection = h2::server::handshake(server).await.unwrap();
+            while connection.accept().await.is_some() {}
+        });
+        let (io, uncork) = Cork::new(boxed(client));
+        uncork.store(true, Ordering::Release);
+        let (_sender, mut connection) = h2::client::Builder::new()
+            .handshake::<_, Bytes>(io)
+            .await
+            .unwrap();
+        let pings = connection.ping_pong();
+        let driver = tokio::spawn(drive(
+            connection,
+            pings,
+            Duration::from_millis(100),
+            Duration::from_millis(300),
+        ));
+
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        assert!(!driver.is_finished(), "answered PINGs keep it open");
+        frozen.store(true, Ordering::SeqCst);
+        tokio::time::timeout(Duration::from_secs(3), driver)
+            .await
+            .expect("a frozen connection was never ended")
+            .unwrap();
     }
 
     struct Bench {

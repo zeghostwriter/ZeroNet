@@ -103,14 +103,34 @@ fn rx_buffer_for(rtt: Option<Duration>, open_connections: usize) -> usize {
         .clamp(TCP_RX_BUFFER, TCP_RX_MAX)
         .next_multiple_of(4096)
 }
+/// How long the stack sleeps when the network stack itself has no timer
+/// pending. A command, a packet or a wake-up ends the sleep sooner; this is
+/// only the backstop.
+const IDLE_POLL: Duration = Duration::from_secs(10);
 /// A tunnel with nothing open for this long shuts down.
 pub const IDLE_SHUTDOWN: Duration = Duration::from_secs(5 * 60);
 /// How long a TCP connect through the tunnel may take.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(12);
 /// How long a UDP exchange waits for its answer.
 const UDP_TIMEOUT: Duration = Duration::from_secs(6);
-/// WireGuard's own timers (handshake retries, keepalives) are driven this often.
+/// WireGuard's own timers (handshake retries, keepalives) are driven this often
+/// while the tunnel is in use...
 const WG_TIMER_TICK: Duration = Duration::from_millis(250);
+/// ...and this often once nothing has arrived for [`WG_QUIET_AFTER`]. Every
+/// timer WireGuard has is counted in seconds, so a phone that is only holding
+/// the tunnel open does not need to wake four times a second.
+const WG_QUIET_TICK: Duration = Duration::from_secs(1);
+const WG_QUIET_AFTER: Duration = Duration::from_secs(10);
+
+/// How long to wait before driving WireGuard's timers again, given how long
+/// the tunnel has been silent.
+fn timer_tick(silent_for: Duration) -> Duration {
+    if silent_for >= WG_QUIET_AFTER {
+        WG_QUIET_TICK
+    } else {
+        WG_TIMER_TICK
+    }
+}
 /// Largest UDP datagram read from the network: an MTU-sized packet plus
 /// WireGuard overhead and the largest AmneziaWG padding.
 const NETWORK_BUFFER: usize = 4096;
@@ -913,7 +933,7 @@ impl Driver {
             if let Link::WireGuard(wg) = &mut self.link {
                 if Instant::now() >= next_timer {
                     wg.timers().await;
-                    next_timer = Instant::now() + WG_TIMER_TICK;
+                    next_timer = Instant::now() + timer_tick(self.last_activity.elapsed());
                 }
             } else {
                 // A packet link keeps its own timers; nothing to tick here.
@@ -929,7 +949,7 @@ impl Driver {
                 .iface
                 .poll_delay(self.now(), &self.sockets)
                 .map(|d| Duration::from_micros(d.total_micros()))
-                .unwrap_or(Duration::from_secs(1));
+                .unwrap_or(IDLE_POLL);
             let timer_delay = next_timer.saturating_duration_since(Instant::now());
             let delay = stack_delay.min(timer_delay).max(Duration::from_millis(1));
 
@@ -1486,6 +1506,16 @@ fn dns_answer(message: &[u8], id: u16, qtype: u16) -> Result<(Vec<IpAddr>, Durat
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_quiet_tunnel_ticks_slower_than_a_busy_one() {
+        assert_eq!(timer_tick(Duration::ZERO), WG_TIMER_TICK);
+        assert_eq!(
+            timer_tick(WG_QUIET_AFTER - Duration::from_millis(1)),
+            WG_TIMER_TICK
+        );
+        assert_eq!(timer_tick(WG_QUIET_AFTER), WG_QUIET_TICK);
+    }
+
     use super::*;
 
     /// An in-process WireGuard peer: boringtun plus its own smoltcp stack at

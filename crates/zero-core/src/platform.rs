@@ -246,6 +246,40 @@ pub fn bind_protected_udp(address: std::net::SocketAddr) -> io::Result<std::net:
     Ok(socket)
 }
 
+/// How long data sent on an outbound TCP connection may go unacknowledged
+/// before the kernel gives up on the connection.
+///
+/// Without a bound, Linux and Android keep retransmitting with a doubling
+/// back-off for up to fifteen minutes. On a path that freezes a flow (a
+/// middlebox that stops forwarding it, a NAT that forgot it), every
+/// connection on it hangs that long without an error, and nothing above it —
+/// a pool, a tunnel, the app — learns that it should reconnect. Thirty
+/// seconds of sent data with no acknowledgement at all is far past any
+/// working path's round trip, so this only ever ends connections that were
+/// already dead.
+pub const DEAD_CONNECTION_AFTER: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Apply [`DEAD_CONNECTION_AFTER`] to an outbound TCP socket
+/// (`TCP_USER_TIMEOUT`). Elsewhere the option does not exist, and failing to
+/// set it never fails a connection.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+pub fn bound_dead_connection<S: std::os::fd::AsRawFd>(socket: &S) {
+    let millis = DEAD_CONNECTION_AFTER.as_millis() as libc::c_uint;
+    // SAFETY: a valid descriptor and a correctly sized option value.
+    unsafe {
+        libc::setsockopt(
+            socket.as_raw_fd(),
+            libc::IPPROTO_TCP,
+            libc::TCP_USER_TIMEOUT,
+            std::ptr::addr_of!(millis).cast(),
+            std::mem::size_of::<libc::c_uint>() as libc::socklen_t,
+        );
+    }
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "android")))]
+pub fn bound_dead_connection<S>(_socket: &S) {}
+
 /// Connect a TCP socket that the host has been allowed to protect first.
 ///
 /// The ordering is not negotiable: `TcpStream::connect` creates and connects
@@ -261,6 +295,7 @@ pub async fn connect_protected(address: std::net::SocketAddr) -> io::Result<toki
     };
     protect_socket(&socket)?;
     crate::path_mss::apply(&socket);
+    bound_dead_connection(&socket);
     socket.connect(address).await
 }
 
@@ -280,6 +315,32 @@ mod tests {
             self.0.fetch_add(1, Ordering::Relaxed);
             Ok(())
         }
+    }
+
+    /// Every outbound connection carries the dead-connection bound, so a
+    /// frozen path fails within half a minute instead of fifteen.
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn outbound_connections_give_up_on_a_frozen_path() {
+        use std::os::fd::AsRawFd;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let stream = connect_protected(listener.local_addr().unwrap())
+            .await
+            .unwrap();
+        let mut value: libc::c_uint = 0;
+        let mut len = std::mem::size_of::<libc::c_uint>() as libc::socklen_t;
+        // SAFETY: a valid descriptor and an option buffer of the right size.
+        let rc = unsafe {
+            libc::getsockopt(
+                stream.as_raw_fd(),
+                libc::IPPROTO_TCP,
+                libc::TCP_USER_TIMEOUT,
+                std::ptr::addr_of_mut!(value).cast(),
+                &mut len,
+            )
+        };
+        assert_eq!(rc, 0);
+        assert_eq!(u128::from(value), DEAD_CONNECTION_AFTER.as_millis());
     }
 
     #[cfg(target_os = "linux")]

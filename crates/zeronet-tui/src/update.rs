@@ -12,8 +12,9 @@
 //! - an AppImage: the `.AppImage` file itself (`$APPIMAGE`), with the new
 //!   AppImage;
 //! - anything else: the running executable, with the plain binary the
-//!   release also carries (`ZeroNet-Windows-x64.exe`, `ZeroNet-Linux-x64`/`ZeroNet-Linux-ARM64`,
-//!   `ZeroNet-macOS-universal`).
+//!   release also carries (`ZeroNet-Windows-x64.exe`, `ZeroNet-Linux-x64`/`ZeroNet-Linux-ARM64`).
+//!
+//! Releases carry no macOS build of the app, so there it never updates.
 //!
 //! GitHub is often slow or filtered where ZeroNet is used, so while a
 //! connection is up every request goes through the app's own HTTP proxy
@@ -176,8 +177,6 @@ impl Target {
             "ZeroNet-Windows-x64.exe".to_string()
         } else if let (true, Some(label)) = (cfg!(target_os = "linux"), label) {
             format!("ZeroNet-Linux-{label}")
-        } else if cfg!(target_os = "macos") {
-            "ZeroNet-macOS-universal".to_string()
         } else {
             return None;
         };

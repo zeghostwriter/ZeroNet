@@ -57,14 +57,13 @@
 | 🪟 ویندوز | `ZeroNet-Windows-x64.zip` | فایل را از حالت فشرده خارج کنید و روی `ZeroNet.exe` دوبار کلیک کنید. اگر ویندوز هشدار داد: **More info ←&rlm; Run anyway**. |
 | 🐧 لینوکس (بیشتر کامپیوترها: اینتل و AMD) | `ZeroNet-Linux-x64.AppImage` | راست‌کلیک ← Properties ← تیک **Allow executing file as program**. بعد دوبار کلیک کنید. برنامه خودش در ترمینال باز می‌شود. |
 | 🐧 لینوکس روی ARM (رزبری‌پای، لپ‌تاپ‌های ARM) | `ZeroNet-Linux-ARM64.AppImage` | مثل بالا. |
-| 🍎 مک | `ZeroNet-macOS-universal.zip` | از حالت فشرده خارج کنید، `ZeroNet.app` را به Applications ببرید. بار اول **راست‌کلیک ← Open** (برنامه امضای اپل ندارد). |
 | 🤖 اندروید | `ZeroNet-Android-universal.apk` | نصب کنید. اگر پرسید، اجازه‌ی نصب از منابع ناشناس را بدهید. |
 
 > مطمئن نیستید کدام فایل لینوکس؟ در ترمینال `uname -m` را بزنید: `x86_64` یعنی **x64** و `aarch64` یعنی **ARM64**. خطای «exec format error» یعنی فایل آن یکی را لازم دارید.
 >
 > برای گوشی‌های جدید فایل `arm64-v8a` کم‌حجم‌تر است. اگر مطمئن نیستید، `universal` را بگیرید.
 
-**Zray Core** همان موتور بدون برنامه است: یک برنامه‌ی خط فرمان برای سرور، روتر و اسکریپت. در همان صفحه است با نام‌های `ZrayCore-Windows-x64.zip`،&rlm; `ZrayCore-Linux-x64.tar.gz`،&rlm; `ZrayCore-Linux-ARM64.tar.gz` و `ZrayCore-macOS-universal.tar.gz`. فایل را باز کنید و `zray run config.json` را بزنید (`zray help` بقیه‌ی دستورها را نشان می‌دهد).
+**Zray Core** همان موتور بدون برنامه است: یک برنامه‌ی خط فرمان برای سرور، روتر و اسکریپت. در همان صفحه است با نام‌های `ZrayCore-Windows-x64.zip`،&rlm; `ZrayCore-Linux-x64.tar.gz` و `ZrayCore-Linux-ARM64.tar.gz`. فایل را باز کنید و `zray run config.json` را بزنید (`zray help` بقیه‌ی دستورها را نشان می‌دهد).
 
 ### 🧭 استفاده
 
@@ -102,7 +101,7 @@ cd ZeroNet-Mobile && ./gradlew assembleRelease   # Android (see ZeroNet-Mobile/R
 ## English
 
 **ZeroNet** is a fast, simple VPN for getting past censorship, on Windows,
-Linux, macOS and Android. Its heart is **Zray**, a networking core written
+Linux and Android. Its heart is **Zray**, a networking core written
 from scratch in **Rust**. It speaks the same configs as Xray: VLESS, REALITY,
 Vision, XHTTP, VMess, Trojan, Shadowsocks and more. A config that works in
 Xray works here.
@@ -138,7 +137,6 @@ Everything is on the **[Releases page](https://github.com/zeghostwriter/ZeroNet/
 | 🪟 Windows | `ZeroNet-Windows-x64.zip` | Extract it and double-click `ZeroNet.exe`. If SmartScreen appears: **More info → Run anyway**. |
 | 🐧 Linux, most computers (Intel / AMD) | `ZeroNet-Linux-x64.AppImage` | Right-click → Properties → **Allow executing file as program**, then double-click. It opens in a terminal window on its own. (A plain `.tar.gz` is there too.) |
 | 🐧 Linux on ARM (Raspberry Pi, ARM laptops) | `ZeroNet-Linux-ARM64.AppImage` | The same. |
-| 🍎 macOS | `ZeroNet-macOS-universal.zip` | Unzip and move `ZeroNet.app` to Applications. The first time, **right-click → Open**: the app isn't notarized by Apple. If macOS says it is damaged, run `xattr -dr com.apple.quarantine /Applications/ZeroNet.app`. |
 | 🤖 Android | `ZeroNet-Android-universal.apk` | Install it and allow installs from this source if asked. `arm64-v8a` is a smaller download for most modern phones. |
 
 Not sure which Linux file? Run `uname -m` in a terminal: `x86_64` means
@@ -147,13 +145,11 @@ other one.
 
 **Zray Core** is the same engine without the app: one command-line program
 for servers, routers and scripts. It is on the same page, as
-`ZrayCore-Windows-x64.zip`, `ZrayCore-Linux-x64.tar.gz`,
-`ZrayCore-Linux-ARM64.tar.gz` and `ZrayCore-macOS-universal.tar.gz`. Unpack
-it and run `zray run config.json` (`zray help` lists the rest).
+`ZrayCore-Windows-x64.zip`, `ZrayCore-Linux-x64.tar.gz`
+and `ZrayCore-Linux-ARM64.tar.gz`. Unpack it and run `zray run config.json` (`zray help` lists the rest).
 
 ZeroNet is a terminal app that works like a desktop app: mouse, hover,
 menus, clicks. When you double-click it, it opens its own terminal window.
-On macOS it runs in Terminal.app, so double-clicking always works.
 
 ### 🧭 Using it
 

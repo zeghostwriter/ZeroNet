@@ -222,6 +222,7 @@ fn new_socket(addr: SocketAddr, opts: &SocketOptions) -> io::Result<tokio::net::
     // connection that cannot work (zero_core::platform).
     zero_core::protect_socket(&socket)?;
     zero_core::path_mss::apply(&socket);
+    zero_core::platform::bound_dead_connection(&socket);
 
     if let Some(sz) = opts.send_buffer {
         let _ = socket.set_send_buffer_size(u32::try_from(sz).unwrap_or(u32::MAX));
