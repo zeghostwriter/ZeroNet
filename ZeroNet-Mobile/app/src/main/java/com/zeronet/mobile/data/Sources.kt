@@ -34,18 +34,35 @@ object Sources {
         // jsDelivr, which is often reachable when raw.githubusercontent.com
         // is not.
         FeedSource("zeronet", "ZeroNet verified", "zeghostwriter/ZeroNet", "https://cdn.jsdelivr.net/gh/zeghostwriter/ZeroNet@crowd-data/verified.txt", 0, "https://cdn.jsdelivr.net/gh/zeghostwriter/ZeroNet@crowd-data/verified.txt.sig"),
-        FeedSource("limilco", "liMilCo", "liMilCo/v2r", "$RAW/liMilCo/v2r/main/new_configs.txt", 1),
+        // Tier 1: fetched on every cold search that tier 0 did not satisfy, so
+        // the whole tier is kept near 90 KB gzipped (sizes noted below).
         FeedSource("sinavm", "SVM", "sinavm/SVM", "$RAW/sinavm/SVM/main/lite/subscriptions/xray/base64/mix", 1),
         FeedSource("anonymou3", "Multi Proxy (tested)", "4n0nymou3/multi-proxy-config-fetcher", "$RAW/4n0nymou3/multi-proxy-config-fetcher/main/configs/proxy_configs_tested.txt", 1),
+        // Speed-tested before publish: a few hundred proven servers, so a cold
+        // search is likelier to find a fast one without downloading a big list.
+        FeedSource("matin", "v2ray-configs (best tested)", "MatinGhanbari/v2ray-configs", "$RAW/MatinGhanbari/v2ray-configs/main/subscriptions/v2ray/super-sub.txt", 1),
+        FeedSource("roosterkid", "OpenProxyList (hourly)", "roosterkid/openproxylist", "$RAW/roosterkid/openproxylist/main/V2RAY_RAW.txt", 1),
+        FeedSource("yebekhe", "vpn-fail", "yebekhe/vpn-fail", "$RAW/yebekhe/vpn-fail/main/sub-link", 1),
+        FeedSource("mahdi0024", "ProxyCollector (Iran)", "Mahdi0024/ProxyCollector", "$RAW/Mahdi0024/ProxyCollector/master/sub/proxies.txt", 1),
+        FeedSource("norouzi", "Iran configs (working)", "MrAbolfazlNorouzi/iran-configs", "$RAW/MrAbolfazlNorouzi/iran-configs/main/configs/working-configs.txt", 1),
+        // Configs that still pass on Irancell, which fails differently from the
+        // fixed-line providers.
+        FeedSource("irancell", "Irancell configs", "morteza-v2/free-v2ray-irancell-config", "$RAW/morteza-v2/free-v2ray-irancell-config/main/Sub1.txt", 1),
+        // Tier 2: only when tier 1 fell short (~440 KB in total).
+        FeedSource("limilco", "liMilCo", "liMilCo/v2r", "$RAW/liMilCo/v2r/main/new_configs.txt", 2),
         FeedSource("solvpn", "SolVPN (tested)", "SoliSpirit/SolVPN", "$RAW/SoliSpirit/SolVPN/main/all_configs.txt", 2),
         FeedSource("miladtahanian", "Config-Collector (Iran)", "miladtahanian/Config-Collector", "$RAW/miladtahanian/Config-Collector/main/mixed_iran.txt", 2),
-        FeedSource("radikal", "0xRadikal", "0xRadikal/Free-v2ray-Configs", "$RAW/0xRadikal/Free-v2ray-Configs/main/all/configs.txt", 2),
-        FeedSource("epodonios", "Epodonios", "Epodonios/v2ray-configs", "$RAW/Epodonios/v2ray-configs/main/All_Configs_Sub.txt", 2),
+        FeedSource("f0rc3run", "F0rc3Run", "F0rc3Run/F0rc3Run", "$RAW/F0rc3Run/F0rc3Run/main/Best-Results/sub.txt", 2),
+        FeedSource("bahemmat", "V2ray-Collector (Iran)", "MohammadBahemmat/V2ray-Collector", "$RAW/MohammadBahemmat/V2ray-Collector/main/all_servers.txt", 2),
+        // Tier 3: only when asked to search harder (~820 KB in total). The
+        // multi-megabyte aggregators are not here on purpose: the server-side
+        // harvest tests them and their results reach the phone as tier 0.
+        FeedSource("epodonios", "Epodonios", "Epodonios/v2ray-configs", "$RAW/Epodonios/v2ray-configs/main/All_Configs_Sub.txt", 3),
+        FeedSource("mahdibland", "V2RayAggregator (speed-tested)", "mahdibland/V2RayAggregator", "$RAW/mahdibland/V2RayAggregator/master/sub/sub_merge.txt", 3),
         FeedSource("freedom", "Freedom-V2Ray", "MahanKenway/Freedom-V2Ray", "$RAW/MahanKenway/Freedom-V2Ray/main/configs/mix.txt", 3),
-        FeedSource("ebrasha", "EbraSha (VLESS)", "ebrasha/free-v2ray-public-list", "$RAW/ebrasha/free-v2ray-public-list/main/vless_configs.txt", 3),
-        FeedSource("delta", "Delta-Kronecker", "Delta-Kronecker/V2ray-Config", "$RAW/Delta-Kronecker/V2ray-Config/main/config/all_configs.txt", 3),
-        FeedSource("mheidari", "mheidari98", "mheidari98/.proxy", "$RAW/mheidari98/.proxy/main/all", 3),
-        FeedSource("f0rc3run", "F0rc3Run", "F0rc3Run/F0rc3Run", "$RAW/F0rc3Run/F0rc3Run/main/Best-Results/sub.txt", 3),
+        FeedSource("proxykma", "proxykma (Iran)", "amirkma/proxykma", "$RAW/amirkma/proxykma/main/mix.txt", 3),
+        FeedSource("vpnclashfa", "VPNClashFa (Iran)", "10ium/VpnClashFaCollector", "$RAW/10ium/VpnClashFaCollector/main/sub/all/mixed.txt", 3),
+        FeedSource("autoaivpn", "AutoAiVPN (Iran)", "penhandev/AutoAiVPN", "$RAW/penhandev/AutoAiVPN/main/iran.txt", 3),
     )
 
     fun enabled(disabled: Set<String>, maxTier: Int = 3): List<FeedSource> =

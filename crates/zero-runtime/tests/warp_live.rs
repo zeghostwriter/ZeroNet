@@ -494,3 +494,137 @@ async fn a_carried_tunnel_reaches_warp_through_a_server() {
         "the request did not arrive through WARP"
     );
 }
+
+/// The outbound settings of the MASQUE account in `ZRAY_WARP_TEST_ACCOUNT`,
+/// over HTTP/2, with `ZRAY_WARP_TEST_WG`'s WireGuard running inside it when
+/// `inner` is set (WARP inside WARP).
+fn masque_outbound(inner: bool) -> Option<zero_config::AmneziaWireguardConfig> {
+    let (account, _) = account()?;
+    let masque = &account["masque"]["config"];
+    let addresses: Vec<&str> = ["v4", "v6"]
+        .iter()
+        .filter_map(|family| masque["interface"]["addresses"][family].as_str())
+        .collect();
+    let mut settings = serde_json::json!({
+        "route": "masque-h2",
+        "masque": {
+            "privateKey": account["ec_private"],
+            "serverPublicKey": masque["peers"][0]["public_key"],
+            "address": addresses,
+        }
+    });
+    if inner {
+        let file: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(std::env::var_os("ZRAY_WARP_TEST_WG")?).ok()?)
+                .ok()?;
+        let config = &file["register"]["config"];
+        settings["inner"] = serde_json::json!({
+            "privateKey": file["wg_private"],
+            "peerPublicKey": config["peers"][0]["public_key"],
+            "endpoint": "162.159.192.1:2408",
+            "address": config["interface"]["addresses"]["v4"],
+            "reserved": config["client_id"],
+            "persistentKeepalive": 25,
+        });
+    }
+    let parsed = zero_config::xray_json::parse_config(&serde_json::json!({
+        "outbounds": [{"protocol": "warp", "tag": "warp", "settings": settings}]
+    }))
+    .expect("the account parses")
+    .0;
+    match parsed.outbounds[0].protocol.clone() {
+        OutboundProtocol::AmneziaWireguard(config) => Some(config),
+        _ => None,
+    }
+}
+
+/// One HTTP/1.1 GET over a fresh connection through `stack`, returning the
+/// body and how long the whole exchange took.
+async fn get(
+    stack: &zero_protocol::wg_stack::WgStack,
+    host: &str,
+    path: &str,
+) -> Result<(Vec<u8>, Duration), String> {
+    let started = std::time::Instant::now();
+    let mut stream = stack.connect_host(&Address::parse_host(host), 80).await?;
+    let request = format!("GET {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n");
+    stream
+        .write_all(request.as_bytes())
+        .await
+        .map_err(|error| error.to_string())?;
+    let mut body = Vec::new();
+    let mut chunk = vec![0u8; 64 * 1024];
+    loop {
+        match tokio::time::timeout(Duration::from_secs(20), stream.read(&mut chunk)).await {
+            Ok(Ok(0)) => break,
+            Ok(Ok(n)) => body.extend_from_slice(&chunk[..n]),
+            Ok(Err(error)) => return Err(format!("read: {error}")),
+            Err(_) => return Err(format!("stalled after {} bytes", body.len())),
+        }
+    }
+    Ok((body, started.elapsed()))
+}
+
+/// Where each way out of WARP leaves, and how fast it is: the MASQUE tunnel
+/// alone, then WARP inside WARP. Prints the exit's country code (never the
+/// address), the time to bring the tunnel up, the median of five small
+/// requests on fresh connections, and the rate of a 10 MB download. Needs
+/// `ZRAY_WARP_TEST_ACCOUNT` and `ZRAY_WARP_TEST_WG` (an account with WARP
+/// switched on).
+#[tokio::test]
+#[ignore = "needs two WARP accounts and a network that reaches Cloudflare"]
+async fn each_way_out_of_warp_and_where_it_leaves() {
+    for inner in [false, true] {
+        let Some(config) = masque_outbound(inner) else {
+            eprintln!("ZRAY_WARP_TEST_ACCOUNT / ZRAY_WARP_TEST_WG are not set; nothing to check");
+            return;
+        };
+        let label = if inner {
+            "warp in warp"
+        } else {
+            "masque alone"
+        };
+        let started = std::time::Instant::now();
+        let tunnel = zero_runtime::warp::tunnel(&config, None)
+            .await
+            .unwrap_or_else(|error| panic!("{label}: no tunnel: {error}"));
+        let up = started.elapsed();
+        let (trace, _) = get(&tunnel, "www.cloudflare.com", "/cdn-cgi/trace")
+            .await
+            .unwrap_or_else(|error| panic!("{label}: trace: {error}"));
+        let trace = String::from_utf8_lossy(&trace).into_owned();
+        let field = |name: &str| {
+            trace
+                .lines()
+                .find_map(|line| line.strip_prefix(name))
+                .unwrap_or("?")
+                .to_string()
+        };
+        let mut small = Vec::new();
+        for _ in 0..5 {
+            let (_, took) = get(&tunnel, "www.gstatic.com", "/generate_204")
+                .await
+                .unwrap_or_else(|error| panic!("{label}: small request: {error}"));
+            small.push(took);
+        }
+        small.sort();
+        let (body, took) = get(&tunnel, "speedtest.tele2.net", "/10MB.zip")
+            .await
+            .unwrap_or_else(|error| panic!("{label}: download: {error}"));
+        eprintln!(
+            "{label}: up {} ms, loc={} colo={} warp={}, request median {} ms, 10 MB at {:.2} Mbit/s",
+            up.as_millis(),
+            field("loc="),
+            field("colo="),
+            field("warp="),
+            small[2].as_millis(),
+            body.len() as f64 * 8.0 / took.as_secs_f64() / 1e6
+        );
+        assert!(trace.contains("warp=on"), "{label} did not go through WARP");
+        assert!(
+            body.len() >= 10 * 1024 * 1024,
+            "{label}: only {} bytes",
+            body.len()
+        );
+    }
+}

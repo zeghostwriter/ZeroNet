@@ -65,6 +65,16 @@ fn cdn_mirror(url: &str) -> Option<String> {
 }
 
 /// Every built-in feed.
+///
+/// **Size is a feature.** These are downloaded by the phone, on the phone's
+/// own connection, and every byte and every candidate in them costs the user
+/// battery and mobile data. The server-side harvest tests the big aggregators
+/// every two hours and publishes whatever works into tier 0, so this list is
+/// held to feeds that gzip to roughly a quarter of a megabyte or less. The
+/// larger lists are not gone — they live in `deploy/crowd/sources.json`,
+/// where testing them is a datacentre's job and not the user's phone. Below,
+/// each entry carries its measured gzipped size (2026-10-09) so the next
+/// addition can be weighed against the same budget.
 pub fn builtin() -> Vec<NamedSource> {
     let verified = "https://cdn.jsdelivr.net/gh/zeghostwriter/ZeroNet@crowd-data/verified.txt";
     vec![
@@ -75,13 +85,10 @@ pub fn builtin() -> Vec<NamedSource> {
             0,
             Some(format!("{verified}.sig")),
         ),
-        source(
-            "limilco",
-            "liMilCo",
-            format!("{RAW}/liMilCo/v2r/main/new_configs.txt"),
-            1,
-            None,
-        ),
+        // Tier 1: fetched on every cold search that tier 0 did not satisfy, so
+        // the whole tier is kept near 90 KB: the small tested feeds and the
+        // small Iranian collections, which are a few good servers each for
+        // almost nothing.
         source(
             "sinavm",
             "SVM",
@@ -96,6 +103,61 @@ pub fn builtin() -> Vec<NamedSource> {
                 "{RAW}/4n0nymou3/multi-proxy-config-fetcher/main/configs/proxy_configs_tested.txt"
             ),
             1,
+            None,
+        ),
+        // Publishes only the configs its own measurer kept, so it is a few
+        // hundred tested servers rather than thousands of unproven ones (25 KB).
+        source(
+            "matin",
+            "v2ray-configs (best tested)",
+            format!("{RAW}/MatinGhanbari/v2ray-configs/main/subscriptions/v2ray/super-sub.txt"),
+            1,
+            None,
+        ),
+        // Re-checked every few minutes before publication (9 KB).
+        source(
+            "roosterkid",
+            "OpenProxyList (hourly)",
+            format!("{RAW}/roosterkid/openproxylist/main/V2RAY_RAW.txt"),
+            1,
+            None,
+        ),
+        source(
+            "yebekhe",
+            "vpn-fail",
+            format!("{RAW}/yebekhe/vpn-fail/main/sub-link"),
+            1,
+            None,
+        ),
+        source(
+            "mahdi0024",
+            "ProxyCollector (Iran)",
+            format!("{RAW}/Mahdi0024/ProxyCollector/master/sub/proxies.txt"),
+            1,
+            None,
+        ),
+        source(
+            "norouzi",
+            "Iran configs (working)",
+            format!("{RAW}/MrAbolfazlNorouzi/iran-configs/main/configs/working-configs.txt"),
+            1,
+            None,
+        ),
+        // Mobile-carrier specific: configs that still pass on Irancell, which
+        // fails differently from the fixed-line providers (6 KB).
+        source(
+            "irancell",
+            "Irancell configs",
+            format!("{RAW}/morteza-v2/free-v2ray-irancell-config/main/Sub1.txt"),
+            1,
+            None,
+        ),
+        // Tier 2: only when tier 1 fell short (~440 KB in total).
+        source(
+            "limilco",
+            "liMilCo",
+            format!("{RAW}/liMilCo/v2r/main/new_configs.txt"),
+            2,
             None,
         ),
         source(
@@ -113,17 +175,36 @@ pub fn builtin() -> Vec<NamedSource> {
             None,
         ),
         source(
-            "radikal",
-            "0xRadikal",
-            format!("{RAW}/0xRadikal/Free-v2ray-Configs/main/all/configs.txt"),
+            "f0rc3run",
+            "F0rc3Run",
+            format!("{RAW}/F0rc3Run/F0rc3Run/main/Best-Results/sub.txt"),
             2,
             None,
         ),
         source(
+            "bahemmat",
+            "V2ray-Collector (Iran)",
+            format!("{RAW}/MohammadBahemmat/V2ray-Collector/main/all_servers.txt"),
+            2,
+            None,
+        ),
+        // Tier 3: only when the caller asked to search harder (~820 KB in
+        // total). Medium lists, still bounded; the multi-megabyte aggregators
+        // are server-side only (see the doc comment above).
+        source(
             "epodonios",
             "Epodonios",
             format!("{RAW}/Epodonios/v2ray-configs/main/All_Configs_Sub.txt"),
-            2,
+            3,
+            None,
+        ),
+        // Tested and sorted by measured speed before it is published, so its
+        // first entries tend to be the fastest servers in any feed here.
+        source(
+            "mahdibland",
+            "V2RayAggregator (speed-tested)",
+            format!("{RAW}/mahdibland/V2RayAggregator/master/sub/sub_merge.txt"),
+            3,
             None,
         ),
         source(
@@ -134,30 +215,23 @@ pub fn builtin() -> Vec<NamedSource> {
             None,
         ),
         source(
-            "ebrasha",
-            "EbraSha (VLESS)",
-            format!("{RAW}/ebrasha/free-v2ray-public-list/main/vless_configs.txt"),
+            "proxykma",
+            "proxykma (Iran)",
+            format!("{RAW}/amirkma/proxykma/main/mix.txt"),
             3,
             None,
         ),
         source(
-            "delta",
-            "Delta-Kronecker",
-            format!("{RAW}/Delta-Kronecker/V2ray-Config/main/config/all_configs.txt"),
+            "vpnclashfa",
+            "VPNClashFa (Iran)",
+            format!("{RAW}/10ium/VpnClashFaCollector/main/sub/all/mixed.txt"),
             3,
             None,
         ),
         source(
-            "mheidari",
-            "mheidari98",
-            format!("{RAW}/mheidari98/.proxy/main/all"),
-            3,
-            None,
-        ),
-        source(
-            "f0rc3run",
-            "F0rc3Run",
-            format!("{RAW}/F0rc3Run/F0rc3Run/main/Best-Results/sub.txt"),
+            "autoaivpn",
+            "AutoAiVPN (Iran)",
+            format!("{RAW}/penhandev/AutoAiVPN/main/iran.txt"),
             3,
             None,
         ),
@@ -189,6 +263,68 @@ mod tests {
         assert_eq!(all[0].source.tier, 0);
         assert!(all[0].source.sig_url.is_some());
         assert!(all.iter().all(|n| n.source.url.starts_with("https://")));
+    }
+
+    /// The feeds that test their own list before publishing are the likeliest
+    /// place a cold search finds a fast server, and the Iran-focused ones are
+    /// what a network inside the country reaches when the global aggregators
+    /// are thin. Both sets are easy to drop by accident when the list is
+    /// edited, so they are pinned here — and the tier-1 ones are pinned to
+    /// tier 1, because a cold search must not be able to read a big feed.
+    #[test]
+    fn the_speed_tested_and_iran_focused_feeds_are_present() {
+        let all = builtin();
+        let has = |id: &str| all.iter().any(|named| named.source.id == id);
+        for id in [
+            "sinavm",
+            "anonymou3",
+            "matin",
+            "roosterkid",
+            "yebekhe",
+            "mahdi0024",
+            "norouzi",
+            "irancell",
+        ] {
+            let named = all
+                .iter()
+                .find(|named| named.source.id == id)
+                .unwrap_or_else(|| panic!("{id} is missing"));
+            assert!(
+                named.source.tier == 1,
+                "{id} must be a small tier-1 feed, not tier {}",
+                named.source.tier
+            );
+        }
+        for id in [
+            "limilco",
+            "solvpn",
+            "miladtahanian",
+            "f0rc3run",
+            "bahemmat",
+            "epodonios",
+            "mahdibland",
+            "freedom",
+            "proxykma",
+            "vpnclashfa",
+            "autoaivpn",
+        ] {
+            assert!(has(id), "{id} is missing");
+        }
+    }
+
+    /// The multi-hundred-KB and multi-MB aggregators are tested by the
+    /// server-side harvest instead, whose results reach the device as tier 0.
+    /// On the phone they would be paid for in battery and mobile data on
+    /// every search that fell past tier 1, so a device must never be told to
+    /// fetch one. This is the guard for that rule.
+    #[test]
+    fn the_big_aggregators_are_not_on_the_device_list() {
+        for id in ["radikal", "ebrasha", "delta", "mheidari", "barryfar"] {
+            assert!(
+                !builtin().iter().any(|named| named.source.id == id),
+                "{id} is too large for a phone; keep it server-side"
+            );
+        }
     }
 
     #[test]

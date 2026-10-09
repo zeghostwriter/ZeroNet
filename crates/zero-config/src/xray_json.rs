@@ -1554,6 +1554,7 @@ pub(crate) fn parse_amnezia_wireguard(settings: Option<&Value>, path: &str) -> R
         exits: Vec::new(),
         hybrid: HybridMode::WarpFirst,
         prefer_exit: false,
+        inner: None,
         reserved,
         address,
         port,
@@ -1589,10 +1590,14 @@ pub(crate) fn parse_amnezia_wireguard(settings: Option<&Value>, path: &str) -> R
 ///     "address": ["172.16.0.2", "2606:4700:110:8a36::1"],
 ///     "http2Endpoints": ["162.159.198.4"], "http3Endpoints": ["162.159.198.1"],
 ///     "http2Sni": "www.speedtest.net"
-///   }}}
+///   },
+///   "inner": { ...a wireguard settings object of a second account... }
+/// }}
 /// ```
 ///
-/// Either half may be left out; `route` defaults to `auto`.
+/// Either half may be left out; `route` defaults to `auto`. `inner` is WARP
+/// inside WARP: that account's WireGuard runs inside the MASQUE tunnel, so the
+/// exit is located where Cloudflare's edge is rather than where the user is.
 pub(crate) fn parse_warp(settings: Option<&Value>, path: &str) -> R<OutboundProtocol> {
     let object = settings
         .and_then(Value::as_object)
@@ -1674,10 +1679,27 @@ pub(crate) fn parse_warp(settings: Option<&Value>, path: &str) -> R<OutboundProt
                 exits: Vec::new(),
                 hybrid: HybridMode::WarpFirst,
                 prefer_exit: false,
+                inner: None,
             }
         }
     };
     config.route = route;
+    config.inner = match object.get("inner").filter(|value| !value.is_null()) {
+        Some(inner) => {
+            match parse_amnezia_wireguard(Some(inner), &format!("{path}.settings.inner"))? {
+                OutboundProtocol::AmneziaWireguard(inner) if masque.is_some() => {
+                    Some(Box::new(inner))
+                }
+                OutboundProtocol::AmneziaWireguard(_) => {
+                    return Err(format!(
+                "{path}.settings.inner rides inside the MASQUE tunnel, so it needs a masque block"
+            ))
+                }
+                _ => unreachable!("parse_amnezia_wireguard returns WireGuard"),
+            }
+        }
+        None => None,
+    };
     config.masque = masque;
     (config.exits, config.hybrid, config.prefer_exit) = parse_exits(object, path)?;
     Ok(OutboundProtocol::AmneziaWireguard(config))

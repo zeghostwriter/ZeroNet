@@ -9,26 +9,28 @@ import org.junit.Test
 class LadderTest {
     @Test fun aNetworkWithNoHistoryWalksDownFromTheTop() {
         assertEquals(listOf(0, 1, 3, 4), Ladder.order(null, hasWarp = false))
-        assertEquals(listOf(0, 1, 2, 3, 4), Ladder.order(null, hasWarp = true))
+        // With an account, WARP (inside WARP) goes first and the rest back it up.
+        assertEquals(listOf(2, 0, 1, 3, 4), Ladder.order(null, hasWarp = true))
     }
 
     @Test fun theRungThatWorkedBeforeIsTriedRightAfterTheQuickFirstOne() {
         assertEquals(listOf(0, 3, 1, 4), Ladder.order(Ladder.DISGUISE, hasWarp = false))
-        assertEquals(listOf(0, 4, 1, 2, 3), Ladder.order(Ladder.OPEN, hasWarp = true))
-        // Remembering the quick rung changes nothing.
-        assertEquals(listOf(0, 1, 2, 3, 4), Ladder.order(Ladder.KNOWN, hasWarp = true))
+        assertEquals(listOf(2, 0, 4, 1, 3), Ladder.order(Ladder.OPEN, hasWarp = true))
+        // Remembering a rung that already leads changes nothing.
+        assertEquals(listOf(2, 0, 1, 3, 4), Ladder.order(Ladder.KNOWN, hasWarp = true))
+        assertEquals(listOf(2, 0, 1, 3, 4), Ladder.order(Ladder.WARP, hasWarp = true))
     }
 
     @Test fun aRememberedWarpRungIsDroppedWhenTheAccountIsGone() {
         assertEquals(listOf(0, 1, 3, 4), Ladder.order(Ladder.WARP, hasWarp = false))
     }
 
-    @Test fun everyRungIsTriedOnceAndTheKnownOneIsAlwaysFirst() {
+    @Test fun everyRungIsTriedOnceAndWarpLeadsWhenThereIsAnAccount() {
         for (remembered in listOf(null, 0, 1, 2, 3, 4, 9, -1)) {
             for (warp in listOf(false, true)) {
                 val order = Ladder.order(remembered, warp)
                 assertEquals(order.toSet().size, order.size)
-                assertEquals(Ladder.KNOWN, order.first())
+                assertEquals(if (warp) Ladder.WARP else Ladder.KNOWN, order.first())
                 assertTrue(order.containsAll(Ladder.rungs.indices.filter { warp || it != Ladder.WARP }))
             }
         }

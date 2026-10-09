@@ -21,6 +21,7 @@ import com.zeronet.mobile.model.ConnectionMode
 import com.zeronet.mobile.model.ConnectionProfile
 import com.zeronet.mobile.model.Settings
 import com.zeronet.mobile.model.WarpConsent
+import com.zeronet.mobile.model.WarpLinks
 import com.zeronet.mobile.ui.shell.AppMessages
 import com.zeronet.mobile.ui.shell.Tab
 import com.zeronet.mobile.update.AppUpdater
@@ -132,14 +133,15 @@ class AppController(
      * Connect, asking about Cloudflare first the one time.
      *
      * The question only stands in the way of the recommended mode, and only
-     * while no account exists yet. Once it is answered the setting holds the
+     * while no account runs WARP inside WARP yet (an older account exits at
+     * home, so it does not count). Once it is answered the setting holds the
      * answer, so this is a plain connect from then on.
      */
     fun connect(target: ConnectTarget = ConnectTarget.decode(settings.current.lastTarget)) {
         val now = settings.current
         val shouldAsk = now.warpConsent == WarpConsent.Ask &&
             now.profile == ConnectionProfile.Normal &&
-            !hasWarpAccount()
+            !hasWarpInWarpAccount()
         if (shouldAsk) {
             warpConsentTarget = target
             warpConsentOpen = true
@@ -148,9 +150,9 @@ class AppController(
         connectNow(target)
     }
 
-    /** Whether an account is already stored: a server that is a `warp://` link. */
-    private fun hasWarpAccount(): Boolean =
-        servers.servers.value.any { it.link.startsWith("warp://") }
+    /** Whether a stored WARP account runs WARP inside WARP. */
+    private fun hasWarpInWarpAccount(): Boolean =
+        servers.servers.value.any { WarpLinks.hasInner(it.link) }
 
     /**
      * The person answered the Cloudflare question; the answer is kept, and the

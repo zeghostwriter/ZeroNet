@@ -8,6 +8,12 @@
 //! * the WireGuard state (boringtun) and its one UDP socket — or, for a
 //!   tunnel that is not WireGuard (MASQUE), a [`PacketLink`] to the task
 //!   that runs that transport,
+//! * or both: WireGuard whose datagrams ride *inside* another tunnel's
+//!   [`PacketLink`] ([`WgStack::start_inside`]). WARP's MASQUE tunnel carries
+//!   raw IP packets, so a WireGuard datagram wrapped in an IPv4/UDP header
+//!   travels through it like any other packet. That is WARP inside WARP: the
+//!   inner WireGuard session is seen by Cloudflare as coming from the outer
+//!   tunnel's exit, not from the local network,
 //! * a smoltcp interface holding the tunnel address(es),
 //! * every TCP and UDP socket opened through the tunnel.
 //!
@@ -49,6 +55,10 @@ use crate::amnezia::{self, AmneziaParams};
 /// The tunnel MTU. WARP (and most WireGuard setups) use 1280, the IPv6
 /// minimum, which survives every path.
 pub const TUNNEL_MTU: usize = 1280;
+/// The MTU of a WireGuard tunnel carried inside another one: its packets grow
+/// by WireGuard's 32 bytes and a 28-byte IPv4/UDP header on the way in, and
+/// must still fit the outer tunnel's [`TUNNEL_MTU`] (1200 + 60 = 1260).
+pub const INSIDE_MTU: usize = 1200;
 /// Receive window of one TCP connection through the tunnel. Large enough for
 /// a few Mbit/s at the round trips of a WARP path, small enough that fifty
 /// open connections stay under ten megabytes.
@@ -189,8 +199,36 @@ impl WgStack {
         let socket = bind_for(peer)?;
         let addresses = params.addresses.clone();
         let dns = params.dns;
-        let link = Link::WireGuard(Box::new(WgLink::new(socket, peer, params)));
-        Ok(Self::spawn(link, addresses, dns))
+        let link = Link::WireGuard(Box::new(WgLink::new(Wire::Udp(socket), peer, params)));
+        Ok(Self::spawn(link, addresses, dns, TUNNEL_MTU))
+    }
+
+    /// Start a WireGuard tunnel to `peer` whose datagrams travel inside
+    /// `outer`, another tunnel's packet link, as IPv4/UDP packets from
+    /// `outer_address` (that tunnel's own address). Nothing goes out on the
+    /// local network: the outer tunnel is the only path.
+    ///
+    /// The inner tunnel ends when the outer one does, and a
+    /// [`WgStack::rebind`] is passed on to the outer transport.
+    pub fn start_inside(
+        peer: SocketAddr,
+        params: WgStackParams,
+        outer: PacketLink,
+        outer_address: IpAddr,
+    ) -> Result<Self, String> {
+        params.obfuscation.validate()?;
+        if params.addresses.is_empty() {
+            return Err("WireGuard tunnel has no address".into());
+        }
+        let (IpAddr::V4(local), SocketAddr::V4(_)) = (outer_address, peer) else {
+            return Err("WireGuard inside a tunnel needs IPv4 on both ends".into());
+        };
+        let local = SocketAddr::new(IpAddr::V4(local), 1024 + rand::random::<u16>() % 64000);
+        let addresses = params.addresses.clone();
+        let dns = params.dns;
+        let wire = Wire::Inside { link: outer, local };
+        let link = Link::WireGuard(Box::new(WgLink::new(wire, peer, params)));
+        Ok(Self::spawn(link, addresses, dns, INSIDE_MTU))
     }
 
     /// Start a stack over a transport that hands over IP packets itself.
@@ -204,10 +242,10 @@ impl WgStack {
         if addresses.is_empty() {
             return Err("tunnel has no address".into());
         }
-        Ok(Self::spawn(Link::Packets(link), addresses, dns))
+        Ok(Self::spawn(Link::Packets(link), addresses, dns, TUNNEL_MTU))
     }
 
-    fn spawn(link: Link, addresses: Vec<IpAddr>, dns: SocketAddr) -> Self {
+    fn spawn(link: Link, addresses: Vec<IpAddr>, dns: SocketAddr, mtu: usize) -> Self {
         let (commands, receiver) = mpsc::unbounded_channel();
         let wake = Arc::new(Notify::new());
         let alive = Arc::new(AtomicBool::new(true));
@@ -220,7 +258,7 @@ impl WgStack {
             family_v6: addresses.iter().any(IpAddr::is_ipv6),
             cache: Arc::default(),
         };
-        let driver = Driver::new(link, addresses, receiver, wake);
+        let driver = Driver::new(link, addresses, receiver, wake, mtu);
         tokio::spawn(async move {
             driver.run().await;
             alive.store(false, Ordering::Release);
@@ -459,14 +497,17 @@ struct QueueDevice {
     inbound: VecDeque<Vec<u8>>,
     outbound: VecDeque<Vec<u8>>,
     spare: Vec<Vec<u8>>,
+    /// The largest packet the stack may send; TCP's segment size follows it.
+    mtu: usize,
 }
 
 impl QueueDevice {
-    fn new() -> Self {
+    fn new(mtu: usize) -> Self {
         Self {
             inbound: VecDeque::new(),
             outbound: VecDeque::new(),
             spare: Vec::new(),
+            mtu,
         }
     }
 
@@ -536,7 +577,7 @@ impl Device for QueueDevice {
     fn capabilities(&self) -> DeviceCapabilities {
         let mut caps = DeviceCapabilities::default();
         caps.medium = Medium::Ip;
-        caps.max_transmission_unit = TUNNEL_MTU;
+        caps.max_transmission_unit = self.mtu;
         caps
     }
 }
@@ -587,8 +628,9 @@ enum Incoming {
 impl Link {
     async fn recv(&mut self) -> Incoming {
         match self {
-            Link::WireGuard(wg) => match wg.socket.recv_from(&mut wg.network).await {
-                Ok((length, source)) => Incoming::Datagram(length, source),
+            Link::WireGuard(wg) => match wg.wire.recv_from(&mut wg.network).await {
+                Ok(Some((length, source))) => Incoming::Datagram(length, source),
+                Ok(None) => Incoming::Closed,
                 Err(_) => Incoming::Nothing,
             },
             Link::Packets(link) => match link.down.recv().await {
@@ -599,10 +641,149 @@ impl Link {
     }
 }
 
-/// The WireGuard end of a tunnel: boringtun, its UDP socket, and the
-/// AmneziaWG framing if any.
+/// Where a WireGuard session's datagrams travel.
+enum Wire {
+    /// Its own UDP socket on the device's network.
+    Udp(UdpSocket),
+    /// Inside another tunnel: each datagram goes out on that tunnel's packet
+    /// link as an IPv4/UDP packet from `local`, and only UDP packets addressed
+    /// to `local` are taken back out of it.
+    Inside { link: PacketLink, local: SocketAddr },
+}
+
+impl Wire {
+    async fn send_to(&mut self, datagram: &[u8], peer: SocketAddr) -> std::io::Result<usize> {
+        match self {
+            Wire::Udp(socket) => socket.send_to(datagram, peer).await,
+            Wire::Inside { link, local } => {
+                let packet = udp_packet(*local, peer, datagram)
+                    .ok_or_else(|| std::io::Error::other("not an IPv4 pair"))?;
+                // A full queue drops the datagram, as a congested path would;
+                // WireGuard and the TCP inside it recover.
+                let _ = link.up.try_send(packet);
+                Ok(datagram.len())
+            }
+        }
+    }
+
+    /// The next datagram, its length in `buffer` and where it came from;
+    /// `None` once the outer tunnel is gone for good.
+    async fn recv_from(
+        &mut self,
+        buffer: &mut [u8],
+    ) -> std::io::Result<Option<(usize, SocketAddr)>> {
+        match self {
+            Wire::Udp(socket) => socket.recv_from(buffer).await.map(Some),
+            Wire::Inside { link, local } => loop {
+                let Some(packet) = link.down.recv().await else {
+                    return Ok(None);
+                };
+                if let Some((source, payload)) = udp_payload(&packet, *local) {
+                    if payload.len() <= buffer.len() {
+                        buffer[..payload.len()].copy_from_slice(payload);
+                        return Ok(Some((payload.len(), source)));
+                    }
+                }
+            },
+        }
+    }
+}
+
+/// An IPv4/UDP packet carrying `payload` from `source` to `destination`, or
+/// `None` when either is not IPv4.
+fn udp_packet(source: SocketAddr, destination: SocketAddr, payload: &[u8]) -> Option<Vec<u8>> {
+    let (SocketAddr::V4(source), SocketAddr::V4(destination)) = (source, destination) else {
+        return None;
+    };
+    let udp_length = 8 + payload.len();
+    let total = 20 + udp_length;
+    let total16 = u16::try_from(total).ok()?;
+    let mut packet = Vec::with_capacity(total);
+    // Version 4, 20-byte header; don't fragment; TTL 64; protocol UDP.
+    packet.extend_from_slice(&[0x45, 0, 0, 0, 0, 0, 0x40, 0, 64, 17, 0, 0]);
+    packet[2..4].copy_from_slice(&total16.to_be_bytes());
+    packet.extend_from_slice(&source.ip().octets());
+    packet.extend_from_slice(&destination.ip().octets());
+    let header_sum = checksum(0, &packet[..20]);
+    packet[10..12].copy_from_slice(&header_sum.to_be_bytes());
+    packet.extend_from_slice(&source.port().to_be_bytes());
+    packet.extend_from_slice(&destination.port().to_be_bytes());
+    packet.extend_from_slice(&(udp_length as u16).to_be_bytes());
+    packet.extend_from_slice(&[0, 0]);
+    packet.extend_from_slice(payload);
+    // The UDP checksum covers a pseudo-header of the addresses, the protocol
+    // and the length; zero means "none", so a computed zero is sent as ones.
+    let mut pseudo = [0u8; 12];
+    pseudo[..4].copy_from_slice(&source.ip().octets());
+    pseudo[4..8].copy_from_slice(&destination.ip().octets());
+    pseudo[9] = 17;
+    pseudo[10..12].copy_from_slice(&(udp_length as u16).to_be_bytes());
+    let sum = checksum(sum_words(0, &pseudo), &packet[20..]);
+    let sum = if sum == 0 { 0xffff } else { sum };
+    packet[26..28].copy_from_slice(&sum.to_be_bytes());
+    Some(packet)
+}
+
+/// The source and payload of an IPv4/UDP `packet` addressed to `local`;
+/// `None` for anything else (other protocols, other ports, fragments,
+/// truncated packets).
+fn udp_payload(packet: &[u8], local: SocketAddr) -> Option<(SocketAddr, &[u8])> {
+    let SocketAddr::V4(local) = local else {
+        return None;
+    };
+    if packet.len() < 28 || packet[0] >> 4 != 4 || packet[9] != 17 {
+        return None;
+    }
+    let header = usize::from(packet[0] & 0x0f) * 4;
+    let total = usize::from(u16::from_be_bytes([packet[2], packet[3]]));
+    // More-fragments set or an offset: a piece of a datagram, not one.
+    let fragment = u16::from_be_bytes([packet[6], packet[7]]) & 0x3fff != 0;
+    if header < 20 || total > packet.len() || total < header + 8 || fragment {
+        return None;
+    }
+    if packet[16..20] != local.ip().octets() {
+        return None;
+    }
+    let udp = &packet[header..total];
+    if u16::from_be_bytes([udp[2], udp[3]]) != local.port() {
+        return None;
+    }
+    let length = usize::from(u16::from_be_bytes([udp[4], udp[5]]));
+    if length < 8 || length > udp.len() {
+        return None;
+    }
+    let source = SocketAddr::new(
+        IpAddr::from([packet[12], packet[13], packet[14], packet[15]]),
+        u16::from_be_bytes([udp[0], udp[1]]),
+    );
+    Some((source, &udp[8..length]))
+}
+
+/// The ones'-complement sum of `data` as 16-bit words, added to `sum`.
+fn sum_words(mut sum: u32, data: &[u8]) -> u32 {
+    let (words, rest) = data.as_chunks::<2>();
+    for word in words {
+        sum += u32::from(u16::from_be_bytes(*word));
+    }
+    if let [last] = rest {
+        sum += u32::from(*last) << 8;
+    }
+    sum
+}
+
+/// The Internet checksum of `data`, starting from a partial `sum`.
+fn checksum(sum: u32, data: &[u8]) -> u16 {
+    let mut sum = sum_words(sum, data);
+    while sum > 0xffff {
+        sum = (sum & 0xffff) + (sum >> 16);
+    }
+    !(sum as u16)
+}
+
+/// The WireGuard end of a tunnel: boringtun, where its datagrams travel, and
+/// the AmneziaWG framing if any.
 struct WgLink {
-    socket: UdpSocket,
+    wire: Wire,
     peer: SocketAddr,
     tunnel: Tunn,
     params: WgStackParams,
@@ -637,7 +818,7 @@ struct Driver {
 }
 
 impl WgLink {
-    fn new(socket: UdpSocket, peer: SocketAddr, params: WgStackParams) -> Self {
+    fn new(wire: Wire, peer: SocketAddr, params: WgStackParams) -> Self {
         let tunnel = Tunn::new(
             boringtun::x25519::StaticSecret::from(params.private_key),
             boringtun::x25519::PublicKey::from(params.peer_public_key),
@@ -657,7 +838,7 @@ impl WgLink {
             && o.cookie_header == standard.cookie_header
             && o.transport_header == standard.transport_header;
         Self {
-            socket,
+            wire,
             peer,
             tunnel,
             params,
@@ -677,8 +858,9 @@ impl Driver {
         addresses: Vec<IpAddr>,
         commands: mpsc::UnboundedReceiver<Command>,
         wake: Arc<Notify>,
+        mtu: usize,
     ) -> Self {
-        let mut device = QueueDevice::new();
+        let mut device = QueueDevice::new(mtu);
         let started = Instant::now();
         let mut iface = Interface::new(
             Config::new(HardwareAddress::Ip),
@@ -877,11 +1059,15 @@ impl Driver {
                 });
             }
             Command::Rebind => match &mut self.link {
-                Link::WireGuard(wg) => match bind_for(wg.peer) {
-                    Ok(socket) => wg.socket = socket,
-                    Err(error) => {
-                        tracing::debug!(%error, "WireGuard rebind failed; keeping the old socket")
-                    }
+                Link::WireGuard(wg) => match &mut wg.wire {
+                    Wire::Udp(socket) => match bind_for(wg.peer) {
+                        Ok(fresh) => *socket = fresh,
+                        Err(error) => {
+                            tracing::debug!(%error, "WireGuard rebind failed; keeping the old socket")
+                        }
+                    },
+                    // The outer tunnel moves; the inner session follows it.
+                    Wire::Inside { link, .. } => link.rebind.notify_one(),
                 },
                 Link::Packets(link) => link.rebind.notify_one(),
             },
@@ -1180,7 +1366,7 @@ impl WgLink {
             if amnezia::packet_kind(packet) == Some(amnezia::PacketKind::HandshakeInit) {
                 if let Ok(junk) = amnezia::junk_packets(self.params.obfuscation, &mut self.rng) {
                     for junk in junk {
-                        let _ = self.socket.send_to(&junk, self.peer).await;
+                        let _ = self.wire.send_to(&junk, self.peer).await;
                     }
                 }
             }
@@ -1191,11 +1377,11 @@ impl WgLink {
                 stamp.clear();
                 stamp.extend_from_slice(packet);
                 stamp[1..4].copy_from_slice(&self.params.reserved);
-                let sent = self.socket.send_to(&stamp, self.peer).await;
+                let sent = self.wire.send_to(&stamp, self.peer).await;
                 self.stamp = stamp;
                 sent
             } else {
-                self.socket.send_to(packet, self.peer).await
+                self.wire.send_to(packet, self.peer).await
             }
         } else {
             match amnezia::encode_packet(self.params.obfuscation, packet, &mut self.rng) {
@@ -1205,11 +1391,11 @@ impl WgLink {
                             amnezia::junk_packets(self.params.obfuscation, &mut self.rng)
                         {
                             for junk in junk {
-                                let _ = self.socket.send_to(&junk, self.peer).await;
+                                let _ = self.wire.send_to(&junk, self.peer).await;
                             }
                         }
                     }
-                    self.socket.send_to(&encoded, self.peer).await
+                    self.wire.send_to(&encoded, self.peer).await
                 }
                 Err(error) => {
                     tracing::debug!(%error, "AmneziaWG encode");
@@ -1320,7 +1506,7 @@ mod tests {
                 1,
                 None,
             );
-            let mut device = QueueDevice::new();
+            let mut device = QueueDevice::new(TUNNEL_MTU);
             let started = Instant::now();
             let now = || smoltcp::time::Instant::from_millis(started.elapsed().as_millis() as i64);
             let mut iface = Interface::new(Config::new(HardwareAddress::Ip), &mut device, now());
@@ -1530,6 +1716,112 @@ mod tests {
         let mut after = stack.connect("10.9.0.1:7".parse().unwrap()).await.unwrap();
         echo(&mut after, b"after the move").await;
         assert!(stack.is_alive());
+    }
+
+    /// WireGuard inside another tunnel: the stack's datagrams leave on a
+    /// packet link as IPv4/UDP packets, a stand-in for the MASQUE tunnel
+    /// unwraps them and hands them to a real WireGuard peer, and its answers
+    /// come back wrapped the same way. TCP, DNS and the smaller MTU all work,
+    /// and the inner tunnel ends when the outer link does.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn wireguard_rides_inside_another_tunnels_packet_link() {
+        let client_public =
+            boringtun::x25519::PublicKey::from(&boringtun::x25519::StaticSecret::from([9u8; 32]))
+                .to_bytes();
+        let reserved = [0x12, 0x34, 0x56];
+        let (server, server_public) = peer(client_public, reserved).await;
+        // The address the inner session believes it talks to, and the outer
+        // tunnel's own address, as WARP's MASQUE tunnel would assign it.
+        let inner_peer: SocketAddr = "162.159.192.1:2408".parse().unwrap();
+        let outer_address = IpAddr::from([172, 16, 0, 2]);
+
+        let (up, mut from_stack) = mpsc::channel::<Vec<u8>>(64);
+        let (to_stack, down) = mpsc::channel::<Vec<u8>>(64);
+        let packets = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counted = Arc::clone(&packets);
+        tokio::spawn(async move {
+            let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+            let mut client = None;
+            let mut buffer = vec![0u8; 4096];
+            loop {
+                tokio::select! {
+                    packet = from_stack.recv() => {
+                        let Some(packet) = packet else { return };
+                        assert!(packet.len() <= TUNNEL_MTU, "{} bytes do not fit the outer tunnel", packet.len());
+                        assert_eq!(checksum(0, &packet[..20]), 0, "IPv4 header checksum");
+                        assert_eq!(&packet[16..20], &[162, 159, 192, 1]);
+                        let source = SocketAddr::new(
+                            IpAddr::from([packet[12], packet[13], packet[14], packet[15]]),
+                            u16::from_be_bytes([packet[20], packet[21]]),
+                        );
+                        client = Some(source);
+                        counted.fetch_add(1, Ordering::Relaxed);
+                        let (_, payload) = udp_payload(&packet, inner_peer).expect("a UDP packet for the peer");
+                        socket.send_to(payload, server).await.unwrap();
+                    }
+                    received = socket.recv_from(&mut buffer) => {
+                        let (length, _) = received.unwrap();
+                        let Some(client) = client else { continue };
+                        let packet = udp_packet(inner_peer, client, &buffer[..length]).unwrap();
+                        if to_stack.send(packet).await.is_err() {
+                            return;
+                        }
+                    }
+                }
+            }
+        });
+        let link = PacketLink {
+            up,
+            down,
+            rebind: Arc::new(Notify::new()),
+        };
+        let stack = WgStack::start_inside(
+            inner_peer,
+            client_params(server_public, reserved),
+            link,
+            outer_address,
+        )
+        .unwrap();
+
+        let addresses = stack.resolve("echo.test").await.unwrap();
+        assert_eq!(addresses, vec![IpAddr::from([10, 9, 0, 1])]);
+        let mut stream = stack
+            .connect_host(&zero_core::Address::domain("echo.test"), 7)
+            .await
+            .unwrap();
+        echo(&mut stream, b"hello from inside").await;
+        let big: Vec<u8> = (0..300_000u32).map(|i| (i * 31 % 251) as u8).collect();
+        echo(&mut stream, &big).await;
+        assert!(packets.load(Ordering::Relaxed) > 100);
+        drop(stream);
+        assert!(stack.is_alive());
+    }
+
+    #[test]
+    fn udp_packets_round_trip_and_strangers_are_ignored() {
+        let local: SocketAddr = "172.16.0.2:5000".parse().unwrap();
+        let remote: SocketAddr = "162.159.192.1:2408".parse().unwrap();
+        let packet = udp_packet(remote, local, b"datagram").unwrap();
+        assert_eq!(checksum(0, &packet[..20]), 0);
+        assert_eq!(
+            udp_payload(&packet, local),
+            Some((remote, &b"datagram"[..]))
+        );
+        // Another port, another address, or a fragment is not ours.
+        assert_eq!(
+            udp_payload(&packet, "172.16.0.2:5001".parse().unwrap()),
+            None
+        );
+        assert_eq!(
+            udp_payload(&packet, "172.16.0.3:5000".parse().unwrap()),
+            None
+        );
+        let mut fragment = packet.clone();
+        fragment[6] |= 0x20;
+        assert_eq!(udp_payload(&fragment, local), None);
+        assert_eq!(udp_payload(&packet[..20], local), None);
+        // IPv6 is refused rather than mangled.
+        assert!(udp_packet("[::1]:1".parse().unwrap(), local, b"x").is_none());
     }
 
     #[test]

@@ -183,7 +183,7 @@ cloudflare|google|quad9|adguard; `dns.local`: google|cloudflare|system.
   "priority_links": ["..."],
   "extra_links": ["..."],
   "exclude_keys": ["..."],
-  "want_alive": 5, "max_seconds": 60,
+  "want_alive": 5, "rank_ms": 1200, "max_seconds": 60,
   "tcp_concurrency": 256, "tcp_timeout_ms": 1500, "tcp_stop_after_open": 400,
   "real_concurrency": 24, "real_timeout_ms": 4000,
   "probe_url": "http://cp.cloudflare.com/generate_204",
@@ -200,6 +200,12 @@ link lists default to empty). Values are clamped to sane ranges.
 - `priority_links` are the history winners for this network. They are tested
   first.
 - `extra_links` are the user's own configs.
+- `rank_ms` is how long a working server is held back so the **fastest** of
+  the batch it arrived with is reported first, instead of whichever finished
+  its handshake first. It only ever waits while fewer than `want_alive` have
+  answered, so `want_alive: 1` is never delayed. `0` reports each server the
+  moment it is found (the old behaviour). Reported events are therefore
+  ordered fastest-first within a batch.
 
 **Algorithm.**
 1. Real-test `priority_links` (skip TCP).
@@ -216,8 +222,12 @@ link lists default to empty). Values are clamped to sane ranges.
    TCP stage stops launching after `tcp_stop_after_open` open ports per tier.
 6. Once tier 1 is exhausted with fewer than `next_tier_if_alive_below` alive,
    fetch the next tier and repeat.
-7. Stop at `want_alive`, when all tiers are exhausted, at `max_seconds`, or
-   on cancel.
+7. Report working servers ranked: hold a result for up to `rank_ms` (or until
+   `want_alive` have answered) and emit the batch fastest-first. At the end of
+   each tier everything found is reported, and a job that ends for any other
+   reason reports whatever was still waiting.
+8. Stop at `want_alive` reported, when all tiers are exhausted, at
+   `max_seconds`, or on cancel.
 
 **Real test.**
 1. Parse the link to a `zero_config::Outbound` and validate it.

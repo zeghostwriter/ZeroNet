@@ -10,6 +10,19 @@
 //! 2. `PATCH /reg/<id>` with a fresh ECDSA P-256 public key, marked
 //!    `tunnel_type: masque`. The reply's peer key is the one the MASQUE edge
 //!    proves itself with, which the client pins.
+//! 3. `PATCH /reg/<id>` with `{"warp_enabled": true}`, which is what the
+//!    official app's WARP switch sends. The registration body asks for the
+//!    same, but the service ignores it there: a device that skips this step
+//!    reads back `warp_enabled: false`.
+//!
+//! Then a second device, registered as a WireGuard device and switched on
+//! the same way, for **WARP inside WARP**: its WireGuard session runs inside
+//! the first device's MASQUE tunnel. Cloudflare places a MASQUE exit where the
+//! user is (Iran, for a user in Iran, which sanctioned services refuse); the
+//! inner session arrives from Cloudflare's own network abroad and is given an
+//! exit located there. Measured from Tehran it is as fast as the MASQUE
+//! tunnel alone. A device enrolled for MASQUE cannot do this itself: its
+//! WireGuard half reaches only Cloudflare's own sites.
 //!
 //! Every private key is made here and never leaves the device; only public
 //! halves are sent. From Iran TLS to `api.cloudflareclient.com` is dropped by
@@ -119,6 +132,9 @@ pub struct Account {
     pub addresses: Vec<IpAddr>,
     /// The MASQUE half, when the device accepted the key.
     pub masque: Option<MasqueAccount>,
+    /// A second, WireGuard-only device whose session runs inside the MASQUE
+    /// tunnel (WARP inside WARP), when it could be registered.
+    pub inner: Option<Box<Account>>,
 }
 
 #[derive(Debug, Clone)]
@@ -154,9 +170,16 @@ fn registration_body(public_key: &[u8; 32], tos: &str) -> String {
         "locale": "en_US",
         "warp_enabled": true,
         "key": b64(public_key),
+        // Without these the device gets the MASQUE policy, under which its
+        // WireGuard session reaches only Cloudflare's own sites.
+        "key_type": "curve25519",
+        "tunnel_type": "wireguard",
     })
     .to_string()
 }
+
+/// The body of the call that turns WARP on for a registered device.
+const ENABLE_BODY: &str = r#"{"warp_enabled":true}"#;
 
 /// The body of the call that enrolls the MASQUE key (`spki`: DER
 /// `SubjectPublicKeyInfo`).
@@ -531,22 +554,11 @@ fn tos_now() -> String {
 /// Registering creates an account with Cloudflare; callers do it because the
 /// user asked, and say so.
 pub async fn register(api: &Api) -> Result<Account, String> {
-    let secret = x25519_dalek::StaticSecret::random_from_rng(rand::thread_rng());
-    let public = x25519_dalek::PublicKey::from(&secret);
-    let reply = call(
-        api,
-        "POST",
-        "/reg",
-        None,
-        &registration_body(public.as_bytes(), &tos_now()),
-    )
-    .await?;
-    let registered = parse_registration(&reply)?;
-
+    let (secret, registered) = register_device(api).await?;
+    let bearer = format!("Bearer {}", registered.token);
+    let path = format!("/reg/{}", registered.device_id);
     let masque = match MasqueKey::generate() {
         Ok(key) => {
-            let bearer = format!("Bearer {}", registered.token);
-            let path = format!("/reg/{}", registered.device_id);
             match call(
                 api,
                 "PATCH",
@@ -571,6 +583,24 @@ pub async fn register(api: &Api) -> Result<Account, String> {
             None
         }
     };
+    // After the key, as the official app does it. Not fatal: the MASQUE half
+    // carries traffic without it, and an account is not thrown away over the
+    // one step that only the WireGuard half needs.
+    if let Err(error) = call(api, "PATCH", &path, Some(&bearer), ENABLE_BODY).await {
+        tracing::debug!(%error, "WARP was not enabled on the device");
+    }
+    // WARP inside WARP needs the MASQUE tunnel to ride. Not fatal either: the
+    // account works without it, with an exit located at home.
+    let inner = match &masque {
+        Some(_) => match register_inner(api).await {
+            Ok(inner) => Some(Box::new(inner)),
+            Err(error) => {
+                tracing::debug!(%error, "no device for WARP inside WARP");
+                None
+            }
+        },
+        None => None,
+    };
 
     Ok(Account {
         device_id: registered.device_id,
@@ -580,6 +610,41 @@ pub async fn register(api: &Api) -> Result<Account, String> {
         wireguard_endpoint: registered.endpoint,
         addresses: registered.addresses,
         masque,
+        inner,
+    })
+}
+
+/// `POST /reg` with a fresh WireGuard key: the device and its private key.
+async fn register_device(api: &Api) -> Result<(x25519_dalek::StaticSecret, Registered), String> {
+    let secret = x25519_dalek::StaticSecret::random_from_rng(rand::thread_rng());
+    let public = x25519_dalek::PublicKey::from(&secret);
+    let reply = call(
+        api,
+        "POST",
+        "/reg",
+        None,
+        &registration_body(public.as_bytes(), &tos_now()),
+    )
+    .await?;
+    Ok((secret, parse_registration(&reply)?))
+}
+
+/// The WireGuard-only device of WARP inside WARP, with WARP switched on. Here
+/// switching it on is required: without it the session carries nothing.
+async fn register_inner(api: &Api) -> Result<Account, String> {
+    let (secret, registered) = register_device(api).await?;
+    let bearer = format!("Bearer {}", registered.token);
+    let path = format!("/reg/{}", registered.device_id);
+    call(api, "PATCH", &path, Some(&bearer), ENABLE_BODY).await?;
+    Ok(Account {
+        device_id: registered.device_id,
+        wireguard_private_key: secret.to_bytes(),
+        wireguard_peer_key: registered.peer_key,
+        reserved: registered.reserved,
+        wireguard_endpoint: registered.endpoint,
+        addresses: registered.addresses,
+        masque: None,
+        inner: None,
     })
 }
 
@@ -605,6 +670,18 @@ impl Account {
                 "serverPublicKey": masque.server_public_key,
                 "address": self.addresses.iter().map(IpAddr::to_string).collect::<Vec<_>>(),
             });
+            if let Some(inner) = &self.inner {
+                // No AmneziaWG junk: these packets never touch the local
+                // network, only the inside of the MASQUE tunnel.
+                settings["inner"] = json!({
+                    "privateKey": b64(&inner.wireguard_private_key),
+                    "peerPublicKey": b64(&inner.wireguard_peer_key),
+                    "endpoint": inner.wireguard_endpoint.to_string(),
+                    "address": inner.addresses.iter().map(IpAddr::to_string).collect::<Vec<_>>(),
+                    "reserved": inner.reserved,
+                    "persistentKeepalive": 25,
+                });
+            }
         }
         settings
     }
@@ -1287,7 +1364,11 @@ mod tests {
                 log.lock().unwrap().push(text.clone());
                 let (status, body) = if text.starts_with("POST /reg ") {
                     ("200 OK", reply(&b64(&[5u8; 32])).to_string())
-                } else if text.starts_with("PATCH /reg/0000-1111 ") && masque_ok {
+                } else if text.starts_with("PATCH /reg/0000-1111 ")
+                    // Turning WARP on is answered whether or not the device
+                    // takes a MASQUE key.
+                    && (masque_ok || text.ends_with(ENABLE_BODY))
+                {
                     ("200 OK", reply(&pem).to_string())
                 } else {
                     ("403 Forbidden", "{}".to_string())
@@ -1316,7 +1397,9 @@ mod tests {
         assert_eq!(account.reserved, [9, 8, 7]);
         assert!(account.masque.is_some());
         let requests = seen.lock().unwrap().clone();
-        assert_eq!(requests.len(), 2);
+        // The account's device (register, MASQUE key, switch on), then the
+        // inner device of WARP inside WARP (register, switch on).
+        assert_eq!(requests.len(), 5);
         assert!(requests[0].starts_with("POST /reg HTTP/1.1"));
         assert!(requests[0].contains("X-Zray-Auth: credential"));
         assert!(requests[0].contains("User-Agent: insomnia"));
@@ -1325,6 +1408,16 @@ mod tests {
         assert!(requests[1].starts_with("PATCH /reg/0000-1111 HTTP/1.1"));
         assert!(requests[1].contains("Authorization: Bearer secret-token"));
         assert!(requests[1].contains("secp256r1"));
+        // Then WARP is switched on, which the registration body alone does not do.
+        assert!(requests[2].starts_with("PATCH /reg/0000-1111 HTTP/1.1"));
+        assert!(requests[2].contains("Authorization: Bearer secret-token"));
+        assert!(requests[2].ends_with(ENABLE_BODY));
+        assert!(requests[3].starts_with("POST /reg HTTP/1.1"));
+        assert!(requests[3].contains(r#""tunnel_type":"wireguard""#));
+        assert!(requests[4].ends_with(ENABLE_BODY));
+        let inner = account.inner.as_deref().expect("an inner device");
+        assert!(inner.masque.is_none() && inner.inner.is_none());
+        assert_ne!(inner.wireguard_private_key, account.wireguard_private_key);
 
         // The account becomes an outbound that parses, with both halves.
         let link = account.link("auto");
@@ -1334,6 +1427,12 @@ mod tests {
             panic!("expected a WARP outbound")
         };
         assert!(warp.wireguard_usable() && warp.masque.is_some());
+        // The inner device travels in the link, ready to run inside MASQUE.
+        let parsed_inner = warp
+            .inner
+            .as_deref()
+            .expect("the link carries the inner device");
+        assert_eq!(parsed_inner.private_key, inner.wireguard_private_key);
         assert_eq!(warp.reserved, [9, 8, 7]);
         assert_eq!(warp.junk_count, JUNK.0);
         assert_eq!(warp.tunnel_address.to_string(), "172.16.0.2");
@@ -1341,7 +1440,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_device_that_refuses_the_masque_key_still_gets_a_wireguard_account() {
-        let (base, _) = serve(false).await;
+        let (base, seen) = serve(false).await;
         let api = Api {
             base,
             headers: Vec::new(),
@@ -1351,6 +1450,14 @@ mod tests {
         };
         let account = register(&api).await.unwrap();
         assert!(account.masque.is_none());
+        // No MASQUE tunnel, so nothing for an inner device to ride.
+        assert!(account.inner.is_none());
+        // WARP is still switched on: the WireGuard half needs it.
+        assert!(seen
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|request| request.ends_with(ENABLE_BODY)));
         let parsed = zero_config::parse_link(&account.link("auto")).unwrap();
         let zero_config::OutboundProtocol::AmneziaWireguard(warp) = &parsed.outbound.protocol
         else {
@@ -1469,6 +1576,7 @@ mod tests {
             wireguard_endpoint: "162.159.192.1:2408".parse().unwrap(),
             addresses: vec!["172.16.0.2".parse().unwrap()],
             masque: None,
+            inner: None,
         };
         let exits =
             vec!["trojan://secret@203.0.113.9:8443?security=tls&sni=t.example.com#x".to_string()];
@@ -1517,6 +1625,7 @@ mod tests {
             wireguard_endpoint: "162.159.192.1:2408".parse().unwrap(),
             addresses: vec!["172.16.0.2".parse().unwrap()],
             masque: None,
+            inner: None,
         };
         let plain = account.link("auto");
         // A fresh account starts tunnel first, with no servers.
@@ -1569,6 +1678,7 @@ mod tests {
             wireguard_endpoint: "162.159.192.1:2408".parse().unwrap(),
             addresses: vec!["172.16.0.2".parse().unwrap()],
             masque: None,
+            inner: None,
         };
         let a = fingerprint(&make(1).link("auto")).unwrap();
         assert_eq!(a, fingerprint(&make(1).link("auto")).unwrap());
@@ -1605,6 +1715,7 @@ mod tests {
             wireguard_endpoint: "162.159.192.1:2408".parse().unwrap(),
             addresses: vec!["172.16.0.2".parse().unwrap()],
             masque: None,
+            inner: None,
         };
         let link = account.link("auto");
         let report = crate::link::parse_links(&format!(

@@ -3,12 +3,11 @@ package com.zeronet.mobile.service
 import com.zeronet.mobile.model.EvasionLevel
 
 /**
- * The ways the recommended mode tries to connect, fastest first.
+ * The ways the recommended mode tries to connect.
  *
  * Every rung is a different way of getting a working server; the mode goes
  * down the ladder until one of them connects, so a network that blocks the
- * usual way still gets through by the next. The order is the order that
- * connects soonest when it works:
+ * usual way still gets through by the next:
  *
  * 1. **known** – what worked on this network before, and what other people
  *    on it got through (a few seconds, no download);
@@ -18,8 +17,14 @@ import com.zeronet.mobile.model.EvasionLevel
  *    split up and more fronted variants, for networks that read server names;
  * 5. **open** – nothing held back: any protocol, QUIC allowed.
  *
+ * When there is a WARP account it goes **first**, before even the known
+ * servers: WARP inside WARP exits abroad, so sites that refuse Iranian
+ * addresses work, and it does not depend on public servers that come and go
+ * (or see the traffic). Measured from Tehran it was also the quickest way
+ * out. The other rungs are its fallback, in their usual order.
+ *
  * A network remembers the rung that last worked, and the next connection
- * tries it straight after the quick first one instead of walking down again.
+ * tries it straight after the first one instead of walking down again.
  */
 object Ladder {
     /** What one rung changes about the way servers are found and used. */
@@ -56,14 +61,15 @@ object Ladder {
     )
 
     /**
-     * The order to try the rungs in: the quick known-servers rung first, then
-     * the rung that last worked here, then the rest from the top. [hasWarp]
-     * drops the WARP rung when there is no account to try.
+     * The order to try the rungs in: WARP first when there is an account,
+     * otherwise the quick known-servers rung; then the rung that last worked
+     * here; then the rest from the top. [hasWarp] drops the WARP rung when
+     * there is no account to try.
      */
     fun order(remembered: Int?, hasWarp: Boolean): List<Int> {
         val all = rungs.indices.filter { hasWarp || it != WARP }
-        val first = listOf(KNOWN)
-        val next = listOfNotNull(remembered?.takeIf { it != KNOWN && it in all })
+        val first = if (hasWarp) listOf(WARP, KNOWN) else listOf(KNOWN)
+        val next = listOfNotNull(remembered?.takeIf { it in all && it !in first })
         return (first + next + all).distinct()
     }
 

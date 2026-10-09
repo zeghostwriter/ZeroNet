@@ -143,17 +143,17 @@ class ServerStore private constructor(context: Context) :
     }
 
     /**
-     * Whether a Cloudflare WARP account is stored, asked on every connect.
-     *
-     * A targeted query rather than reading the table: `all()` is several
-     * hundred rows, and this only needs to know whether one of them is a
-     * `warp://` link. The index on `link` is not worth adding for a check that
-     * returns after the first row.
+     * Whether a stored WARP account runs WARP inside WARP (see
+     * [com.zeronet.mobile.model.WarpLinks]). There are only ever a few
+     * accounts, so reading their links is cheap.
      */
-    fun hasWarpAccount(): Boolean =
+    fun hasWarpInWarpAccount(): Boolean =
         readableDatabase.rawQuery(
-            "SELECT 1 FROM servers WHERE link LIKE 'warp://%' LIMIT 1", null,
-        ).use { it.moveToFirst() }
+            "SELECT link FROM servers WHERE link LIKE 'warp://%'", null,
+        ).use { cursor ->
+            generateSequence { if (cursor.moveToNext()) cursor.getString(0) else null }
+                .any(com.zeronet.mobile.model.WarpLinks::hasInner)
+        }
 
     // ----------------------------------------------------------------- writes
 

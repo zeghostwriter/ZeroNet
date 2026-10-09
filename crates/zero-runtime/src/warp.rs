@@ -22,8 +22,15 @@
 //!   throttles is found out by the next rule, not tried every minute.
 //! * **Feedback.** Connections through the tunnel report back. Several
 //!   timeouts in a row with no success in between mean the route is dead even
-//!   though its tunnel is up; it is dropped and not chosen again for a while
-//!   ([`PENALTY`]).
+//!   though its tunnel is up; it is dropped and moved to the back of the order
+//!   for a while ([`PENALTY`]).
+//! * **Demote, never abandon.** A route under penalty is still raced, only
+//!   last. On a network where HTTP/2 is the one route that gets through, a
+//!   hiccup must not leave the tunnel trying only the routes that cannot
+//!   work. And only a tunnel that died soon after it came up
+//!   ([`STAYED_UP`]) earns a penalty: one that carried traffic for minutes and
+//!   then dropped (a network change, a reset connection) is simply rebuilt on
+//!   the same route.
 //!
 //! A network change forgets all of it: what worked on Wi-Fi says little about
 //! mobile data.
@@ -71,6 +78,9 @@ const FAULTS_TO_DROP: u32 = 3;
 const PENALTY: Duration = Duration::from_secs(15 * 60);
 /// A tunnel that ends this soon after its last success was killed, not idle.
 const DIED_UNDER_USE: Duration = Duration::from_secs(60);
+/// A tunnel that stayed up this long proved its route; its end is not held
+/// against the route, which is rebuilt rather than penalised.
+const STAYED_UP: Duration = Duration::from_secs(5 * 60);
 
 fn rank(route: WarpRoute) -> u8 {
     match route {
@@ -116,6 +126,11 @@ fn now_ms() -> u64 {
 struct Current {
     route: WarpRoute,
     stack: WgStack,
+    /// When this tunnel came up, to tell one that died at once from one that
+    /// carried traffic for a while (see [`STAYED_UP`]).
+    since: Instant,
+    /// Whether it runs the account's inner session (WARP inside WARP).
+    inner: bool,
 }
 
 #[derive(Default)]
@@ -130,6 +145,8 @@ struct Slot {
     /// Edge addresses found by [`scan_endpoints`] when the configured ones
     /// stopped answering, tried after them from then on.
     found_h2: Vec<SocketAddr>,
+    /// A background try to bring WARP inside WARP back is running.
+    regaining: bool,
 }
 
 #[derive(Default)]
@@ -165,8 +182,13 @@ impl Deref for Tunnel {
 
 /// Whether an error says the tunnel itself is not carrying traffic, as
 /// opposed to a destination that refused or does not exist.
+///
+/// A UDP exchange that times out says nothing about the tunnel: plenty of UDP
+/// is never answered (QUIC to a host that only speaks TCP, a game server
+/// that went quiet, STUN), so counting it would condemn a working route on a
+/// few unanswered packets.
 fn is_fault(error: &str) -> bool {
-    error.contains("timed out") || error.contains("tunnel is closed")
+    (error.contains("timed out") && !error.contains("UDP")) || error.contains("tunnel is closed")
 }
 
 impl Tunnel {
@@ -203,9 +225,13 @@ fn available(config: &AmneziaWireguardConfig) -> Vec<WarpRoute> {
     routes
 }
 
-/// The candidates for a selection, in the order to start them: the route that
-/// worked before, then by preference, leaving out the ones under penalty
-/// (unless that leaves nothing).
+/// The candidates for a selection, in the order to start them: the routes not
+/// under penalty first (the one that worked before leading), then by
+/// preference, and the penalised ones last.
+///
+/// A penalised route is moved back, never left out. Leaving it out is what
+/// made a short HTTP/2 hiccup strand the tunnel on WireGuard and HTTP/3, the
+/// two routes that cannot get through on networks where HTTP/2 can.
 fn candidates(
     config: &AmneziaWireguardConfig,
     good: Option<WarpRoute>,
@@ -215,16 +241,9 @@ fn candidates(
     if config.route != WarpRoute::Auto {
         return vec![config.route];
     }
-    let all = available(config);
-    let mut routes: Vec<WarpRoute> = all
-        .iter()
-        .copied()
-        .filter(|route| penalties.get(route).is_none_or(|until| *until <= now))
-        .collect();
-    if routes.is_empty() {
-        routes = all;
-    }
-    routes.sort_by_key(|route| (Some(*route) != good, rank(*route)));
+    let mut routes = available(config);
+    let penalised = |route: &WarpRoute| penalties.get(route).is_some_and(|until| *until > now);
+    routes.sort_by_key(|route| (penalised(route), Some(*route) != good, rank(*route)));
     routes
 }
 
@@ -239,6 +258,9 @@ fn identity(config: &AmneziaWireguardConfig, peer: Option<SocketAddr>, carried: 
     config.route.hash(&mut hasher);
     if carried {
         config.exits.hash(&mut hasher);
+    }
+    if let Some(inner) = &config.inner {
+        inner.private_key.hash(&mut hasher);
     }
     if let Some(masque) = &config.masque {
         masque.private_key.hash(&mut hasher);
@@ -316,11 +338,15 @@ impl Drop for Release {
 /// Open one route. The guard, dropped without being cleared, stops a
 /// WireGuard tunnel that was started only to be tried; a MASQUE one stops
 /// with its stack.
+///
+/// `inner` runs the account's inner WireGuard session inside a MASQUE route
+/// (WARP inside WARP); without it the MASQUE tunnel is the stack itself.
 async fn open(
     config: &AmneziaWireguardConfig,
     route: WarpRoute,
     wireguard_peer: Option<SocketAddr>,
     found_h2: &[SocketAddr],
+    inner: bool,
 ) -> Result<(WgStack, Release), String> {
     match route {
         WarpRoute::WireGuard | WarpRoute::Auto => {
@@ -340,18 +366,85 @@ async fn open(
                 .as_ref()
                 .ok_or("this WARP outbound has no MASQUE key")?;
             let link = masque::start(masque_spec_with(masque, route, found_h2)?).await?;
-            let stack = WgStack::start_link(
-                masque.addresses.clone(),
-                resolver_of(&masque.addresses),
-                PacketLink {
-                    up: link.up,
-                    down: link.down,
-                    rebind: link.rebind,
-                },
-            )?;
+            let link = PacketLink {
+                up: link.up,
+                down: link.down,
+                rebind: link.rebind,
+            };
+            let stack = match config.inner.as_deref().filter(|_| inner) {
+                Some(inner) => inside(masque, inner, link)?,
+                None => WgStack::start_link(
+                    masque.addresses.clone(),
+                    resolver_of(&masque.addresses),
+                    link,
+                )?,
+            };
             Ok((stack, Release { tunnel: None }))
         }
     }
+}
+
+/// How long an inner WireGuard session that carried nothing is left out, so
+/// every reconnect does not pay for proving it again. Short: while it rests
+/// the exit is located at home, which is what the inner session is for.
+const INNER_REST: Duration = Duration::from_secs(3 * 60);
+/// Tries an inner session gets before the route falls back to MASQUE alone.
+/// One proof can fail on a bad second of a lossy line; two in a row is the
+/// session, not the moment.
+const INNER_TRIES: u32 = 2;
+
+/// Inner sessions resting after a failure, by their private key, until when.
+static INNER_RESTING: LazyLock<StdMutex<HashMap<[u8; 32], Instant>>> =
+    LazyLock::new(Default::default);
+
+/// Whether `config`'s inner session should be tried on `route` now.
+fn inner_wanted(config: &AmneziaWireguardConfig, route: WarpRoute) -> bool {
+    let Some(inner) = config.inner.as_deref().filter(|_| route.uses_masque()) else {
+        return false;
+    };
+    let mut resting = lock(&INNER_RESTING);
+    let now = Instant::now();
+    resting.retain(|_, until| *until > now);
+    !resting.contains_key(&inner.private_key)
+}
+
+/// Leave `config`'s inner session out for [`INNER_REST`].
+fn rest_inner(config: &AmneziaWireguardConfig) {
+    if let Some(inner) = config.inner.as_deref() {
+        lock(&INNER_RESTING).insert(inner.private_key, Instant::now() + INNER_REST);
+    }
+}
+
+/// Where WARP's WireGuard endpoint is when an account names it by host name
+/// (`engage.cloudflareclient.com`), which cannot be looked up before the
+/// tunnel it would be looked up through exists.
+const INNER_ENDPOINT: SocketAddr =
+    SocketAddr::new(IpAddr::V4(std::net::Ipv4Addr::new(162, 159, 192, 1)), 2408);
+
+/// WARP inside WARP: `inner`'s WireGuard session over the MASQUE `link`, its
+/// datagrams sent from the MASQUE tunnel's own IPv4 address. The stack this
+/// returns is the inner one; the MASQUE tunnel is only its path.
+fn inside(
+    masque: &MasqueConfig,
+    inner: &AmneziaWireguardConfig,
+    link: PacketLink,
+) -> Result<WgStack, String> {
+    let outer_address = masque
+        .addresses
+        .iter()
+        .copied()
+        .find(IpAddr::is_ipv4)
+        .ok_or("WARP inside WARP needs an IPv4 address on the MASQUE tunnel")?;
+    let peer = match inner.address {
+        zero_core::Address::Ip(ip @ IpAddr::V4(_)) => SocketAddr::new(ip, inner.port),
+        _ => INNER_ENDPOINT,
+    };
+    WgStack::start_inside(
+        peer,
+        crate::outbound::wireguard_stack_params(inner),
+        link,
+        outer_address,
+    )
 }
 
 /// A tunnel that fetches a page from a host outside Cloudflare's network is
@@ -439,6 +532,12 @@ async fn egress(stack: &WgStack) -> Result<(), String> {
 }
 
 /// Open `route` and, when `probe` is set, prove it carries traffic.
+///
+/// An inner session (WARP inside WARP) is always proved, alone or not. When
+/// it carries nothing [`INNER_TRIES`] times the route is opened again without
+/// it: the MASQUE tunnel alone still reaches the internet, only with an exit
+/// located at home, which beats no connection. The inner session then rests
+/// for [`INNER_REST`].
 async fn attempt(
     config: &AmneziaWireguardConfig,
     route: WarpRoute,
@@ -448,7 +547,20 @@ async fn attempt(
 ) -> Result<(WgStack, Release), String> {
     let started = tokio::time::Instant::now();
     let outcome = async {
-        let (stack, release) = open(config, route, wireguard_peer, found_h2).await?;
+        if inner_wanted(config, route) {
+            for tried in 1..=INNER_TRIES {
+                let (stack, release) = open(config, route, wireguard_peer, found_h2, true).await?;
+                match verify(&stack).await {
+                    Ok(()) => return Ok((stack, release)),
+                    Err(error) => {
+                        tracing::debug!(%error, tried, "WARP inside WARP carried nothing")
+                    }
+                }
+            }
+            tracing::debug!("using the MASQUE tunnel alone for a while");
+            rest_inner(config);
+        }
+        let (stack, release) = open(config, route, wireguard_peer, found_h2, false).await?;
         if probe {
             verify(&stack).await?;
         }
@@ -613,6 +725,7 @@ pub async fn tunnel(
             let route = current.route;
             slot.current = Some(current);
             promote_if_due(config, wireguard_peer, &entry, &mut slot, route, now);
+            regain_inner_if_due(config, wireguard_peer, &entry, &mut slot);
             return Ok(Tunnel {
                 stack,
                 route,
@@ -620,15 +733,21 @@ pub async fn tunnel(
                 carried: false,
             });
         }
-        // Dead or useless. A tunnel that simply idled out is neither.
+        // Dead or useless. A tunnel that simply idled out is neither, and
+        // one that carried traffic for minutes before it dropped proved its
+        // route: it is rebuilt on the same route, first in the race.
         let recent = now_ms().saturating_sub(entry.health.last_ok.load(Ordering::Relaxed))
             < DIED_UNDER_USE.as_millis() as u64;
-        if condemned || (!alive && recent) {
+        let soon = now.duration_since(current.since) < STAYED_UP;
+        if soon && (condemned || (!alive && recent)) {
             tracing::debug!(
                 route = current.route.name(),
-                "the WARP route failed; leaving it"
+                "the WARP route failed soon after it came up; trying it last for a while"
             );
             slot.penalties.insert(current.route, now + PENALTY);
+            if slot.good == Some(current.route) {
+                slot.good = None;
+            }
         }
     }
     entry.health.faults.store(0, Ordering::Relaxed);
@@ -642,7 +761,8 @@ pub async fn tunnel(
         Err(error) => {
             // Everything failed. If HTTP/2 is among the routes and its
             // addresses may simply have been blocked, look for others in the
-            // same networks and try once more.
+            // same networks and try once more, on HTTP/2 alone: the other
+            // routes have just failed.
             let Some(masque) = config
                 .masque
                 .as_deref()
@@ -663,7 +783,7 @@ pub async fn tunnel(
             slot.found_h2.extend(fresh);
             slot.found_h2.truncate(16);
             let found = slot.found_h2.clone();
-            race(config, &routes, wireguard_peer, &found)
+            race(config, &[WarpRoute::MasqueHttp2], wireguard_peer, &found)
                 .await
                 .map_err(|second| format!("{error}; after scanning: {second}"))?
         }
@@ -674,6 +794,8 @@ pub async fn tunnel(
     slot.current = Some(Current {
         route,
         stack: stack.clone(),
+        since: Instant::now(),
+        inner: inner_wanted(config, route),
     });
     entry.health.last_ok.store(now_ms(), Ordering::Relaxed);
     Ok(Tunnel {
@@ -682,6 +804,62 @@ pub async fn tunnel(
         entry: Arc::clone(&entry),
         carried: false,
     })
+}
+
+/// Bring WARP inside WARP back in the background once its rest is over.
+///
+/// A tunnel that fell back to MASQUE alone keeps carrying traffic while it is
+/// alive, so without this the exit would stay at home until it died. One try
+/// at a time; a success takes over new connections, as a promotion does, and
+/// a failure only starts the rest again.
+fn regain_inner_if_due(
+    config: &AmneziaWireguardConfig,
+    wireguard_peer: Option<SocketAddr>,
+    entry: &Arc<Entry>,
+    slot: &mut Slot,
+) {
+    let Some(route) = slot
+        .current
+        .as_ref()
+        .filter(|current| !current.inner)
+        .map(|current| current.route)
+    else {
+        return;
+    };
+    if slot.regaining || !inner_wanted(config, route) {
+        return;
+    }
+    slot.regaining = true;
+    let (config, entry) = (config.clone(), Arc::clone(entry));
+    let found = slot.found_h2.clone();
+    tokio::spawn(async move {
+        let outcome = attempt(&config, route, wireguard_peer, &found, true).await;
+        // `attempt` falls back to MASQUE alone and rests the inner session
+        // when it fails, so the inner session is in use only if it is still
+        // wanted afterwards.
+        let regained = inner_wanted(&config, route);
+        let mut slot = entry.slot.lock().await;
+        slot.regaining = false;
+        let Ok((stack, mut release)) = outcome else {
+            return;
+        };
+        release.tunnel = None;
+        if regained
+            && slot
+                .current
+                .as_ref()
+                .is_some_and(|current| current.route == route && !current.inner)
+        {
+            tracing::debug!(route = route.name(), "WARP inside WARP is back");
+            slot.current = Some(Current {
+                route,
+                stack,
+                since: Instant::now(),
+                inner: true,
+            });
+            entry.health.faults.store(0, Ordering::Relaxed);
+        }
+    });
 }
 
 /// Try the routes preferred over `current` in the background, if it is time.
@@ -701,9 +879,12 @@ fn promote_if_due(
         return;
     }
     slot.promoted_at = Some(now);
+    // A route under penalty waits for its penalty to run out before it may
+    // take the traffic back.
     let better: Vec<WarpRoute> = candidates(config, None, &slot.penalties, now)
         .into_iter()
         .filter(|route| rank(*route) < rank(current))
+        .filter(|route| slot.penalties.get(route).is_none_or(|until| *until <= now))
         .collect();
     if better.is_empty() {
         return;
@@ -734,7 +915,12 @@ fn promote_if_due(
         {
             tracing::debug!(route = route.name(), "promoted to a preferred WARP route");
             slot.good = Some(route);
-            slot.current = Some(Current { route, stack });
+            slot.current = Some(Current {
+                route,
+                stack,
+                since: Instant::now(),
+                inner: inner_wanted(&config, route),
+            });
             entry.health.faults.store(0, Ordering::Relaxed);
         }
     });
@@ -882,16 +1068,24 @@ async fn tunnel_carried(
         let spec = spec.clone();
         async move {
             let link = masque::start_over(spec, opener).await?;
-            let stack = WgStack::start_link(
-                addresses.clone(),
-                resolver_of(addresses),
-                PacketLink {
-                    up: link.up,
-                    down: link.down,
-                    rebind: link.rebind,
-                },
-            )?;
-            verify(&stack).await?;
+            let link = PacketLink {
+                up: link.up,
+                down: link.down,
+                rebind: link.rebind,
+            };
+            let inner = inner_wanted(config, WarpRoute::MasqueHttp2);
+            let stack = match config.inner.as_deref().filter(|_| inner) {
+                Some(inner) => inside(masque_config, inner, link)?,
+                None => WgStack::start_link(addresses.clone(), resolver_of(addresses), link)?,
+            };
+            // A carried inner session that carries nothing rests, and the
+            // next server tried carries the MASQUE tunnel alone.
+            if let Err(error) = verify(&stack).await {
+                if inner {
+                    rest_inner(config);
+                }
+                return Err(error);
+            }
             Ok(stack)
         }
     })
@@ -899,6 +1093,8 @@ async fn tunnel_carried(
     slot.current = Some(Current {
         route: WarpRoute::MasqueHttp2,
         stack: stack.clone(),
+        since: Instant::now(),
+        inner: inner_wanted(config, WarpRoute::MasqueHttp2),
     });
     entry.health.last_ok.store(now_ms(), Ordering::Relaxed);
     Ok(Tunnel {
@@ -1200,6 +1396,8 @@ pub async fn connect(
 /// to, and MASQUE tunnels reconnect from where they are. The WireGuard ones
 /// are moved by [`wg_stack::rebind_all`].
 pub fn network_changed() -> usize {
+    // An inner session that failed on the last network may work on this one.
+    lock(&INNER_RESTING).clear();
     let entries: Vec<Arc<Entry>> = lock(&ENTRIES).values().cloned().collect();
     let mut moved = 0;
     for entry in entries {
@@ -1265,7 +1463,7 @@ mod tests {
     }
 
     #[test]
-    fn candidates_go_udp_first_then_by_what_worked_and_skip_the_penalized() {
+    fn candidates_go_udp_first_then_by_what_worked_and_put_the_penalized_last() {
         use WarpRoute::*;
         let both = with_wireguard(config(Auto));
         assert_eq!(
@@ -1277,9 +1475,17 @@ mod tests {
             plan(&both, Some(MasqueHttp2), &[]),
             [MasqueHttp2, WireGuard, MasqueHttp3]
         );
-        // What failed under use is left out for now...
-        assert_eq!(plan(&both, None, &[WireGuard]), [MasqueHttp3, MasqueHttp2]);
-        // ...unless that would leave nothing.
+        // What failed under use goes last for now, but is still tried.
+        assert_eq!(
+            plan(&both, None, &[WireGuard]),
+            [MasqueHttp3, MasqueHttp2, WireGuard]
+        );
+        // HTTP/2 failing once never strands the tunnel on the other two: it
+        // stays in the race, behind them, even when it was the one that won.
+        assert_eq!(
+            plan(&both, Some(MasqueHttp2), &[MasqueHttp2]),
+            [WireGuard, MasqueHttp3, MasqueHttp2]
+        );
         assert_eq!(
             plan(&both, None, &[WireGuard, MasqueHttp3, MasqueHttp2]),
             [WireGuard, MasqueHttp3, MasqueHttp2]
@@ -1326,6 +1532,8 @@ mod tests {
         health.record(&timeout());
         assert_eq!(state(), (3, true));
         assert!(is_fault("the tunnel is closed") && !is_fault("connection refused"));
+        // Unanswered UDP is ordinary and never held against the tunnel.
+        assert!(!is_fault("UDP answer through the tunnel timed out"));
     }
 
     #[test]
@@ -1603,6 +1811,102 @@ mod tests {
             second_route, first_route,
             "the failed route was chosen again"
         );
+    }
+
+    /// A route that carried traffic for minutes and then dropped is rebuilt
+    /// on the same route, not sent to the back of the race: on networks where
+    /// HTTP/2 is the only way through, a long-lived tunnel ending is a network
+    /// change or a reset, not a sign the route stopped working.
+    #[tokio::test]
+    async fn a_route_that_stayed_up_is_rebuilt_on_the_same_route() {
+        let _gate = GATE.read().await;
+        let server = MasqueKey::generate().unwrap();
+        let (h2, _, _) = h2_server(&server, false).await;
+        let config = account(WarpRoute::Auto, &server, Some(h2), None);
+        let first = tunnel(&config, None).await.unwrap();
+        {
+            let mut slot = first.entry.slot.lock().await;
+            let current = slot.current.as_mut().unwrap();
+            current.since = Instant::now() - STAYED_UP - Duration::from_secs(1);
+        }
+        for _ in 0..FAULTS_TO_DROP {
+            first.report::<()>(&Err("TCP connect through the tunnel timed out".into()));
+        }
+        let second = tunnel(&config, None).await.unwrap();
+        let slot = second.entry.slot.lock().await;
+        assert!(
+            slot.penalties.is_empty(),
+            "a route that proved itself for minutes is not penalised"
+        );
+        assert_eq!(second.route(), WarpRoute::MasqueHttp2);
+        assert_eq!(slot.good, Some(WarpRoute::MasqueHttp2));
+    }
+
+    /// The failure behind "HTTP/2 hiccups once and WARP never comes back":
+    /// with HTTP/2 the only route that works, condemning it must still leave
+    /// it in the race (last), so the next selection lands on it again instead
+    /// of trying only a route that cannot get through.
+    #[tokio::test]
+    async fn a_penalised_http2_route_is_still_raced_when_nothing_else_works() {
+        let _gate = GATE.read().await;
+        let server = MasqueKey::generate().unwrap();
+        let (h2, _, _) = h2_server(&server, false).await;
+        let config = account(WarpRoute::Auto, &server, Some(h2), Some(closed_port()));
+        let first = tunnel(&config, None).await.unwrap();
+        assert_eq!(first.route(), WarpRoute::MasqueHttp2);
+        for _ in 0..FAULTS_TO_DROP {
+            first.report::<()>(&Err("TCP connect through the tunnel timed out".into()));
+        }
+        let second = tunnel(&config, None)
+            .await
+            .expect("HTTP/2 is penalised, not abandoned");
+        assert_eq!(second.route(), WarpRoute::MasqueHttp2);
+        let slot = second.entry.slot.lock().await;
+        assert!(slot.penalties.contains_key(&WarpRoute::MasqueHttp2));
+    }
+
+    /// WARP inside WARP whose inner session never answers must not take
+    /// WARP down with it: the route comes up on the MASQUE tunnel alone, and
+    /// the inner session rests instead of costing every reconnect a probe.
+    #[tokio::test]
+    async fn an_inner_session_that_carries_nothing_falls_back_to_masque_alone() {
+        let _gate = GATE.read().await;
+        let server = MasqueKey::generate().unwrap();
+        let (h2, _, _) = h2_server(&server, false).await;
+        let mut config = account(WarpRoute::MasqueHttp2, &server, Some(h2), None);
+        let mut inner = with_wireguard(config.clone());
+        inner.masque = None;
+        inner.private_key = [0x42; 32];
+        config.inner = Some(Box::new(inner));
+        assert!(inner_wanted(&config, WarpRoute::MasqueHttp2));
+        assert!(!inner_wanted(&config, WarpRoute::WireGuard));
+
+        let up = tunnel(&config, None)
+            .await
+            .expect("MASQUE alone still works");
+        up.resolve(PROBE_NAME).await.expect("traffic through it");
+        assert!(
+            !inner_wanted(&config, WarpRoute::MasqueHttp2),
+            "the failed inner session rests"
+        );
+        lock(&INNER_RESTING).remove(&[0x42; 32]);
+        // Its rest over, the next connection tries it again in the background
+        // and, since it still carries nothing, leaves the working tunnel be.
+        let again = tunnel(&config, None).await.expect("still up");
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while again.entry.slot.lock().await.regaining {
+            assert!(Instant::now() < deadline, "the background try never ended");
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        let slot = again.entry.slot.lock().await;
+        assert!(!slot.current.as_ref().unwrap().inner);
+        assert!(slot.current.as_ref().unwrap().stack.is_alive());
+        drop(slot);
+        assert!(
+            !inner_wanted(&config, WarpRoute::MasqueHttp2),
+            "it rests again"
+        );
+        lock(&INNER_RESTING).remove(&[0x42; 32]);
     }
 
     #[tokio::test]

@@ -4306,6 +4306,7 @@ dependencies = [
  "zero-evasion",
  "zero-runtime",
  "zero-scanner",
+ "zero-transport",
  "zero-tun",
 ]
 

@@ -63,6 +63,8 @@ sysinfo = { version = "0.39", default-features = false, features = ["system"] }
 
 [dev-dependencies]
 zero-runtime = { workspace = true, features = ["test-util"] }
+# Real MASQUE keys for the WARP account fixtures.
+zero-transport = { workspace = true }
 
 [build-dependencies]
 # Icon and version resource for the Windows executable; only runs when

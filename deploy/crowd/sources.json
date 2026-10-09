@@ -15,6 +15,21 @@
     "tier": 1
   },
   {
+    "id": "matin",
+    "url": "https://raw.githubusercontent.com/MatinGhanbari/v2ray-configs/main/subscriptions/v2ray/super-sub.txt",
+    "tier": 1
+  },
+  {
+    "id": "roosterkid",
+    "url": "https://raw.githubusercontent.com/roosterkid/openproxylist/main/V2RAY_RAW.txt",
+    "tier": 1
+  },
+  {
+    "id": "yebekhe",
+    "url": "https://raw.githubusercontent.com/yebekhe/vpn-fail/main/sub-link",
+    "tier": 1
+  },
+  {
     "id": "radikal",
     "url": "https://raw.githubusercontent.com/0xRadikal/Free-v2ray-Configs/main/all/configs.txt",
     "tier": 2
@@ -57,6 +72,51 @@
   {
     "id": "ebrasha",
     "url": "https://raw.githubusercontent.com/ebrasha/free-v2ray-public-list/main/vless_configs.txt",
+    "tier": 3
+  },
+  {
+    "id": "mahdibland",
+    "url": "https://raw.githubusercontent.com/mahdibland/V2RayAggregator/master/sub/sub_merge.txt",
+    "tier": 2
+  },
+  {
+    "id": "mahdi0024",
+    "url": "https://raw.githubusercontent.com/Mahdi0024/ProxyCollector/master/sub/proxies.txt",
+    "tier": 2
+  },
+  {
+    "id": "norouzi",
+    "url": "https://raw.githubusercontent.com/MrAbolfazlNorouzi/iran-configs/main/configs/working-configs.txt",
+    "tier": 2
+  },
+  {
+    "id": "irancell",
+    "url": "https://raw.githubusercontent.com/morteza-v2/free-v2ray-irancell-config/main/Sub1.txt",
+    "tier": 2
+  },
+  {
+    "id": "barryfar",
+    "url": "https://raw.githubusercontent.com/barry-far/V2ray-Config/main/All_Configs_Sub.txt",
+    "tier": 3
+  },
+  {
+    "id": "bahemmat",
+    "url": "https://raw.githubusercontent.com/MohammadBahemmat/V2ray-Collector/main/all_servers.txt",
+    "tier": 3
+  },
+  {
+    "id": "proxykma",
+    "url": "https://raw.githubusercontent.com/amirkma/proxykma/main/mix.txt",
+    "tier": 3
+  },
+  {
+    "id": "autoaivpn",
+    "url": "https://raw.githubusercontent.com/penhandev/AutoAiVPN/main/iran.txt",
+    "tier": 3
+  },
+  {
+    "id": "vpnclashfa",
+    "url": "https://raw.githubusercontent.com/10ium/VpnClashFaCollector/main/sub/all/mixed.txt",
     "tier": 3
   }
 ]

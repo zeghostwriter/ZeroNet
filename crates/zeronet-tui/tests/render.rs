@@ -2987,6 +2987,7 @@ fn warp_link() -> String {
         wireguard_endpoint: "162.159.192.1:2408".parse().unwrap(),
         addresses: vec!["172.16.0.2".parse().unwrap()],
         masque: None,
+        inner: None,
     }
     .link("auto")
 }

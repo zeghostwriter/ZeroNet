@@ -34,6 +34,7 @@ import com.zeronet.mobile.model.classic
 import com.zeronet.mobile.model.SpeedFloor
 import com.zeronet.mobile.model.TrafficStats
 import com.zeronet.mobile.model.WarpConsent
+import com.zeronet.mobile.model.WarpLinks
 import com.zeronet.mobile.model.WarpOrder
 import com.zeronet.mobile.model.WarpPhase
 import com.zeronet.mobile.model.WarpState
@@ -409,21 +410,14 @@ object Engine {
      *
      * Only the recommended mode, only when the answer is [WarpConsent.On] (the
      * question itself is asked by the UI, once), and only while no account
-     * exists: an account that is already there is just another server the
-     * ladder tries.
+     * runs WARP inside WARP. An account made before that existed exits in the
+     * user's own country, so it does not count: a new one is set up and both
+     * stay, the new one tried first.
      */
     private suspend fun warpBootstrapWanted(): Boolean =
         settings.warpConsent == WarpConsent.On &&
             settings.profile == ConnectionProfile.Normal &&
-            !hasWarpAccount()
-
-    /**
-     * Whether an account is already stored: a server whose link is a `warp://`
-     * one. Once it exists the setup has nothing left to do, and the account is
-     * just another server the ladder tries.
-     */
-    private suspend fun hasWarpAccount(): Boolean =
-        withContext(Dispatchers.IO) { store.hasWarpAccount() }
+            !withContext(Dispatchers.IO) { store.hasWarpInWarpAccount() }
 
     /**
      * After a connect attempt: with the kill switch holding traffic, a
@@ -767,7 +761,10 @@ object Engine {
      */
     private suspend fun climbLadder(network: String) {
         val prefs = app.getSharedPreferences("ladder", Context.MODE_PRIVATE)
-        val warpServers = withContext(Dispatchers.IO) { store.userServers().filter { it.fingerprint.isNotEmpty() && !it.excluded } }
+        val accounts = withContext(Dispatchers.IO) { store.userServers().filter { it.fingerprint.isNotEmpty() && !it.excluded } }
+        // WARP inside WARP when an account has it (an exit abroad); older
+        // accounts only when none does.
+        val warpServers = accounts.filter { WarpLinks.hasInner(it.link) }.ifEmpty { accounts }
         val order = Ladder.order(Ladder.indexOf(prefs.getString("net:$network", null)), hasWarp = warpServers.isNotEmpty())
         var tried = emptySet<String>()
         for ((step, index) in order.withIndex()) {

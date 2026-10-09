@@ -2508,7 +2508,11 @@ impl<'a> App<'a> {
     /// The connect control, in all its forms.
     async fn toggle_connection(&mut self) -> Result<()> {
         if self.connection.selected().is_none() {
-            let first = self.visible_configs().first().map(|c| c.id);
+            // WARP inside WARP is the default way out when there is an
+            // account for it: an exit abroad that needs no public server.
+            let first = self
+                .warp_in_warp_profile()
+                .or_else(|| self.visible_configs().first().map(|c| c.id));
             match first {
                 Some(id) => {
                     self.connection.select(id);

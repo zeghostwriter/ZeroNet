@@ -1076,6 +1076,13 @@ pub struct AmneziaWireguardConfig {
     /// the tunnel alone as the failsafe, instead of the other way round.
     /// Always false for [`HybridMode::ServerFirst`].
     pub prefer_exit: bool,
+    /// WARP inside WARP: a second account's WireGuard session carried inside
+    /// this account's MASQUE tunnel. Cloudflare then sees that session arrive
+    /// from its own network abroad and gives it an exit address located
+    /// there, where the MASQUE tunnel alone is given one located where the
+    /// user is. Only the MASQUE routes use it; the account must have WARP
+    /// switched on, or its WireGuard session carries nothing.
+    pub inner: Option<Box<AmneziaWireguardConfig>>,
 }
 
 /// The order a WARP outbound brings its tunnel and its servers up in.

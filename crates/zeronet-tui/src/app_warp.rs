@@ -80,6 +80,17 @@ fn progress_into(tx: tokio::sync::mpsc::UnboundedSender<BgEvent>) -> impl Fn(&st
 }
 
 /// The `warp://` link of a stored profile, if it is one.
+/// Whether the account behind `link` carries an inner WireGuard device, so it
+/// runs WARP inside WARP and exits abroad.
+fn runs_warp_in_warp(link: &str) -> bool {
+    zero_config::parse_link(link).is_ok_and(|parsed| {
+        matches!(
+            &parsed.outbound.protocol,
+            zero_config::OutboundProtocol::AmneziaWireguard(warp) if warp.inner.is_some()
+        )
+    })
+}
+
 fn warp_link_of(record: &ConfigRecord) -> Option<String> {
     let value: serde_json::Value = serde_json::from_str(&record.raw_content).ok()?;
     value
@@ -203,19 +214,30 @@ impl App<'_> {
     // account. The sequence itself is `zeronet_tui::warp_bootstrap`; these
     // methods only wait, dial, and feed outcomes back in.
 
-    /// Whether any profile is a Cloudflare WARP account already.
+    /// Whether any profile is a Cloudflare WARP account that runs WARP inside
+    /// WARP. An account made before that existed exits in the person's own
+    /// country, so it does not count: the setup makes a new one.
+    fn has_warp_profile(&self) -> bool {
+        self.warp_in_warp_profile().is_some()
+    }
+
+    /// The first profile that runs WARP inside WARP: the one a connect with
+    /// nothing selected goes to.
     ///
-    /// The substring test comes first on purpose: this runs on every connect,
+    /// The substring tests come first on purpose: this runs on every connect,
     /// and parsing every stored profile's JSON to answer it would be the most
     /// expensive thing a connect button does. Almost no profile mentions the
     /// scheme, so the parser only ever runs on the rare one that does.
-    fn has_warp_profile(&self) -> bool {
-        self.configs.iter().any(|record| {
-            record
-                .raw_content
-                .contains(zero_config::share_link::WARP_LINK_SCHEME)
-                && warp_link_of(record).is_some()
-        })
+    pub(crate) fn warp_in_warp_profile(&self) -> Option<i64> {
+        self.configs
+            .iter()
+            .filter(|record| {
+                record
+                    .raw_content
+                    .contains(zero_config::share_link::WARP_LINK_SCHEME)
+            })
+            .find(|record| warp_link_of(record).is_some_and(|link| runs_warp_in_warp(&link)))
+            .map(|record| record.id)
     }
 
     /// Ask about Cloudflare the first time a connection is made, and run the
@@ -988,6 +1010,52 @@ impl App<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Only an account with an inner device counts as WARP inside WARP; an
+    /// older account, or any other link, does not.
+    #[test]
+    fn warp_in_warp_is_told_apart_from_an_older_account() {
+        let account = |inner: bool| zero_discovery::warp::Account {
+            device_id: "d".into(),
+            wireguard_private_key: [4; 32],
+            wireguard_peer_key: [2; 32],
+            reserved: [1, 2, 3],
+            wireguard_endpoint: "162.159.192.1:2408".parse().unwrap(),
+            addresses: vec!["172.16.0.2".parse().unwrap()],
+            masque: Some(zero_discovery::warp::MasqueAccount {
+                private_key: zero_transport::masque::MasqueKey::generate()
+                    .unwrap()
+                    .pkcs8()
+                    .to_vec(),
+                server_public_key: format!(
+                    "-----BEGIN PUBLIC KEY-----\n{}\n-----END PUBLIC KEY-----\n",
+                    base64::Engine::encode(
+                        &base64::engine::general_purpose::STANDARD,
+                        zero_transport::masque::MasqueKey::generate()
+                            .unwrap()
+                            .spki_der()
+                    )
+                ),
+            }),
+            inner: inner.then(|| {
+                Box::new(zero_discovery::warp::Account {
+                    device_id: "i".into(),
+                    wireguard_private_key: [6; 32],
+                    wireguard_peer_key: [7; 32],
+                    reserved: [4, 5, 6],
+                    wireguard_endpoint: "162.159.192.1:2408".parse().unwrap(),
+                    addresses: vec!["172.16.0.3".parse().unwrap()],
+                    masque: None,
+                    inner: None,
+                })
+            }),
+        };
+        assert!(runs_warp_in_warp(&account(true).link("auto")));
+        assert!(!runs_warp_in_warp(&account(false).link("auto")));
+        assert!(!runs_warp_in_warp(
+            "vless://00000000-0000-0000-0000-000000000000@example.com:443#x"
+        ));
+    }
 
     #[test]
     fn a_warp_profile_is_recognised_by_its_link_and_the_link_can_be_swapped() {

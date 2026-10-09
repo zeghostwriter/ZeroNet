@@ -12,7 +12,16 @@
 //! tier 2… only when tier 1 ended with fewer than `next_tier_if_alive_below`
 //! ```
 //!
-//! The job ends at the first of: `want_alive` servers found, every tier
+//! Reported servers are **ranked, not first-come**. A working server is held
+//! for up to `rank_ms` — or until `want_alive` of them have answered, whichever
+//! comes first — and the batch then goes out fastest-first. So a caller keeps
+//! the quickest of what this network allowed, rather than whichever happened to
+//! finish its handshake first. The window only ever runs while fewer than
+//! `want_alive` have answered, which is why a caller that wants exactly one
+//! server is never delayed. `rank_ms = 0` restores reporting each one as it is
+//! found.
+//!
+//! The job ends at the first of: `want_alive` servers reported, every tier
 //! exhausted, `max_seconds` elapsed, or cancellation. Ending drops the job's
 //! future, which aborts every probe still in flight — nothing keeps using the
 //! network after `done` has been sent.
@@ -52,6 +61,10 @@ pub struct DiscoverRequest {
     pub extra_links: Vec<String>,
     pub exclude_keys: Vec<String>,
     pub want_alive: usize,
+    /// How long a working server is held back so the fastest of the batch it
+    /// arrived with is reported first (see the module documentation). Zero
+    /// reports each server the moment it is found.
+    pub rank_ms: u64,
     pub max_seconds: u64,
     pub tcp_concurrency: usize,
     pub tcp_timeout_ms: u64,
@@ -86,6 +99,7 @@ impl Default for DiscoverRequest {
             extra_links: Vec::new(),
             exclude_keys: Vec::new(),
             want_alive: 5,
+            rank_ms: DEFAULT_RANK_MS,
             max_seconds: 60,
             tcp_concurrency: 256,
             tcp_timeout_ms: 1500,
@@ -107,6 +121,7 @@ impl DiscoverRequest {
     /// Clamp values a buggy caller could use to exhaust descriptors or spin.
     fn sanitized(mut self) -> Self {
         self.want_alive = self.want_alive.clamp(1, 1000);
+        self.rank_ms = self.rank_ms.min(MAX_RANK_MS);
         self.max_seconds = self.max_seconds.clamp(1, 3600);
         self.tcp_concurrency = self.tcp_concurrency.clamp(1, 1024);
         self.tcp_timeout_ms = self.tcp_timeout_ms.clamp(100, 30_000);
@@ -137,6 +152,60 @@ impl EndReason {
             EndReason::Cancelled => "cancelled",
         }
     }
+}
+
+/// How long a working server waits for the rest of its batch before the batch
+/// is reported fastest-first, when a request does not say.
+///
+/// The window only runs while fewer than `want_alive` servers have answered, so
+/// it is never spent on a search that is already satisfying the caller. A
+/// little over a second is long enough for the first wave of real tests (up to
+/// `real_concurrency` of them, started together) to report back, and short
+/// enough that a network where only one or two servers work still connects
+/// without a noticeable pause.
+pub const DEFAULT_RANK_MS: u64 = 1_200;
+
+/// The longest ranking window a request may ask for.
+const MAX_RANK_MS: u64 = 10_000;
+
+/// Whether waiting results should be reported now.
+///
+/// * nothing waiting → no;
+/// * no window asked for (`window` zero) → yes, the caller wants them as they
+///   come;
+/// * `reported` plus `waiting` already at the goal → yes, the job is about to
+///   end, so there is nothing left to rank for;
+/// * otherwise → once the window has run out.
+///
+/// `reported` matters: with four of five servers already out, the fifth would
+/// otherwise sit out the whole window although it finishes the search.
+fn should_report(
+    waiting: usize,
+    reported: usize,
+    want: usize,
+    waited: Option<Duration>,
+    window: Duration,
+) -> bool {
+    if waiting == 0 {
+        return false;
+    }
+    window.is_zero()
+        || reported + waiting >= want.max(1)
+        || waited.is_some_and(|waited| waited >= window)
+}
+
+/// Waiting results, fastest first, so the best server of a batch is the first
+/// one the caller sees.
+fn fastest_first(mut ready: Vec<(u64, Candidate)>) -> Vec<(u64, Candidate)> {
+    ready.sort_by_key(|(delay_ms, _)| *delay_ms);
+    ready
+}
+
+/// Alive results not yet reported, and when the oldest of them arrived.
+#[derive(Default)]
+struct Ranking {
+    pending: Vec<(u64, Candidate)>,
+    waiting_since: Option<Instant>,
 }
 
 /// Counters behind the `progress` event.
@@ -178,14 +247,17 @@ struct Shared {
     target: ProbeTarget,
     sink: EventSink,
     progress: Progress,
-    /// Cancelled once `want_alive` servers have been found.
+    /// Cancelled once `want_alive` servers have been reported.
     enough: CancellationToken,
     /// Keys already reported alive, so a server listed by two feeds under
     /// different remarks is reported once.
     alive_keys: Mutex<HashSet<String>>,
+    /// Alive results waiting for the ranking window (see the module docs).
+    ranking: Mutex<Ranking>,
 }
 
 impl Shared {
+    /// Note one working server and report whatever the ranking rule allows.
     fn record_alive(&self, candidate: &Candidate, delay_ms: u64) {
         let fresh = self
             .alive_keys
@@ -195,14 +267,52 @@ impl Shared {
         if !fresh {
             return;
         }
-        self.sink.emit(json!({
-            "t": "alive",
-            "info": candidate.info,
-            "delay_ms": delay_ms,
-        }));
-        let alive = self.progress.alive.fetch_add(1, Ordering::Relaxed) + 1;
-        if alive >= self.request.want_alive {
-            self.enough.cancel();
+        {
+            let mut ranking = self
+                .ranking
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if ranking.waiting_since.is_none() {
+                ranking.waiting_since = Some(Instant::now());
+            }
+            ranking.pending.push((delay_ms, candidate.clone()));
+        }
+        self.report_pending(false);
+    }
+
+    /// Report waiting results, fastest first, once the ranking rule says so —
+    /// or at once when `force`, which the end of a job uses so nothing that
+    /// answered is lost. Reporting is what counts towards `want_alive`.
+    fn report_pending(&self, force: bool) {
+        let ready = {
+            let mut ranking = self
+                .ranking
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if !force
+                && !should_report(
+                    ranking.pending.len(),
+                    self.progress.alive.load(Ordering::Relaxed),
+                    self.request.want_alive,
+                    ranking.waiting_since.map(|at| at.elapsed()),
+                    Duration::from_millis(self.request.rank_ms),
+                )
+            {
+                return;
+            }
+            ranking.waiting_since = None;
+            fastest_first(std::mem::take(&mut ranking.pending))
+        };
+        for (delay_ms, candidate) in ready {
+            self.sink.emit(json!({
+                "t": "alive",
+                "info": candidate.info,
+                "delay_ms": delay_ms,
+            }));
+            let alive = self.progress.alive.fetch_add(1, Ordering::Relaxed) + 1;
+            if alive >= self.request.want_alive {
+                self.enough.cancel();
+            }
         }
     }
 
@@ -236,6 +346,7 @@ pub async fn discover(
         progress: Progress::default(),
         enough: CancellationToken::new(),
         alive_keys: Mutex::new(HashSet::new()),
+        ranking: Mutex::new(Ranking::default()),
     });
 
     // Progress on a tick, only when something moved.
@@ -243,10 +354,16 @@ pub async fn discover(
         let shared = Arc::clone(&shared);
         tokio::spawn(async move {
             let mut last = [usize::MAX; 5];
-            let mut interval = tokio::time::interval(Duration::from_millis(500));
+            // A quarter second: fine enough that a ranking window is honoured
+            // without much overshoot, and progress is only emitted when
+            // something changed, so the extra ticks cost nothing.
+            let mut interval = tokio::time::interval(Duration::from_millis(250));
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
             loop {
                 interval.tick().await;
+                // A batch that has waited out its window with no further result
+                // arriving would otherwise sit unreported until the job ended.
+                shared.report_pending(false);
                 let now = shared.progress.snapshot();
                 if now != last {
                     shared.sink.emit(Progress::event(now));
@@ -267,6 +384,8 @@ pub async fn discover(
         }
     };
     ticker.abort();
+    // Whatever answered is reported even though the job is over.
+    shared.report_pending(true);
 
     sink.emit(Progress::event(shared.progress.snapshot()));
     sink.emit(json!({
@@ -326,6 +445,8 @@ async fn run(shared: Arc<Shared>) {
                 .candidates
                 .fetch_add(own.len(), Ordering::Relaxed);
             pipeline(&shared, own).await;
+            // Everything this tier found, reported before the job returns.
+            shared.report_pending(true);
         }
         return;
     }
@@ -407,6 +528,12 @@ async fn run(shared: Arc<Shared>) {
         );
 
         pipeline(&shared, pool).await;
+        // The tier is over, so nothing is still waiting on the ranking window;
+        // report it all before deciding whether another tier is needed. The
+        // count below is reported servers, so without this a window that had
+        // not yet elapsed would read as "nothing worked" and pull the next,
+        // larger tier for no reason.
+        shared.report_pending(true);
 
         let alive = shared.progress.alive.load(Ordering::Relaxed);
         if alive >= request.next_tier_if_alive_below {
@@ -575,6 +702,86 @@ mod tests {
     use super::*;
     use crate::events::{batching_sink_with_interval, Collected};
     use crate::testing::{http_204_server, shadowsocks_relay, ss_link};
+
+    /// The ranking window is only spent where it can change the answer.
+    #[test]
+    fn a_batch_is_reported_when_ranking_can_still_help() {
+        let window = Duration::from_millis(DEFAULT_RANK_MS);
+        let early = Some(Duration::from_millis(100));
+        assert!(!should_report(0, 0, 5, None, window), "nothing to report");
+        // A full batch: rank now rather than wait out the window.
+        assert!(should_report(5, 0, 5, Some(Duration::ZERO), window));
+        // A short batch with window left: keep waiting for a faster one.
+        assert!(!should_report(2, 0, 5, early, window));
+        // The last one the search needs goes out at once, counting the ones
+        // already reported.
+        assert!(should_report(1, 4, 5, early, window));
+        // Window out: report what there is.
+        assert!(should_report(2, 0, 5, Some(window), window));
+        // No window asked for: report each as it comes.
+        assert!(should_report(1, 0, 5, Some(Duration::ZERO), Duration::ZERO));
+        // Wanting exactly one server is never delayed.
+        assert!(should_report(1, 0, 1, Some(Duration::ZERO), window));
+    }
+
+    /// The caller sees the fastest server of a batch first.
+    #[test]
+    fn the_fastest_result_of_a_batch_is_reported_first() {
+        let candidate = |port: u16, name: &str| {
+            let address: std::net::SocketAddr = ([127, 0, 0, 1], port).into();
+            parse_candidate(&ss_link(address, name)).unwrap()
+        };
+        let ready = fastest_first(vec![
+            (300, candidate(9101, "slow")),
+            (40, candidate(9102, "fast")),
+            (120, candidate(9103, "mid")),
+        ]);
+        let delays: Vec<u64> = ready.iter().map(|(delay, _)| *delay).collect();
+        assert_eq!(delays, vec![40, 120, 300]);
+        assert_eq!(ready[0].1.info.name, "fast");
+    }
+
+    /// With a ranking window, the fastest of two servers that answer is the
+    /// one reported first — the whole point of holding the batch at all.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn the_slower_of_two_workers_is_held_back_for_the_faster_one() {
+        let collected = Collected::default();
+        let (sink, flusher) =
+            batching_sink_with_interval(collected.callback(), Duration::from_millis(10));
+        let shared = Shared {
+            request: DiscoverRequest {
+                want_alive: 2,
+                rank_ms: DEFAULT_RANK_MS,
+                ..DiscoverRequest::default()
+            },
+            target: ProbeTarget::parse(DEFAULT_PROBE_URL).unwrap(),
+            sink,
+            progress: Progress::default(),
+            enough: CancellationToken::new(),
+            alive_keys: Mutex::new(HashSet::new()),
+            ranking: Mutex::new(Ranking::default()),
+        };
+        // Two distinct endpoints: the key ignores the remark, so the same
+        // host and port would be one server however it is labelled.
+        let slow = parse_candidate(&ss_link("127.0.0.1:9001".parse().unwrap(), "slow")).unwrap();
+        let fast = parse_candidate(&ss_link("127.0.0.1:9002".parse().unwrap(), "fast")).unwrap();
+        // The slow one answers first, as it would on the wire. The window holds
+        // it; when the fast one lands the batch is reported, fastest first.
+        shared.record_alive(&slow, 250);
+        assert!(
+            collected.of("alive").is_empty(),
+            "a lone result waits out the window"
+        );
+        shared.record_alive(&fast, 40);
+        drop(shared);
+        flusher.await.unwrap();
+        let alive = collected.of("alive");
+        assert_eq!(alive.len(), 2);
+        assert_eq!(alive[0]["info"]["name"], "fast");
+        assert_eq!(alive[0]["delay_ms"], 40);
+        assert_eq!(alive[1]["info"]["name"], "slow");
+        assert_eq!(alive[1]["delay_ms"], 250);
+    }
 
     fn quick(request: DiscoverRequest) -> DiscoverRequest {
         DiscoverRequest {
