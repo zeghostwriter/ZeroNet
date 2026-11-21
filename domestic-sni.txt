@@ -1,0 +1,49 @@
+# domestic-sni.txt — extra decoy names for the SNI spoof.
+#
+# One host per line. Blank lines and lines starting with "#" are ignored.
+# A line is kept only when it is a plain host of lowercase letters, digits,
+# dots and hyphens, 1..=219 bytes, with at least one dot (zero-evasion's
+# `domestic::parse_feed`). Anything else on the line is dropped on its own.
+#
+# These names EXTEND the pool compiled into the app
+# (`crates/zero-evasion/src/domestic.rs`); they do not replace it. A name
+# already bundled there is skipped, so only add hosts that are not already in
+# the app. The point of this list is to widen the pool from the server side
+# the day the filter starts throttling a bundled name, without waiting for an
+# app update.
+#
+# How this is published and trusted:
+#   zeronet-sign sign domestic-sni.txt      # writes domestic-sni.txt.sig
+#   .github/scripts/publish-crowd-data.sh domestic-sni.txt domestic-sni.txt.sig
+# The app refuses a body whose signature does not verify against the key in
+# `crates/zero-discovery/src/sign.rs`, so the private half of that key must be
+# the CROWD_SIGNING_KEY secret CI signs with — the same key as verified.txt.
+#
+# Only `www.speedtest.net` (bundled) is measured un-throttled from inside Iran.
+# The names below are reasoned candidates — large domestic streaming, app
+# store, bank and super-app hosts a filter is unlikely to throttle because
+# doing so breaks everyday use. A pick that a given network does throttle is
+# not a dead end: the balancer falls back to the urgent byte or a plain hello.
+# Replace these with measured names as the field proves them.
+
+# streaming and video — domestic, heavy consumer traffic
+www.filimo.com
+www.namava.com
+www.telewebion.com
+
+# app stores
+cafebazaar.ir
+myket.ir
+
+# super-apps and messengers hosted in-country
+rubika.ir
+eitaa.com
+
+# banks and payment (throttling them breaks commerce)
+www.bankmellat.ir
+www.sb24.ir
+sep.shaparak.ir
+
+# large general-interest sites
+www.varzesh3.com
+www.torob.com
