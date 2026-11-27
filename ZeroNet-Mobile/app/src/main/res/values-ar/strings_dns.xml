@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="settings_local_dns">DNS للمواقع الإيرانية</string>
+    <string name="settings_local_dns_hint">يُستعلم مباشرةً دون النفق للمواقع والتطبيقات الإيرانية</string>
+    <string name="settings_local_dns_note">اتركه فارغًا لاستخدام أحد المزودين أعلاه. يقبل عنوان IP أو tls://… / https://…/dns-query بعنوان IP.</string>
+    <string name="settings_fake_dns">DNS وهمي (Fake DNS)</string>
+    <string name="settings_fake_dns_hint">يعطي التطبيقات عناوين مؤقتة ويترك للنفق البحث عن العناوين الحقيقية. أبقِه مفعّلًا إلا إذا تعطل تطبيق.</string>
+    <string name="import_serverless">إضافة ملف بلا خادم</string>
+    <string name="import_serverless_hint">يتصل مباشرةً ويخفي اسم الموقع عن المرشِّح. لا يحتاج خادمًا، لكنه يفيد فقط المواقع التي لم يُحجب عنوانها.</string>
+</resources>

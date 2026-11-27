@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="settings_local_dns">DNS برای سایت‌های ایرانی</string>
+    <string name="settings_local_dns_hint">مستقیم و بدون VPN پرسیده می‌شود، برای سایت‌ها و برنامه‌های ایرانی</string>
+    <string name="settings_local_dns_note">خالی بگذار تا از یکی از گزینه‌های بالا استفاده شود. IP یا tls://… و https://…/dns-query با آدرس IP را قبول می‌کند.</string>
+    <string name="settings_fake_dns">DNS جعلی (Fake DNS)</string>
+    <string name="settings_fake_dns_hint">به برنامه‌ها آدرس موقت می‌دهد و پیدا کردن آدرس واقعی را به VPN می‌سپارد. مگر اینکه برنامه‌ای خراب کار کند، روشنش بگذار.</string>
+    <string name="import_serverless">افزودن پروفایل بدون سرور</string>
+    <string name="import_serverless_hint">مستقیم وصل می‌شود و نام سایت را از فیلتر پنهان می‌کند. سرور نمی‌خواهد، ولی فقط برای سایت‌هایی کار می‌کند که آدرسشان مسدود نیست.</string>
+</resources>

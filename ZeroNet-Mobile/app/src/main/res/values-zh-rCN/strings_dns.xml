@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="settings_local_dns">伊朗网站的 DNS</string>
+    <string name="settings_local_dns_hint">对伊朗网站和应用直接查询，不经过隧道</string>
+    <string name="settings_local_dns_note">留空则使用上面的提供商。支持 IP，或带 IP 地址的 tls://… / https://…/dns-query。</string>
+    <string name="settings_fake_dns">伪造 DNS（FakeDNS）</string>
+    <string name="settings_fake_dns_hint">给应用返回占位地址，由隧道去查询真实地址。除非某个应用异常，否则请保持开启。</string>
+    <string name="import_serverless">添加无服务器配置</string>
+    <string name="import_serverless_hint">直接连接，并向过滤器隐藏网站名称。无需服务器，但只对地址未被封锁的网站有效。</string>
+</resources>

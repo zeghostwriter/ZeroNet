@@ -1,0 +1,990 @@
+//! TCP fragmentation.
+//!
+//! Splitting the TLS ClientHello across several TCP segments means the SNI
+//! never appears contiguously in one segment, so stateless DPI that
+//! string-matches within a single segment fails to reassemble it.
+//!
+//! The algorithm mirrors Xray's `FragmentWriter` (`proxy/freedom/freedom.go`)
+//! byte for byte, because divergence here is directly observable to a censor
+//! and would make Zray flows distinguishable from Xray flows.
+
+use std::future::Future;
+use std::io;
+use std::pin::Pin;
+use std::task::{Context, Poll};
+
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+
+use crate::rand_between::rand_between;
+
+/// Which writes get fragmented.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Packets {
+    /// Only the first write, and only if it is a TLS handshake record. The
+    /// record is re-framed into several smaller *valid* TLS records.
+    TlsHello,
+    /// Only the first write, and only if it is a TLS ClientHello carrying a
+    /// server name. The record is re-framed into TLS records with one cut
+    /// landing *inside* the host name (its second-level label), so the name
+    /// never appears whole in any one record. For a censor that reassembles
+    /// TCP but reads the name out of a single TLS record — what Iran was seen
+    /// doing in 2026, where plain segment splitting had stopped working — the
+    /// name is split where it looks for it. `length_*` is ignored; the cut is
+    /// placed from the name, not a size.
+    TlsSni,
+    /// Writes numbered `from..=to` (1-based) are split at raw byte
+    /// boundaries, with no record re-framing.
+    Range { from: u64, to: u64 },
+}
+
+#[derive(Debug, Clone)]
+pub struct FragmentPolicy {
+    pub packets: Packets,
+    pub length_min: i64,
+    pub length_max: i64,
+    pub interval_min_ms: i64,
+    pub interval_max_ms: i64,
+    pub max_split_min: i64,
+    pub max_split_max: i64,
+    /// Zero-length TLS records written in front of the ClientHello
+    /// ([`Packets::TlsHello`] only). Xray spells this as leading `0` entries
+    /// in the fragment mask's `lengths`.
+    pub empty_records: u8,
+    /// Sizes for the pieces that come first (after any empty records), one
+    /// `(min, max)` entry per piece; `length_*` sizes every piece after
+    /// them. Xray's `lengths` list is this followed by `length_*`. A zero
+    /// here is an empty record in the middle of the hello.
+    pub lead_lengths: Vec<(i64, i64)>,
+    /// Delays for the first pieces, counted from the very first one (empty
+    /// records included), one `(min, max)` entry in milliseconds per piece;
+    /// `interval_*` follows every piece after them. Xray's `delays` list.
+    pub lead_delays: Vec<(i64, i64)>,
+}
+
+impl Default for FragmentPolicy {
+    fn default() -> Self {
+        // Plain TCP segments of the first write. BPB's `tlshello` 100-200
+        // stopped getting through in Iran (0/3 vs 3/3, measured 2026-09-28;
+        // see `zero_config::FragmentConfig::default`).
+        Self {
+            packets: Packets::Range { from: 1, to: 1 },
+            length_min: 40,
+            length_max: 80,
+            interval_min_ms: 1,
+            interval_max_ms: 1,
+            max_split_min: 0,
+            max_split_max: 0,
+            empty_records: 0,
+            lead_lengths: Vec::new(),
+            lead_delays: Vec::new(),
+        }
+    }
+}
+
+impl FragmentPolicy {
+    /// One empty TLS record and then the ClientHello whole, in one write: the
+    /// shape `zero_config::FragmentConfig::empty_record` describes, for the
+    /// connections that are not built from a configuration (the WARP API).
+    ///
+    /// Not for the MASQUE tunnel: measured the same day, a tunnel dialled
+    /// this way authenticated and then carried nothing (0 of 2, against 2 of
+    /// 2 without it), so a handshake that completes is not proof it helps.
+    pub fn empty_record() -> Self {
+        Self {
+            packets: Packets::TlsHello,
+            length_min: 16_384,
+            length_max: 16_384,
+            interval_min_ms: 0,
+            interval_max_ms: 0,
+            max_split_min: 0,
+            max_split_max: 0,
+            empty_records: 1,
+            lead_lengths: Vec::new(),
+            lead_delays: Vec::new(),
+        }
+    }
+
+    /// When there is one delay and it is zero, Xray coalesces the re-framed
+    /// records into a single write, which still defeats record-boundary
+    /// matching but costs no extra latency or syscalls. A list of delays is
+    /// never coalesced, even when every entry is zero, as in Xray.
+    fn combines_hello(&self) -> bool {
+        self.lead_delays.is_empty() && self.interval_max_ms == 0
+    }
+
+    /// The length of piece number `piece` (0-based): nothing for an empty
+    /// record, then the listed sizes, then `length_*` for the rest.
+    ///
+    /// Xray's config loader rejects a non-positive last length, but a policy
+    /// can be built directly. A zero draw there would make the split loop
+    /// emit empty fragments forever (an unbounded allocation), and a negative
+    /// one would wrap to a huge `usize`; one byte is the smallest step that
+    /// always makes progress. A listed size may be zero: the list ends.
+    fn length_of(&self, piece: usize) -> usize {
+        let Some(listed) = piece.checked_sub(usize::from(self.empty_records)) else {
+            return 0;
+        };
+        let draw = |(min, max): (i64, i64)| usize::try_from(rand_between(min, max)).unwrap_or(0);
+        match self.lead_lengths.get(listed) {
+            Some(range) => draw(*range),
+            None => draw((self.length_min, self.length_max)).max(1),
+        }
+    }
+
+    /// The delay, in milliseconds, to leave after piece number `piece`.
+    fn delay_after(&self, piece: usize) -> i64 {
+        let (min, max) = self
+            .lead_delays
+            .get(piece)
+            .copied()
+            .unwrap_or((self.interval_min_ms, self.interval_max_ms));
+        rand_between(min, max)
+    }
+}
+
+/// One planned output chunk.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Chunk {
+    pub bytes: Vec<u8>,
+    /// Delay to observe *after* writing this chunk.
+    pub delay_ms: i64,
+}
+
+/// The version in the header of the empty records written ahead of a hello.
+///
+/// A ClientHello record says 0x0301, and an empty record that says the same
+/// is the one shape the Iranian filter was seen to stall on: measured
+/// 2026-10-13, 0x0300, 0x0302, 0x0303 and 0x0304 all got through to Cloudflare,
+/// Fastly and Google while 0x0301 got nothing back, whatever the hello's own
+/// header said. 0x0303 is what a TLS 1.2 or 1.3 record is meant to say, and
+/// the servers it was tried against (Cloudflare, Fastly, Google) read it as
+/// they read any empty record; REALITY drops empty records of any version.
+const EMPTY_RECORD_VERSION: [u8; 2] = [0x03, 0x03];
+
+/// Plan the fragmentation of a TLS handshake record.
+///
+/// Returns `None` when the input is not a fragmentable ClientHello, in which
+/// case the caller must pass the buffer through untouched. The `empty_records`
+/// of the policy are written ahead of the hello with [`EMPTY_RECORD_VERSION`];
+/// every other record keeps the version of the hello.
+pub fn plan_tls_hello(buf: &[u8], policy: &FragmentPolicy) -> Option<Vec<Chunk>> {
+    if buf.len() <= 5 || buf[0] != 22 {
+        return None;
+    }
+    let record_len = 5 + ((buf[3] as usize) << 8 | buf[4] as usize);
+    if buf.len() < record_len {
+        // Already fragmented by someone else; do not re-frame.
+        return None;
+    }
+
+    let data = &buf[5..record_len];
+    let max_split = rand_between(policy.max_split_min, policy.max_split_max);
+    let mut chunks = Vec::new();
+    let mut combined: Vec<u8> = Vec::new();
+    let mut from = 0usize;
+    let mut split_num: i64 = 0;
+    // Pieces are numbered from zero. The empty records come first and count
+    // as pieces, as they do in Xray (each is a `lengths` entry of 0 there).
+    let mut piece = 0usize;
+    loop {
+        let mut to = from.saturating_add(policy.length_of(piece));
+        split_num += 1;
+        if to > data.len() || (max_split > 0 && split_num >= max_split) {
+            to = data.len();
+        }
+        let l = to - from;
+
+        // Each fragment is a complete TLS record: the original content type
+        // and version, a rewritten length, then the slice. The empty records
+        // in front carry [`EMPTY_RECORD_VERSION`] instead.
+        let mut rec = Vec::with_capacity(5 + l);
+        rec.push(buf[0]);
+        if piece < usize::from(policy.empty_records) {
+            rec.extend_from_slice(&EMPTY_RECORD_VERSION);
+        } else {
+            rec.extend_from_slice(&buf[1..3]);
+        }
+        rec.push((l >> 8) as u8);
+        rec.push(l as u8);
+        rec.extend_from_slice(&data[from..to]);
+
+        if policy.combines_hello() {
+            combined.extend_from_slice(&rec);
+        } else {
+            chunks.push(Chunk {
+                bytes: rec,
+                delay_ms: policy.delay_after(piece),
+            });
+        }
+
+        piece += 1;
+        from = to;
+        if from == data.len() {
+            break;
+        }
+    }
+
+    if !combined.is_empty() {
+        chunks.push(Chunk {
+            bytes: combined,
+            delay_ms: 0,
+        });
+    }
+
+    // Anything after the record travels unfragmented.
+    if buf.len() > record_len {
+        chunks.push(Chunk {
+            bytes: buf[record_len..].to_vec(),
+            delay_ms: 0,
+        });
+    }
+
+    Some(chunks)
+}
+
+/// Plan a split of a TLS ClientHello with one record boundary inside the
+/// server name, used by [`Packets::TlsSni`].
+///
+/// Returns `None` when the input is not a ClientHello carrying a name, so the
+/// caller sends the buffer untouched. Otherwise the record is re-framed into
+/// two valid TLS records whose boundary falls in the middle of the name's
+/// second-level label — `www.speedtest.net` is cut inside `speedtest` — so a
+/// censor that reads the name out of one TLS record never sees it whole. A
+/// handshake message may legally span records, so the server reassembles it
+/// exactly as it would any hello.
+///
+/// `length_*` is not used: the cut is placed from the name, not a size. When
+/// the policy would merge records into one write ([`FragmentPolicy::combines_hello`])
+/// both records go in that one write, which still breaks the record-boundary
+/// match at no extra latency or syscall; otherwise the configured delay is
+/// left between them.
+pub fn plan_tls_sni(buf: &[u8], policy: &FragmentPolicy) -> Option<Vec<Chunk>> {
+    if buf.len() <= 5 || buf[0] != 22 {
+        return None;
+    }
+    let record_len = 5 + ((buf[3] as usize) << 8 | buf[4] as usize);
+    if buf.len() < record_len {
+        // Already fragmented by someone else; do not re-frame.
+        return None;
+    }
+    let name = crate::decoy::server_name_range(&buf[..record_len])?;
+    // The cut in record coordinates, then as an offset into the payload (which
+    // starts after the five-byte record header). A one-byte name cannot be
+    // split in two, and then there is nothing to do.
+    let cut = name.start + sld_midpoint(&buf[name.clone()])?;
+    let data = &buf[5..record_len];
+    let at = cut - 5;
+
+    // One TLS record carrying `slice`: the original content type and version,
+    // a rewritten 16-bit length, then the bytes.
+    let record = |slice: &[u8]| -> Vec<u8> {
+        let mut rec = Vec::with_capacity(5 + slice.len());
+        rec.extend_from_slice(&buf[..3]);
+        rec.push((slice.len() >> 8) as u8);
+        rec.push(slice.len() as u8);
+        rec.extend_from_slice(slice);
+        rec
+    };
+    let first = record(&data[..at]);
+    let second = record(&data[at..]);
+
+    let mut chunks = Vec::new();
+    if policy.combines_hello() {
+        let mut one = first;
+        one.extend_from_slice(&second);
+        chunks.push(Chunk {
+            bytes: one,
+            delay_ms: 0,
+        });
+    } else {
+        chunks.push(Chunk {
+            bytes: first,
+            delay_ms: policy.delay_after(0),
+        });
+        chunks.push(Chunk {
+            bytes: second,
+            delay_ms: 0,
+        });
+    }
+
+    // Anything after the record travels unfragmented.
+    if buf.len() > record_len {
+        chunks.push(Chunk {
+            bytes: buf[record_len..].to_vec(),
+            delay_ms: 0,
+        });
+    }
+
+    Some(chunks)
+}
+
+/// The byte offset inside `name` to cut at: the middle of its second-level
+/// label (`speedtest` in `www.speedtest.net`), the part a suffix match keys
+/// on. Falls back to the middle of the whole name when there is no clear
+/// second-level label, and returns `None` for a name too short to split in
+/// two, where the caller leaves the record whole.
+///
+/// The result is always in `1..name.len()`, so both records hold at least one
+/// byte of the name.
+fn sld_midpoint(name: &[u8]) -> Option<usize> {
+    if name.len() < 2 {
+        return None;
+    }
+    // The dots are the label boundaries. The last label is the TLD; the one
+    // in front of it is the second-level label the cut aims into.
+    let dots: Vec<usize> = name
+        .iter()
+        .enumerate()
+        .filter_map(|(i, b)| (*b == b'.').then_some(i))
+        .collect();
+    let (start, end) = match dots.len() {
+        0 => (0, name.len()),
+        1 => (0, dots[0]),
+        n => (dots[n - 2] + 1, dots[n - 1]),
+    };
+    let mid = start + (end - start) / 2;
+    Some(mid.clamp(1, name.len() - 1))
+}
+
+/// Plan a raw byte-boundary split, used by `Packets::Range`.
+///
+/// A listed length of zero cuts nothing, so that piece is skipped; it still
+/// counts towards the split limit and still takes its place in the lists.
+pub fn plan_raw(buf: &[u8], policy: &FragmentPolicy) -> Vec<Chunk> {
+    let max_split = rand_between(policy.max_split_min, policy.max_split_max);
+    let mut chunks = Vec::new();
+    let mut from = 0usize;
+    let mut split_num: i64 = 0;
+    let mut piece = 0usize;
+
+    while from < buf.len() {
+        let mut to = from.saturating_add(policy.length_of(piece));
+        split_num += 1;
+        if to > buf.len() || (max_split > 0 && split_num >= max_split) {
+            to = buf.len();
+        }
+        if to > from {
+            chunks.push(Chunk {
+                bytes: buf[from..to].to_vec(),
+                delay_ms: policy.delay_after(piece),
+            });
+        }
+        piece += 1;
+        from = to;
+    }
+    chunks
+}
+
+/// A stream wrapper that fragments outbound writes.
+///
+/// Writes are planned once and then drained across poll cycles, so a partially
+/// flushed plan is never restarted and never duplicates bytes on the wire.
+pub struct FragmentStream<S> {
+    inner: S,
+    policy: FragmentPolicy,
+    write_count: u64,
+    /// Chunks still to be written, plus the offset within the head chunk.
+    queue: std::collections::VecDeque<Chunk>,
+    head_offset: usize,
+    /// How many bytes of the caller's buffer the in-flight plan accounts for.
+    pending_input: usize,
+    sleep: Option<Pin<Box<tokio::time::Sleep>>>,
+}
+
+impl<S> FragmentStream<S> {
+    pub fn new(inner: S, policy: FragmentPolicy) -> Self {
+        Self {
+            inner,
+            policy,
+            write_count: 0,
+            queue: std::collections::VecDeque::new(),
+            head_offset: 0,
+            pending_input: 0,
+            sleep: None,
+        }
+    }
+
+    pub fn into_inner(self) -> S {
+        self.inner
+    }
+
+    fn should_fragment(&self, count: u64) -> bool {
+        match self.policy.packets {
+            Packets::TlsHello | Packets::TlsSni => count == 1,
+            Packets::Range { from, to } => count >= from && count <= to,
+        }
+    }
+}
+
+impl<S: AsyncWrite + Unpin> FragmentStream<S> {
+    /// Drain the queued plan. Returns `Ready(Ok(()))` only when empty.
+    fn poll_drain(&mut self, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        loop {
+            if let Some(sleep) = self.sleep.as_mut() {
+                match sleep.as_mut().poll(cx) {
+                    Poll::Ready(()) => self.sleep = None,
+                    Poll::Pending => return Poll::Pending,
+                }
+            }
+
+            let Some(front) = self.queue.front() else {
+                return Poll::Ready(Ok(()));
+            };
+
+            let remaining = &front.bytes[self.head_offset..];
+            match Pin::new(&mut self.inner).poll_write(cx, remaining) {
+                Poll::Ready(Ok(0)) => {
+                    return Poll::Ready(Err(io::Error::new(
+                        io::ErrorKind::WriteZero,
+                        "fragment write returned 0",
+                    )))
+                }
+                Poll::Ready(Ok(n)) => {
+                    self.head_offset += n;
+                    if self.head_offset >= front.bytes.len() {
+                        let delay = front.delay_ms;
+                        self.queue.pop_front();
+                        self.head_offset = 0;
+                        if delay > 0 {
+                            self.sleep = Some(Box::pin(tokio::time::sleep(
+                                std::time::Duration::from_millis(delay as u64),
+                            )));
+                        }
+                    }
+                }
+                Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
+                Poll::Pending => return Poll::Pending,
+            }
+        }
+    }
+}
+
+impl<S: AsyncWrite + Unpin> AsyncWrite for FragmentStream<S> {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        let this = self.get_mut();
+
+        // Finish any in-flight plan before accepting new input.
+        if !this.queue.is_empty() || this.sleep.is_some() {
+            match this.poll_drain(cx) {
+                Poll::Ready(Ok(())) => {
+                    let consumed = std::mem::take(&mut this.pending_input);
+                    if consumed > 0 {
+                        return Poll::Ready(Ok(consumed));
+                    }
+                }
+                Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
+                Poll::Pending => return Poll::Pending,
+            }
+        }
+
+        this.write_count += 1;
+        let count = this.write_count;
+
+        if !this.should_fragment(count) {
+            return Pin::new(&mut this.inner).poll_write(cx, buf);
+        }
+
+        let plan = match this.policy.packets {
+            Packets::TlsHello => plan_tls_hello(buf, &this.policy),
+            Packets::TlsSni => plan_tls_sni(buf, &this.policy),
+            Packets::Range { .. } => Some(plan_raw(buf, &this.policy)),
+        };
+
+        let Some(chunks) = plan else {
+            // Not fragmentable; this write did not consume its turn.
+            this.write_count -= 1;
+            return Pin::new(&mut this.inner).poll_write(cx, buf);
+        };
+
+        this.queue = chunks.into();
+        this.head_offset = 0;
+        this.pending_input = buf.len();
+
+        match this.poll_drain(cx) {
+            Poll::Ready(Ok(())) => {
+                let consumed = std::mem::take(&mut this.pending_input);
+                Poll::Ready(Ok(consumed))
+            }
+            Poll::Ready(Err(e)) => Poll::Ready(Err(e)),
+            Poll::Pending => Poll::Pending,
+        }
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        let this = self.get_mut();
+        match this.poll_drain(cx) {
+            Poll::Ready(Ok(())) => Pin::new(&mut this.inner).poll_flush(cx),
+            Poll::Ready(Err(e)) => Poll::Ready(Err(e)),
+            Poll::Pending => Poll::Pending,
+        }
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        let this = self.get_mut();
+        match this.poll_drain(cx) {
+            Poll::Ready(Ok(())) => Pin::new(&mut this.inner).poll_shutdown(cx),
+            Poll::Ready(Err(e)) => Poll::Ready(Err(e)),
+            Poll::Pending => Poll::Pending,
+        }
+    }
+}
+
+impl<S: AsyncRead + Unpin> AsyncRead for FragmentStream<S> {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.get_mut().inner).poll_read(cx, buf)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::io::AsyncWriteExt;
+
+    /// The shape measured to get through: one write holding an empty record
+    /// and then the untouched ClientHello record.
+    #[test]
+    fn an_empty_record_goes_in_front_of_the_hello_in_the_same_write() {
+        let hello = tls_record(517);
+        let policy = FragmentPolicy {
+            packets: Packets::TlsHello,
+            length_min: 16_384,
+            length_max: 16_384,
+            interval_min_ms: 0,
+            interval_max_ms: 0,
+            empty_records: 1,
+            ..Default::default()
+        };
+        let chunks = plan_tls_hello(&hello, &policy).unwrap();
+        assert_eq!(chunks.len(), 1, "both records must share one write");
+        let mut expected = vec![0x16, 0x03, 0x03, 0x00, 0x00];
+        expected.extend_from_slice(&hello);
+        assert_eq!(chunks[0].bytes, expected);
+
+        // With pieces after it, the empty record still comes first and the
+        // pieces still add up to the hello.
+        let pieces = FragmentPolicy {
+            length_min: 100,
+            length_max: 100,
+            empty_records: 2,
+            ..policy
+        };
+        let bytes = &plan_tls_hello(&hello, &pieces).unwrap()[0].bytes;
+        assert_eq!(&bytes[..10], [0x16, 3, 3, 0, 0, 0x16, 3, 3, 0, 0]);
+        let mut body = Vec::new();
+        let mut at = 10;
+        while at < bytes.len() {
+            let len = usize::from(bytes[at + 3]) << 8 | usize::from(bytes[at + 4]);
+            assert!(len > 0 && len <= 100);
+            body.extend_from_slice(&bytes[at + 5..at + 5 + len]);
+            at += 5 + len;
+        }
+        assert_eq!(body, hello[5..]);
+    }
+
+    /// The empty records say 0x0303 whatever the hello says, and only they:
+    /// the pieces of the hello keep the hello's own version.
+    #[test]
+    fn empty_records_carry_their_own_version() {
+        for hello_version in [[3u8, 1], [3, 3], [3, 4]] {
+            let mut hello = tls_record(200);
+            hello[1..3].copy_from_slice(&hello_version);
+            let policy = FragmentPolicy {
+                length_min: 100,
+                length_max: 100,
+                empty_records: 2,
+                ..FragmentPolicy::empty_record()
+            };
+            let chunks = plan_tls_hello(&hello, &policy).unwrap();
+            let bytes = &chunks[0].bytes;
+            assert_eq!(bytes[..10], [0x16, 3, 3, 0, 0, 0x16, 3, 3, 0, 0]);
+            let mut at = 10;
+            while at < bytes.len() {
+                assert_eq!(bytes[at + 1..at + 3], hello_version);
+                at += 5 + (usize::from(bytes[at + 3]) << 8 | usize::from(bytes[at + 4]));
+            }
+        }
+    }
+
+    /// Build a synthetic TLS handshake record of `payload` bytes.
+    fn tls_record(payload_len: usize) -> Vec<u8> {
+        let mut v = vec![0x16, 0x03, 0x01];
+        v.push((payload_len >> 8) as u8);
+        v.push(payload_len as u8);
+        v.extend((0..payload_len).map(|i| (i % 251) as u8));
+        v
+    }
+
+    /// The lengths of the TLS records in `bytes`, in order.
+    fn record_lengths(bytes: &[u8]) -> Vec<usize> {
+        let mut lengths = Vec::new();
+        let mut at = 0;
+        while at < bytes.len() {
+            let len = usize::from(bytes[at + 3]) << 8 | usize::from(bytes[at + 4]);
+            lengths.push(len);
+            at += 5 + len;
+        }
+        lengths
+    }
+
+    /// Xray's `lengths` list, piece by piece: `["0", "104", "1"]` with a
+    /// split limit of 6 is an empty record, 104 bytes, three single bytes,
+    /// and a sixth piece that takes whatever is left.
+    #[test]
+    fn listed_lengths_size_the_first_pieces_and_the_last_one_repeats() {
+        let hello = tls_record(517);
+        let listed = FragmentPolicy {
+            lead_lengths: vec![(104, 104)],
+            length_min: 1,
+            length_max: 1,
+            max_split_min: 6,
+            max_split_max: 6,
+            ..FragmentPolicy::empty_record()
+        };
+        let chunks = plan_tls_hello(&hello, &listed).unwrap();
+        assert_eq!(chunks.len(), 1, "one zero delay still merges the records");
+        assert_eq!(record_lengths(&chunks[0].bytes), [0, 104, 1, 1, 1, 410]);
+
+        // Cutting raw bytes, the same list without the empty record.
+        let raw = FragmentPolicy {
+            packets: Packets::Range { from: 1, to: 1 },
+            empty_records: 0,
+            lead_lengths: vec![(114, 114)],
+            max_split_min: 4,
+            max_split_max: 4,
+            ..listed
+        };
+        let sizes: Vec<usize> = plan_raw(&hello, &raw)
+            .iter()
+            .map(|chunk| chunk.bytes.len())
+            .collect();
+        assert_eq!(sizes, [114, 1, 1, 406]);
+    }
+
+    /// Xray's `delays` list: one entry per piece from the first, the last
+    /// repeating, and a list is never merged into one write even when it is
+    /// all zeros.
+    #[test]
+    fn listed_delays_follow_their_pieces_and_stop_the_merge() {
+        let hello = tls_record(300);
+        let p = FragmentPolicy {
+            lead_delays: vec![(0, 0), (7, 7)],
+            interval_min_ms: 3,
+            interval_max_ms: 3,
+            length_min: 100,
+            length_max: 100,
+            ..FragmentPolicy::empty_record()
+        };
+        let chunks = plan_tls_hello(&hello, &p).unwrap();
+        let delays: Vec<i64> = chunks.iter().map(|chunk| chunk.delay_ms).collect();
+        assert_eq!(delays, [0, 7, 3, 3]);
+        assert_eq!(chunks[0].bytes, [0x16, 3, 3, 0, 0]);
+
+        let zeros = FragmentPolicy {
+            lead_delays: vec![(0, 0)],
+            interval_min_ms: 0,
+            interval_max_ms: 0,
+            ..p
+        };
+        assert_eq!(plan_tls_hello(&hello, &zeros).unwrap().len(), 4);
+    }
+
+    /// The `tlshello` record planner these tests exercise; the default is
+    /// now plain TCP segments.
+    fn policy() -> FragmentPolicy {
+        FragmentPolicy {
+            packets: Packets::TlsHello,
+            length_min: 100,
+            length_max: 200,
+            interval_min_ms: 1,
+            interval_max_ms: 1,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn non_tls_input_is_not_planned() {
+        assert!(plan_tls_hello(b"GET / HTTP/1.1\r\n\r\n", &policy()).is_none());
+    }
+
+    #[test]
+    fn short_buffer_is_not_planned() {
+        assert!(plan_tls_hello(&[0x16, 0x03, 0x01, 0x00], &policy()).is_none());
+    }
+
+    #[test]
+    fn truncated_record_passes_through() {
+        // Header claims 500 bytes but only 100 are present.
+        let mut v = tls_record(100);
+        v[3] = 0x01;
+        v[4] = 0xf4;
+        assert!(plan_tls_hello(&v, &policy()).is_none());
+    }
+
+    #[test]
+    fn fragments_reassemble_to_the_original_record() {
+        let original = tls_record(517);
+        let chunks = plan_tls_hello(&original, &policy()).expect("should plan");
+        assert!(chunks.len() > 1, "expected a split, got {}", chunks.len());
+
+        // Every chunk must itself be a valid TLS record with the original
+        // content type and version.
+        let mut payload = Vec::new();
+        for c in &chunks {
+            assert_eq!(&c.bytes[..3], &original[..3]);
+            let l = (c.bytes[3] as usize) << 8 | c.bytes[4] as usize;
+            assert_eq!(l, c.bytes.len() - 5);
+            payload.extend_from_slice(&c.bytes[5..]);
+        }
+        assert_eq!(payload, original[5..]);
+    }
+
+    #[test]
+    fn fragment_lengths_respect_the_configured_range() {
+        let original = tls_record(2000);
+        let chunks = plan_tls_hello(&original, &policy()).unwrap();
+        // All but the final chunk must be a full-size fragment.
+        for c in &chunks[..chunks.len() - 1] {
+            let l = c.bytes.len() - 5;
+            assert!((100..200).contains(&l), "fragment length {l} out of range");
+        }
+    }
+
+    #[test]
+    fn zero_interval_coalesces_into_one_write() {
+        let p = FragmentPolicy {
+            interval_min_ms: 0,
+            interval_max_ms: 0,
+            ..Default::default()
+        };
+        let original = tls_record(1000);
+        let chunks = plan_tls_hello(&original, &p).unwrap();
+        assert_eq!(chunks.len(), 1, "interval 0 should coalesce");
+        // Still multiple records inside that single write.
+        let l0 = (chunks[0].bytes[3] as usize) << 8 | chunks[0].bytes[4] as usize;
+        assert!(l0 < 1000);
+    }
+
+    #[test]
+    fn max_split_caps_fragment_count() {
+        let p = FragmentPolicy {
+            length_min: 10,
+            length_max: 11,
+            max_split_min: 3,
+            max_split_max: 3,
+            ..policy()
+        };
+        let original = tls_record(1000);
+        let chunks = plan_tls_hello(&original, &p).unwrap();
+        assert_eq!(chunks.len(), 3);
+    }
+
+    #[test]
+    fn trailing_bytes_after_the_record_are_preserved() {
+        let mut original = tls_record(300);
+        original.extend_from_slice(b"TRAILER");
+        let chunks = plan_tls_hello(&original, &policy()).unwrap();
+        let last = chunks.last().unwrap();
+        assert_eq!(&last.bytes, b"TRAILER");
+    }
+
+    #[test]
+    fn non_positive_lengths_still_terminate_and_deliver_everything() {
+        for (length_min, length_max) in [(0, 0), (-5, -1), (0, 1)] {
+            let p = FragmentPolicy {
+                length_min,
+                length_max,
+                ..policy()
+            };
+            let original = tls_record(40);
+            let chunks = plan_tls_hello(&original, &p).expect("should plan");
+            let payload: Vec<u8> = chunks.iter().flat_map(|c| c.bytes[5..].to_vec()).collect();
+            assert_eq!(payload, original[5..]);
+            let raw = plan_raw(&original, &p);
+            let joined: Vec<u8> = raw.iter().flat_map(|c| c.bytes.clone()).collect();
+            assert_eq!(joined, original);
+        }
+    }
+
+    #[test]
+    fn raw_plan_reassembles_exactly() {
+        let data: Vec<u8> = (0..1000).map(|i| (i % 251) as u8).collect();
+        let chunks = plan_raw(&data, &policy());
+        assert!(chunks.len() > 1);
+        let joined: Vec<u8> = chunks.iter().flat_map(|c| c.bytes.clone()).collect();
+        assert_eq!(joined, data);
+    }
+
+    #[tokio::test]
+    async fn stream_writes_all_bytes_and_reports_full_length() {
+        let (client, mut server) = tokio::io::duplex(65536);
+        let original = tls_record(600);
+        let expected_payload = original[5..].to_vec();
+
+        let mut s = FragmentStream::new(client, policy());
+        let n = s.write(&original).await.unwrap();
+        assert_eq!(n, original.len(), "must report the caller's full length");
+        s.flush().await.unwrap();
+        drop(s);
+
+        let mut got = Vec::new();
+        tokio::io::AsyncReadExt::read_to_end(&mut server, &mut got)
+            .await
+            .unwrap();
+
+        // Reassemble the records the peer saw.
+        let mut payload = Vec::new();
+        let mut i = 0;
+        let mut records = 0;
+        while i + 5 <= got.len() {
+            let l = (got[i + 3] as usize) << 8 | got[i + 4] as usize;
+            payload.extend_from_slice(&got[i + 5..i + 5 + l]);
+            i += 5 + l;
+            records += 1;
+        }
+        assert!(records > 1, "expected multiple records, got {records}");
+        assert_eq!(payload, expected_payload);
+    }
+
+    #[tokio::test]
+    async fn second_write_is_not_fragmented_in_tlshello_mode() {
+        let (client, mut server) = tokio::io::duplex(65536);
+        let mut s = FragmentStream::new(client, policy());
+        s.write_all(&tls_record(300)).await.unwrap();
+
+        let mut drain = vec![0u8; 4096];
+        let _ = tokio::io::AsyncReadExt::read(&mut server, &mut drain).await;
+
+        // A later TLS-looking write must pass through untouched.
+        let later = tls_record(300);
+        s.write_all(&later).await.unwrap();
+        s.flush().await.unwrap();
+        drop(s);
+
+        let mut got = Vec::new();
+        tokio::io::AsyncReadExt::read_to_end(&mut server, &mut got)
+            .await
+            .unwrap();
+        assert!(got.ends_with(&later[5..]));
+    }
+
+    /// A real ClientHello record carrying `name`, enough for the SNI parser to
+    /// find the name: one cipher suite, null compression, SNI and two filler
+    /// extensions.
+    fn hello(name: &str) -> Vec<u8> {
+        let mut extensions = vec![0xff, 0x01, 0, 1, 0]; // renegotiation_info
+        extensions.extend_from_slice(&[0, 0]); // server_name
+        extensions.extend_from_slice(&(name.len() as u16 + 5).to_be_bytes());
+        extensions.extend_from_slice(&(name.len() as u16 + 3).to_be_bytes());
+        extensions.push(0); // host_name
+        extensions.extend_from_slice(&(name.len() as u16).to_be_bytes());
+        extensions.extend_from_slice(name.as_bytes());
+        extensions.extend_from_slice(&[0, 0x17, 0, 0]); // extended_master_secret
+        let mut body = vec![3, 3];
+        body.extend_from_slice(&[7; 32]);
+        body.extend_from_slice(&[4, 1, 2, 3, 4]); // session id
+        body.extend_from_slice(&[0, 2, 0x13, 0x01]); // one cipher suite
+        body.extend_from_slice(&[1, 0]); // null compression
+        body.extend_from_slice(&(extensions.len() as u16).to_be_bytes());
+        body.extend_from_slice(&extensions);
+        let mut record = vec![0x16, 3, 1];
+        record.extend_from_slice(&(body.len() as u16 + 4).to_be_bytes());
+        record.extend_from_slice(&[1, 0]);
+        record.extend_from_slice(&(body.len() as u16).to_be_bytes());
+        record.extend_from_slice(&body);
+        record
+    }
+
+    /// The cut lands in the middle of the second-level label, so neither
+    /// record holds the whole name and the pieces still rebuild it.
+    #[test]
+    fn sni_split_cuts_inside_the_name() {
+        let record = hello("www.speedtest.net");
+        let sni = FragmentPolicy {
+            packets: Packets::TlsSni,
+            interval_min_ms: 1,
+            interval_max_ms: 1,
+            ..Default::default()
+        };
+        let chunks = plan_tls_sni(&record, &sni).expect("a ClientHello with a name");
+        assert_eq!(chunks.len(), 2, "a delay keeps the records in two writes");
+
+        let mut payload = Vec::new();
+        for c in &chunks {
+            assert_eq!(&c.bytes[..3], &record[..3], "content type and version kept");
+            let l = (c.bytes[3] as usize) << 8 | c.bytes[4] as usize;
+            assert_eq!(l, c.bytes.len() - 5, "record length header rewritten");
+            // The whole name must not sit in any one record.
+            assert!(
+                !c.bytes
+                    .windows("www.speedtest.net".len())
+                    .any(|w| w == b"www.speedtest.net"),
+                "the name is still whole in one record"
+            );
+            payload.extend_from_slice(&c.bytes[5..]);
+        }
+        assert_eq!(payload, record[5..], "the records rebuild the hello");
+    }
+
+    /// With no delay the two records share one write, which still breaks the
+    /// record-boundary match.
+    #[test]
+    fn sni_split_coalesces_without_a_delay() {
+        let record = hello("api.cloudflareclient.com");
+        let sni = FragmentPolicy {
+            packets: Packets::TlsSni,
+            interval_min_ms: 0,
+            interval_max_ms: 0,
+            ..Default::default()
+        };
+        let chunks = plan_tls_sni(&record, &sni).unwrap();
+        assert_eq!(chunks.len(), 1, "one write holds both records");
+        assert_eq!(record_lengths(&chunks[0].bytes).len(), 2);
+    }
+
+    /// A write that is not a ClientHello with a name is left for the caller to
+    /// send whole.
+    #[test]
+    fn sni_split_passes_through_without_a_name() {
+        let sni = FragmentPolicy {
+            packets: Packets::TlsSni,
+            ..Default::default()
+        };
+        assert!(plan_tls_sni(&tls_record(300), &sni).is_none());
+        assert!(plan_tls_sni(b"GET / HTTP/1.1\r\n\r\n", &sni).is_none());
+    }
+
+    /// Bytes glued on after the record travel on their own, unframed.
+    #[test]
+    fn sni_split_keeps_trailing_bytes() {
+        let mut record = hello("www.speedtest.net");
+        record.extend_from_slice(b"TRAILER");
+        let sni = FragmentPolicy {
+            packets: Packets::TlsSni,
+            ..Default::default()
+        };
+        let chunks = plan_tls_sni(&record, &sni).unwrap();
+        assert_eq!(chunks.last().unwrap().bytes, b"TRAILER");
+    }
+
+    #[test]
+    fn sld_midpoint_aims_at_the_second_level_label() {
+        assert_eq!(sld_midpoint(b"www.speedtest.net"), Some(8));
+        assert_eq!(sld_midpoint(b"example.com"), Some(3));
+        assert_eq!(sld_midpoint(b"localhost"), Some(4));
+        // Too short to split in two.
+        assert_eq!(sld_midpoint(b"a"), None);
+        // Always inside, never at an edge.
+        for name in ["a.b", "a.b.c", "x.co.uk", "aa", "www.a.com"] {
+            let mid = sld_midpoint(name.as_bytes()).unwrap();
+            assert!((1..name.len()).contains(&mid), "{name}: {mid}");
+        }
+    }
+}

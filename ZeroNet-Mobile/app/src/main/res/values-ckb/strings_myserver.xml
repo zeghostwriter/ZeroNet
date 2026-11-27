@@ -1,0 +1,136 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="ms_card_title">سێرڤەری من</string>
+    <string name="ms_card_body">سێرڤەری خۆت لە چەند خولەکێکدا دابمەزرێنە</string>
+    <string name="ms_title">سێرڤەری من</string>
+    <string name="ms_default_name">سێرڤەری من</string>
+    <string name="ms_intro_1">سێرڤەرێکی بچووک (VPS) بکرێ، ناونیشان و تێپەڕەوشەکەی لێرە بنووسە. ZeroNet هەموو شتێکی لەسەر دادەمەزرێنێت و دەیخاتە کار و ئەو ڕێکخستنانەت دەداتێ کە بەکاریان دەهێنیت.</string>
+    <string name="ms_intro_2">دەتوانیت ڕاستەوخۆ ببینیت ئێستا چەند ئامێر پێوەی بەستراون.</string>
+    <string name="ms_privacy">تەنیا ژمارە پیشان دەدرێت. ناونیشانی هیچ کەسێکی بەستراو نە دەخوێنرێتەوە، نە هەڵدەگیرێت و نە دەنێردرێت.</string>
+    <string name="ms_add">زیادکردنی سێرڤەر</string>
+    <string name="ms_connected_count">%1$d پەیوەستە</string>
+    <string name="ms_service_reality">VLESS + REALITY</string>
+    <string name="ms_service_xhttp">VLESS + XHTTP</string>
+    <string name="ms_service_masterdns">MasterDnsVPN</string>
+
+    <string name="ms_form_title">زیادکردنی سێرڤەر</string>
+    <string name="ms_field_name">ناو</string>
+    <string name="ms_field_address">ناونیشانی سێرڤەر</string>
+    <string name="ms_field_port">پۆرتی SSH</string>
+    <string name="ms_field_user">بەکارهێنەری چوونەژوورەوە</string>
+    <string name="ms_field_password">تێپەڕەوشە</string>
+    <string name="ms_field_domain">دۆمەینی تونێل</string>
+    <string name="ms_password_note">تێپەڕەوشە تەنیا یەکجار بۆ چوونەژوورەوە بەکاردێت و هەڵناگیرێت. لە جیاتی ئەوە بەرنامەکە کلیلی خۆی دەخاتە سەر سێرڤەر.</string>
+    <string name="ms_what_to_install">چی دابمەزرێت</string>
+    <string name="ms_reality_note">خێرایە و وەک ماڵپەڕێکی ئاسایی دەردەکەوێت</string>
+    <string name="ms_xhttp_note">هەروەها لەسەر REALITY و پۆرتی تایبەت بە خۆی. شێوەیەکی جیاوازی هاتوچۆیە بۆ ئەوەی کاتێک یەکەمیان پەیوەست نەبوو تاقی بکەیتەوە.</string>
+    <string name="ms_masterdns_note">تەنیا لە ڕێگەی DNS کار دەکات. دۆمەینی خۆتی پێویستە.</string>
+    <string name="ms_domain_note">ژێر-دۆمەینێک کە هی خۆتە، وەک t.example.com. شاشەکانی دواتر پیشانت دەدەن چی ڕێکبخرێت.</string>
+    <string name="ms_connect">پەیوەست بە و دایبمەزرێنە</string>
+    <string name="ms_err_address">ناونیشانی سێرڤەر (IP ـەکەی) بنووسە.</string>
+    <string name="ms_err_address_shape">ناونیشان تەنیا IP ـەکەیە، وەک 203.0.113.7.</string>
+    <string name="ms_err_port">پۆرتی SSH ژمارەیەکە، زۆرجار 22.</string>
+    <string name="ms_err_user">بەکارهێنەری چوونەژوورەوە بنووسە (زۆرجار root).</string>
+    <string name="ms_err_password">تێپەڕەوشەی سێرڤەر بنووسە.</string>
+    <string name="ms_err_choose">هەڵبژێرە چی دابمەزرێت.</string>
+    <string name="ms_err_domain">دۆمەینی تونێل بنووسە، وەک t.example.com.</string>
+
+    <string name="ms_busy_title">تکایە چاوەڕێ بکە</string>
+    <string name="ms_busy">پەیوەندی بە سێرڤەرەوە دەکرێت…</string>
+
+    <string name="ms_identity_title">ئەمە سێرڤەری خۆتە؟</string>
+    <string name="ms_identity_body">پەیوەست بوو. سێرڤەر خۆی بەم شێوەیە دەناسێنێت:</string>
+    <string name="ms_identity_help">لەگەڵ ئەوەی لە پانێڵی هۆستینگەکەتدایە بەراوردی بکە (زۆر پانێڵ لە پەڕەی سێرڤەر یان کۆنسۆڵ پیشانی دەدەن). ئەگەر وەک یەک بوو بەردەوام بە. هێشتا هیچ شتێکی نهێنی نەنێردراوە.</string>
+    <string name="ms_identity_yes">بەڵێ، وەک یەکە</string>
+    <string name="ms_identity_no">نەخێر، یان ناتوانم بپشکنم</string>
+
+    <string name="ms_dns_title">دۆمەینەکەت بخە سەر سێرڤەر</string>
+    <string name="ms_dns_step1">1. dash.cloudflare.com بکەرەوە، دۆمەینەکەت هەڵبژێرە، پاشان DNS، Records، Add record.</string>
+    <string name="ms_dns_step2">2. ئەم دوو تۆمارە زیاد بکە. هەور بە خۆڵەمێشی بهێڵەرەوە (تەنیا DNS)، هەرگیز نارنجی نەبێت.</string>
+    <string name="ms_dns_record">تۆماری %1$d: جۆر %2$s</string>
+    <string name="ms_dns_name">ناو</string>
+    <string name="ms_dns_value">بەها (ناونیشانی IPv4)</string>
+    <string name="ms_dns_nameserver">ناوسێرڤەر</string>
+    <string name="ms_dns_needs_ip">ناوێکت نووسیوە نەک IP: بۆ بەهای تۆماری یەکەم IP ـی سێرڤەر بەکاربهێنە.</string>
+    <string name="ms_dns_step3">3. بیپشکنە. ڕەنگە چەند خولەکێک بخایەنێت تا بڵاو ببێتەوە؛ دەتوانیت ئێستا دایبمەزرێنیت و دواتر تاقی بکەیتەوە.</string>
+    <string name="ms_dns_other">لەسەر Cloudflare نیت؟ هەر تۆمارکەرێک دەشێت: هەمان دوو تۆمار زیاد بکە.</string>
+    <string name="ms_dns_not_checked">هێشتا نەپشکنراوە.</string>
+    <string name="ms_dns_checking">دەپشکنرێت…</string>
+    <string name="ms_dns_right">تۆمارەکە ئاماژە بە سێرڤەرەکەت دەکات. باشە.</string>
+    <string name="ms_dns_wrong">ناوەکە دەدۆزرێتەوە بەڵام بۆ ئەم سێرڤەرە نییە. بەهای تۆماری یەکەم بپشکنە.</string>
+    <string name="ms_dns_unknown">هێشتا نابینرێت. ئەگەر تازە زیادت کردووە چەند خولەکێک چاوەڕێ بکە و دووبارە بپشکنە.</string>
+    <string name="ms_dns_check">پشکنینی تۆمارەکان</string>
+    <string name="ms_dns_install">ئێستا دایبمەزرێنە</string>
+    <string name="ms_copy">لەبەرگرتنەوە</string>
+
+    <string name="ms_progress_title">دادەمەزرێت</string>
+    <string name="ms_progress_wait">یەک دوو خولەک دەخایەنێت. بەرنامەکە کراوە بهێڵەرەوە.</string>
+    <string name="ms_step_check">پشکنینی سێرڤەر</string>
+    <string name="ms_step_packages">هێنانی ئەوەی پێویستە</string>
+    <string name="ms_step_download">داگرتن و پشتڕاستکردنەوە</string>
+    <string name="ms_step_install">دامەزراندن</string>
+    <string name="ms_step_configure">نووسینی ڕێکخستنەکان</string>
+    <string name="ms_step_start">دەستپێکردن</string>
+    <string name="ms_step_firewall">کردنەوەی پۆرتەکان</string>
+    <string name="ms_step_access">پاشەکەوتکردنی دەستپێگەیشتنی ئەم بەرنامەیە</string>
+    <string name="ms_failed">وەستا:</string>
+    <string name="ms_failed_note">هیچ شتێکی نیوەچڵ کار ناکات. هۆکارەکە چاک بکە و دووبارە هەوڵ بدەرەوە.</string>
+    <string name="ms_back">گەڕانەوە</string>
+
+    <string name="ms_result_title">سێرڤەرەکەت ئامادەیە</string>
+    <string name="ms_ready">%1$s کار دەکات.</string>
+    <string name="ms_config_for">ڕێکخستن: %1$s</string>
+    <string name="ms_copy_link">لەبەرگرتنەوەی بەستەر</string>
+    <string name="ms_show_code">پیشاندانی کۆد</string>
+    <string name="ms_hide_code">شاردنەوەی کۆد</string>
+    <string name="ms_qr_description">کۆدی QR ی بەستەری ڕێکخستن</string>
+    <string name="ms_use_here">لەم بەرنامەیەدا بەکاری بهێنە</string>
+    <string name="ms_used_in_app">زیادکرا بۆ سێرڤەرەکانت. ئێستا دەتوانیت پێوەی ببەستیت.</string>
+    <string name="ms_use_failed">نەتوانرا بۆ سێرڤەرەکانت زیاد بکرێت.</string>
+    <string name="ms_files_note">ئەم فایلانە بۆ بەرنامەی MasterDnsVPN ـن لەسەر کۆمپیوتەر. لەم بەرنامەیەدا بەستەری سەرەوە بەکاربهێنە.</string>
+    <string name="ms_files_secret">فایلەکان کلیلی تونێلیان تێدایە: تەنیا لەگەڵ ئەو کەسانە بەشی بکە کە متمانەت پێیانە.</string>
+    <string name="ms_share">هاوبەشکردن</string>
+    <string name="ms_open_server">کردنەوەی پەڕەی سێرڤەر</string>
+    <string name="ms_note_port_moved">پۆرتی %1$d پێشتر لەلایەن %2$s ـەوە بەکاردەهات، بۆیە پۆرتی %3$d بەکارهات.</string>
+    <string name="ms_note_firewall_opened">پۆرتەکان لە دیواری ئاگری سێرڤەر کرانەوە (%1$s).</string>
+    <string name="ms_note_provider_firewall">ڕەنگە دابینکەری هۆستینگەکەت دیواری ئاگری تایبەت بە خۆی هەبێت. ئەگەر هیچ شتێک پەیوەست نەبوو %1$s لە پانێڵەکەیدا بکەرەوە.</string>
+    <string name="ms_note_unverified">بەرنامەی سێرڤەر لەم ئەپەوە بارکرا و لەگەڵ لیستی واژۆکراو پشتڕاست نەکرایەوە.</string>
+    <string name="ms_note_key">بەرنامەکە نەیتوانی بە کلیلی خۆی دووبارە بچێتە ژوورەوە، بۆیە جاری داهاتوو تێپەڕەوشە دەپرسێت.</string>
+
+    <string name="ms_server_title">سێرڤەر</string>
+    <string name="ms_gone">ئەم سێرڤەرە نەماوە.</string>
+    <string name="ms_live">بەکارهێنانی ڕاستەوخۆ</string>
+    <string name="ms_reading">دەخوێنرێتەوە…</string>
+    <string name="ms_stat_now">ئێستا پەیوەستە</string>
+    <string name="ms_stat_recent">%1$d خولەکی ڕابردوو</string>
+    <string name="ms_stat_sessions">دانیشتنە کراوەکان</string>
+    <string name="ms_traffic">هاتوچۆ لەو کاتەوە دەستی پێکرد: بارکردن %1$s، داگرتن %2$s</string>
+    <string name="ms_masterdns_lag">لە تۆمارەکانی سێرڤەرەوە دەژمێردرێت: تا 5 خولەک دواکەوتووە و ژمارەی هاتوچۆی نییە.</string>
+    <string name="ms_test">MasterDNS لێرەوە تاقی بکەرەوە</string>
+    <string name="ms_testing">تاقی دەکرێتەوە…</string>
+    <string name="ms_probe_none">MasterDNS لە هیچ ڕیزۆڵڤەرێکی گشتییەوە وەڵامی نەدایەوە. دڵنیابە لەوەی دوو تۆماری DNS ڕاستن و چەند خولەکێک چاوەڕێ بکە.</string>
+    <string name="ms_probe_ok">MasterDNS کار دەکات: %1$d لە %2$d ڕیزۆڵڤەر پێی گەیشتن (باشترین %3$d ms).</string>
+    <string name="ms_remove">لەسەر سێرڤەر لابدە</string>
+    <string name="ms_removed">لابرا. سێرڤەر دووبارە پاکە.</string>
+
+    <string name="ms_remove_title">هەموو شتێک لابدرێت؟</string>
+    <string name="ms_remove_what">ئەمە ZeroNet لەسەر %1$s لادەبات.</string>
+    <string name="ms_remove_detail">بەرنامەی سێرڤەر و ڕێکخستنەکانی دەوەستێنێت و دەیانسڕێتەوە، ئەو پۆرتانەی کردبوونیەوە دەیانگرێت و کلیلی ئەم بەرنامەیە لە سێرڤەر لادەبات. هەموو شتێکی تر لەسەر سێرڤەر دەمێنێتەوە. ئەو ڕێکخستنانەی بە کەسانی ترت داوە ئیتر کار ناکەن.</string>
+    <string name="ms_remove_type">بۆ پشتڕاستکردنەوە %1$s بنووسە:</string>
+    <string name="ms_remove_word" translatable="false">remove</string>
+    <string name="ms_remove_confirm">لابردن</string>
+    <string name="ms_cancel">پاشگەزبوونەوە</string>
+    <string name="ms_forget">تەنیا لەم بەرنامەیەدا لەبیری بکە</string>
+    <string name="ms_forget_note">ئەمە بەکاربهێنە کاتێک سێرڤەر نەماوە یان ناتوانیت پێی بگەیت. هیچ شتێک لەسەر سێرڤەر ناگۆڕێت.</string>
+    <string name="ms_login_with">چوونەژوورەوە بە</string>
+    <string name="ms_login_password">وشەی نهێنی</string>
+    <string name="ms_login_key">کلیلی SSH</string>
+    <string name="ms_field_key">کلیلی تایبەت</string>
+    <string name="ms_key_hint">دەقی کلیلەکە بلکێنە (-----BEGIN … PRIVATE KEY-----)</string>
+    <string name="ms_key_choose">فایلی کلیل هەڵبژێرە</string>
+    <string name="ms_field_passphrase">وشەی نهێنیی کلیل (ئەگەر هەیەتی)</string>
+    <string name="ms_key_note">کاتێک ڕاژەکار وشەی نهێنی قبووڵ ناکات ئەمە بەکاربهێنە. کلیلەکە تەنها یەکجار بۆ چوونەژوورەوە بەکاردێت و هەڵناگیرێت. کلیلی تایبەت بەکاربهێنە، نەک فایلی .pub.</string>
+    <string name="ms_err_key">کلیلی تایبەتی SSH بلکێنە یان هەڵیبژێرە.</string>
+    <string name="ms_err_key_shape">ئەمە کلیلی تایبەت نییە. دەبێت بە -----BEGIN … PRIVATE KEY----- دەست پێبکات. یان فایلی .pub هەڵبژێردراوە؟</string>
+    <string name="ms_key_unreadable">نەتوانرا ئەم فایلە بخوێنرێتەوە.</string>
+</resources>

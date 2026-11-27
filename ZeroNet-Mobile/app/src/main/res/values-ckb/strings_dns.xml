@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="settings_local_dns">DNS بۆ مالپەڕە ئێرانییەکان</string>
+    <string name="settings_local_dns_hint">ڕاستەوخۆ و بێ تونێل دەپرسرێت، بۆ مالپەڕە و ئەپە ئێرانییەکان</string>
+    <string name="settings_local_dns_note">بەتاڵی بهێڵەرەوە بۆ بەکارهێنانی یەکێک لە دابینکەرەکانی سەرەوە. IP یان tls://… / https://…/dns-query بە IP قبوڵ دەکات.</string>
+    <string name="settings_fake_dns">DNS ساختە (Fake DNS)</string>
+    <string name="settings_fake_dns_hint">ناونیشانی کاتی دەدات بە ئەپەکان و تونێلەکە ناونیشانە ڕاستەقینەکان دەدۆزێتەوە. چالاکی بهێڵەرەوە مەگەر ئەپێک خراپ کاربکات.</string>
+    <string name="import_serverless">پڕۆفایلێکی بێ سێرڤەر زیاد بکە</string>
+    <string name="import_serverless_hint">ڕاستەوخۆ دەبەستێتەوە و ناوی ماڵپەڕ لە فلتەر دەشارێتەوە. سێرڤەر ناوێت، بەڵام تەنها بۆ ئەو ماڵپەڕانە یارمەتیدەرە کە ناونیشانیان بلۆک نەکراوە.</string>
+</resources>

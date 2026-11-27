@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="settings_local_dns">İran siteleri için DNS</string>
+    <string name="settings_local_dns_hint">İran siteleri ve uygulamaları için tünel olmadan doğrudan sorulur</string>
+    <string name="settings_local_dns_note">Yukarıdaki sağlayıcılardan birini kullanmak için boş bırakın. Bir IP veya IP adresli tls://… / https://…/dns-query kabul eder.</string>
+    <string name="settings_fake_dns">Sahte DNS (Fake DNS)</string>
+    <string name="settings_fake_dns_hint">Uygulamalara geçici adresler verir, gerçek adresleri tünelin aramasına bırakır. Bir uygulama bozulmadıkça açık bırakın.</string>
+    <string name="import_serverless">Sunucusuz profil ekle</string>
+    <string name="import_serverless_hint">Doğrudan bağlanır ve site adını filtreden gizler. Sunucu gerekmez, ancak yalnızca adresi engellenmemiş sitelere yardımcı olur.</string>
+</resources>

@@ -1,0 +1,136 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="ms_card_title">خادمي</string>
+    <string name="ms_card_body">أنشئ خادمك الخاص في بضع دقائق</string>
+    <string name="ms_title">خادمي</string>
+    <string name="ms_default_name">خادمي</string>
+    <string name="ms_intro_1">استأجر خادمًا صغيرًا (VPS) ثم اكتب عنوانه وكلمة مروره هنا. يثبّت ZeroNet كل شيء عليه ويشغّله ويعطيك الإعدادات لتستخدمها.</string>
+    <string name="ms_intro_2">ويمكنك أيضًا أن ترى مباشرةً كم جهازًا متصلًا به.</string>
+    <string name="ms_privacy">تُعرض الأعداد فقط. لا يُقرأ عنوان أي متصل ولا يُحفظ ولا يُرسل.</string>
+    <string name="ms_add">إضافة خادم</string>
+    <string name="ms_connected_count">%1$d متصل</string>
+    <string name="ms_service_reality">VLESS + REALITY</string>
+    <string name="ms_service_xhttp">VLESS + XHTTP</string>
+    <string name="ms_service_masterdns">MasterDnsVPN</string>
+
+    <string name="ms_form_title">إضافة خادم</string>
+    <string name="ms_field_name">الاسم</string>
+    <string name="ms_field_address">عنوان الخادم</string>
+    <string name="ms_field_port">منفذ SSH</string>
+    <string name="ms_field_user">مستخدم الدخول</string>
+    <string name="ms_field_password">كلمة المرور</string>
+    <string name="ms_field_domain">نطاق النفق</string>
+    <string name="ms_password_note">تُستخدم كلمة المرور مرة واحدة للدخول ولا تُحفظ. بدلًا منها يضع التطبيق مفتاحه الخاص على الخادم.</string>
+    <string name="ms_what_to_install">ما الذي سيُثبَّت</string>
+    <string name="ms_reality_note">سريع ويبدو كموقع عادي</string>
+    <string name="ms_xhttp_note">أيضًا عبر REALITY وعلى منفذ خاص به. شكل مختلف لحركة البيانات يمكنك تجربته إذا لم يتصل الأول.</string>
+    <string name="ms_masterdns_note">يعمل عبر DNS فقط. يحتاج إلى نطاقك الخاص.</string>
+    <string name="ms_domain_note">نطاق فرعي تملكه، مثل t.example.com. تعرض الشاشات التالية ما يجب إعداده.</string>
+    <string name="ms_connect">اتصل وثبّت</string>
+    <string name="ms_err_address">اكتب عنوان الخادم (الـ IP).</string>
+    <string name="ms_err_address_shape">العنوان هو الـ IP فقط، مثل 203.0.113.7.</string>
+    <string name="ms_err_port">منفذ SSH رقم، وغالبًا 22.</string>
+    <string name="ms_err_user">اكتب مستخدم الدخول (غالبًا root).</string>
+    <string name="ms_err_password">اكتب كلمة مرور الخادم.</string>
+    <string name="ms_err_choose">اختر ما تريد تثبيته.</string>
+    <string name="ms_err_domain">اكتب نطاق النفق، مثل t.example.com.</string>
+
+    <string name="ms_busy_title">انتظر قليلًا</string>
+    <string name="ms_busy">جارٍ الاتصال بالخادم…</string>
+
+    <string name="ms_identity_title">هل هذا خادمك؟</string>
+    <string name="ms_identity_body">تم الاتصال. يعرّف الخادم عن نفسه بهذه البصمة:</string>
+    <string name="ms_identity_help">قارنها بالبصمة الموجودة في لوحة الاستضافة (كثير من اللوحات تعرضها في صفحة الخادم أو في وحدة التحكم). إن تطابقتا فتابع. لم يُرسَل أي شيء سري بعد.</string>
+    <string name="ms_identity_yes">نعم، تتطابق</string>
+    <string name="ms_identity_no">لا، أو لا أستطيع التحقق</string>
+
+    <string name="ms_dns_title">وجّه نطاقك إلى الخادم</string>
+    <string name="ms_dns_step1">1. افتح dash.cloudflare.com واختر نطاقك ثم DNS ثم Records ثم Add record.</string>
+    <string name="ms_dns_step2">2. أضف هذين السجلين. أبقِ السحابة رمادية (DNS فقط) ولا تجعلها برتقالية أبدًا.</string>
+    <string name="ms_dns_record">السجل %1$d: النوع %2$s</string>
+    <string name="ms_dns_name">الاسم</string>
+    <string name="ms_dns_value">القيمة (عنوان IPv4)</string>
+    <string name="ms_dns_nameserver">خادم الأسماء</string>
+    <string name="ms_dns_needs_ip">كتبت اسمًا وليس IP: استخدم عنوان IP الخاص بالخادم كقيمة للسجل الأول.</string>
+    <string name="ms_dns_step3">3. افحص. قد يستغرق الانتشار بضع دقائق؛ ويمكنك التثبيت الآن والاختبار لاحقًا.</string>
+    <string name="ms_dns_other">لست على Cloudflare؟ أي مسجّل نطاقات يصلح: أضف السجلين نفسيهما.</string>
+    <string name="ms_dns_not_checked">لم يُفحص بعد.</string>
+    <string name="ms_dns_checking">جارٍ الفحص…</string>
+    <string name="ms_dns_right">السجل يشير إلى خادمك. ممتاز.</string>
+    <string name="ms_dns_wrong">الاسم يُحَلّ لكن ليس إلى هذا الخادم. تحقق من قيمة السجل الأول.</string>
+    <string name="ms_dns_unknown">لا يظهر بعد. إن كنت قد أضفته للتو فانتظر بضع دقائق ثم افحص مرة أخرى.</string>
+    <string name="ms_dns_check">فحص السجلات</string>
+    <string name="ms_dns_install">ثبّت الآن</string>
+    <string name="ms_copy">نسخ</string>
+
+    <string name="ms_progress_title">جارٍ الإعداد</string>
+    <string name="ms_progress_wait">يستغرق دقيقة أو دقيقتين. أبقِ التطبيق مفتوحًا.</string>
+    <string name="ms_step_check">فحص الخادم</string>
+    <string name="ms_step_packages">جلب ما يلزم</string>
+    <string name="ms_step_download">التنزيل والتحقق</string>
+    <string name="ms_step_install">التثبيت</string>
+    <string name="ms_step_configure">كتابة الإعدادات</string>
+    <string name="ms_step_start">التشغيل</string>
+    <string name="ms_step_firewall">فتح المنافذ</string>
+    <string name="ms_step_access">حفظ وصول هذا التطبيق</string>
+    <string name="ms_failed">توقف:</string>
+    <string name="ms_failed_note">لا يبقى شيء ناقص قيد التشغيل. أصلح السبب وحاول مرة أخرى.</string>
+    <string name="ms_back">رجوع</string>
+
+    <string name="ms_result_title">خادمك جاهز</string>
+    <string name="ms_ready">%1$s يعمل.</string>
+    <string name="ms_config_for">الإعداد: %1$s</string>
+    <string name="ms_copy_link">نسخ الرابط</string>
+    <string name="ms_show_code">إظهار الرمز</string>
+    <string name="ms_hide_code">إخفاء الرمز</string>
+    <string name="ms_qr_description">رمز QR لرابط الإعداد</string>
+    <string name="ms_use_here">استخدمه في هذا التطبيق</string>
+    <string name="ms_used_in_app">أُضيف إلى خوادمك. يمكنك الاتصال به الآن.</string>
+    <string name="ms_use_failed">تعذّرت إضافته إلى خوادمك.</string>
+    <string name="ms_files_note">هذه الملفات لبرنامج MasterDnsVPN على الكمبيوتر. في هذا التطبيق استخدم الرابط أعلاه.</string>
+    <string name="ms_files_secret">الملفات تحوي مفتاح النفق: شاركها فقط مع من تثق بهم.</string>
+    <string name="ms_share">مشاركة</string>
+    <string name="ms_open_server">فتح صفحة الخادم</string>
+    <string name="ms_note_port_moved">المنفذ %1$d كان مستخدمًا من %2$s، لذلك استُخدم المنفذ %3$d.</string>
+    <string name="ms_note_firewall_opened">فُتحت المنافذ في جدار حماية الخادم (%1$s).</string>
+    <string name="ms_note_provider_firewall">قد يكون لدى مزوّد الاستضافة جدار حماية خاص به. إن لم يتصل شيء فافتح %1$s في لوحته.</string>
+    <string name="ms_note_unverified">رُفع برنامج الخادم من هذا التطبيق ولم يُتحقق منه بالقائمة الموقّعة.</string>
+    <string name="ms_note_key">لم يستطع التطبيق الدخول مجددًا بمفتاحه، لذلك سيطلب كلمة المرور في المرة القادمة.</string>
+
+    <string name="ms_server_title">الخادم</string>
+    <string name="ms_gone">هذا الخادم لم يعد موجودًا.</string>
+    <string name="ms_live">الاستخدام المباشر</string>
+    <string name="ms_reading">جارٍ القراءة…</string>
+    <string name="ms_stat_now">متصل الآن</string>
+    <string name="ms_stat_recent">آخر %1$d دقيقة</string>
+    <string name="ms_stat_sessions">الجلسات المفتوحة</string>
+    <string name="ms_traffic">حركة البيانات منذ التشغيل: رفع %1$s، تنزيل %2$s</string>
+    <string name="ms_masterdns_lag">يُحسب من سجل الخادم: متأخر حتى 5 دقائق ولا يوجد رقم لحركة البيانات.</string>
+    <string name="ms_test">اختبر MasterDNS من هنا</string>
+    <string name="ms_testing">جارٍ الاختبار…</string>
+    <string name="ms_probe_none">لم يستجب MasterDNS عبر أي محلّل عام. تأكد من صحة سجلي DNS وانتظر بضع دقائق.</string>
+    <string name="ms_probe_ok">MasterDNS يعمل: وصل إليه %1$d من %2$d محلّلًا (الأفضل %3$d ms).</string>
+    <string name="ms_remove">إزالة من الخادم</string>
+    <string name="ms_removed">تمت الإزالة. الخادم نظيف مرة أخرى.</string>
+
+    <string name="ms_remove_title">إزالة كل شيء؟</string>
+    <string name="ms_remove_what">سيُزال ZeroNet من %1$s.</string>
+    <string name="ms_remove_detail">سيوقف برنامج الخادم وإعداداته ويحذفهما، ويغلق المنافذ التي فتحها، ويزيل مفتاح هذا التطبيق من الخادم. يبقى كل ما عدا ذلك على الخادم. وتتوقف الإعدادات التي أعطيتها للآخرين عن العمل.</string>
+    <string name="ms_remove_type">اكتب %1$s للتأكيد:</string>
+    <string name="ms_remove_word" translatable="false">remove</string>
+    <string name="ms_remove_confirm">إزالة</string>
+    <string name="ms_cancel">إلغاء</string>
+    <string name="ms_forget">انساه في هذا التطبيق فقط</string>
+    <string name="ms_forget_note">استخدم هذا إن زال الخادم أو تعذّر الوصول إليه. لا يتغير شيء على الخادم.</string>
+    <string name="ms_login_with">تسجيل الدخول بـ</string>
+    <string name="ms_login_password">كلمة المرور</string>
+    <string name="ms_login_key">مفتاح SSH</string>
+    <string name="ms_field_key">المفتاح الخاص</string>
+    <string name="ms_key_hint">الصق نص المفتاح (-----BEGIN … PRIVATE KEY-----)</string>
+    <string name="ms_key_choose">اختر ملف المفتاح</string>
+    <string name="ms_field_passphrase">عبارة مرور المفتاح (إن كانت له)</string>
+    <string name="ms_key_note">استخدم هذا عندما لا يقبل الخادم كلمات المرور. يُستخدم المفتاح مرة واحدة لتسجيل الدخول ولا يُحفظ. استخدم المفتاح الخاص وليس ملف .pub.</string>
+    <string name="ms_err_key">الصق مفتاح SSH الخاص أو اخترْه.</string>
+    <string name="ms_err_key_shape">هذا ليس مفتاحًا خاصًا. يجب أن يبدأ بـ -----BEGIN … PRIVATE KEY-----. هل اخترت ملف .pub؟</string>
+    <string name="ms_key_unreadable">تعذّرت قراءة هذا الملف.</string>
+</resources>

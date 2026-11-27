@@ -1,0 +1,136 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="ms_card_title">Мой сервер</string>
+    <string name="ms_card_body">Настройте свой сервер за несколько минут</string>
+    <string name="ms_title">Мой сервер</string>
+    <string name="ms_default_name">Мой сервер</string>
+    <string name="ms_intro_1">Арендуйте небольшой сервер (VPS) и введите здесь его адрес и пароль. ZeroNet всё установит и запустит на нём и выдаст конфигурации.</string>
+    <string name="ms_intro_2">Ещё можно видеть, сколько устройств подключено к нему прямо сейчас.</string>
+    <string name="ms_privacy">Показываются только числа. Адреса подключённых людей не читаются, не хранятся и не отправляются.</string>
+    <string name="ms_add">Добавить сервер</string>
+    <string name="ms_connected_count">Подключено: %1$d</string>
+    <string name="ms_service_reality">VLESS + REALITY</string>
+    <string name="ms_service_xhttp">VLESS + XHTTP</string>
+    <string name="ms_service_masterdns">MasterDnsVPN</string>
+
+    <string name="ms_form_title">Добавить сервер</string>
+    <string name="ms_field_name">Название</string>
+    <string name="ms_field_address">Адрес сервера</string>
+    <string name="ms_field_port">Порт SSH</string>
+    <string name="ms_field_user">Пользователь</string>
+    <string name="ms_field_password">Пароль</string>
+    <string name="ms_field_domain">Домен туннеля</string>
+    <string name="ms_password_note">Пароль нужен один раз для входа и не сохраняется. Вместо него приложение кладёт на сервер свой ключ.</string>
+    <string name="ms_what_to_install">Что установить</string>
+    <string name="ms_reality_note">Быстро и выглядит как обычный сайт</string>
+    <string name="ms_xhttp_note">Тоже поверх REALITY, на своём порту. Другой вид трафика, если первый не подключается.</string>
+    <string name="ms_masterdns_note">Работает только через DNS. Нужен свой домен.</string>
+    <string name="ms_domain_note">Поддомен вашего домена, например t.example.com. На следующих экранах будет видно, что настроить.</string>
+    <string name="ms_connect">Подключиться и установить</string>
+    <string name="ms_err_address">Введите адрес сервера (его IP).</string>
+    <string name="ms_err_address_shape">Адрес — это просто IP, например 203.0.113.7.</string>
+    <string name="ms_err_port">Порт SSH — число, обычно 22.</string>
+    <string name="ms_err_user">Введите пользователя для входа (обычно root).</string>
+    <string name="ms_err_password">Введите пароль сервера.</string>
+    <string name="ms_err_choose">Выберите, что установить.</string>
+    <string name="ms_err_domain">Введите домен туннеля, например t.example.com.</string>
+
+    <string name="ms_busy_title">Подождите</string>
+    <string name="ms_busy">Связываемся с сервером…</string>
+
+    <string name="ms_identity_title">Это ваш сервер?</string>
+    <string name="ms_identity_body">Подключились. Сервер называет такой отпечаток:</string>
+    <string name="ms_identity_help">Сравните его с тем, что указано в панели хостинга (многие показывают его на странице или в консоли сервера). Если совпадает, продолжайте. Пока ничего секретного не отправлено.</string>
+    <string name="ms_identity_yes">Да, совпадает</string>
+    <string name="ms_identity_no">Нет или не могу проверить</string>
+
+    <string name="ms_dns_title">Направьте домен на сервер</string>
+    <string name="ms_dns_step1">1. Откройте dash.cloudflare.com, выберите домен, затем DNS, Records, Add record.</string>
+    <string name="ms_dns_step2">2. Добавьте эти две записи. Облако должно быть серым (только DNS), не оранжевым.</string>
+    <string name="ms_dns_record">Запись %1$d: тип %2$s</string>
+    <string name="ms_dns_name">Имя</string>
+    <string name="ms_dns_value">Значение (адрес IPv4)</string>
+    <string name="ms_dns_nameserver">Сервер имён</string>
+    <string name="ms_dns_needs_ip">Вы ввели имя, а не IP: в значении первой записи укажите IP-адрес сервера.</string>
+    <string name="ms_dns_step3">3. Проверьте. Записи могут разойтись не сразу; можно установить сейчас и проверить позже.</string>
+    <string name="ms_dns_other">Не Cloudflare? Подойдёт любой регистратор: добавьте те же две записи.</string>
+    <string name="ms_dns_not_checked">Ещё не проверено.</string>
+    <string name="ms_dns_checking">Проверяем…</string>
+    <string name="ms_dns_right">Запись указывает на ваш сервер. Хорошо.</string>
+    <string name="ms_dns_wrong">Имя находится, но не на этот сервер. Проверьте значение первой записи.</string>
+    <string name="ms_dns_unknown">Пока не видно. Если только что добавили, подождите несколько минут и проверьте снова.</string>
+    <string name="ms_dns_check">Проверить записи</string>
+    <string name="ms_dns_install">Установить сейчас</string>
+    <string name="ms_copy">Копировать</string>
+
+    <string name="ms_progress_title">Настройка</string>
+    <string name="ms_progress_wait">Это займёт минуту-две. Не закрывайте приложение.</string>
+    <string name="ms_step_check">Проверка сервера</string>
+    <string name="ms_step_packages">Установка нужных пакетов</string>
+    <string name="ms_step_download">Загрузка и проверка</string>
+    <string name="ms_step_install">Установка</string>
+    <string name="ms_step_configure">Запись настроек</string>
+    <string name="ms_step_start">Запуск</string>
+    <string name="ms_step_firewall">Открытие портов</string>
+    <string name="ms_step_access">Сохранение доступа приложения</string>
+    <string name="ms_failed">Остановилось:</string>
+    <string name="ms_failed_note">Недоделанного ничего не осталось. Устраните причину и попробуйте снова.</string>
+    <string name="ms_back">Назад</string>
+
+    <string name="ms_result_title">Сервер готов</string>
+    <string name="ms_ready">%1$s работает.</string>
+    <string name="ms_config_for">Конфигурация: %1$s</string>
+    <string name="ms_copy_link">Копировать ссылку</string>
+    <string name="ms_show_code">Показать код</string>
+    <string name="ms_hide_code">Скрыть код</string>
+    <string name="ms_qr_description">QR-код ссылки конфигурации</string>
+    <string name="ms_use_here">Использовать в этом приложении</string>
+    <string name="ms_used_in_app">Добавлено в ваши серверы. Можно подключаться.</string>
+    <string name="ms_use_failed">Не удалось добавить в ваши серверы.</string>
+    <string name="ms_files_note">Эти файлы для программы MasterDnsVPN на компьютере. В этом приложении используйте ссылку выше.</string>
+    <string name="ms_files_secret">В файлах ключ туннеля: передавайте их только тем, кому доверяете.</string>
+    <string name="ms_share">Поделиться</string>
+    <string name="ms_open_server">Открыть страницу сервера</string>
+    <string name="ms_note_port_moved">Порт %1$d уже занят (%2$s), поэтому используется порт %3$d.</string>
+    <string name="ms_note_firewall_opened">Порты открыты в брандмауэре сервера (%1$s).</string>
+    <string name="ms_note_provider_firewall">У хостинга может быть свой брандмауэр. Если ничего не подключается, откройте %1$s в его панели.</string>
+    <string name="ms_note_unverified">Программа сервера загружена из этого приложения и не сверена с подписанным списком.</string>
+    <string name="ms_note_key">Приложение не смогло войти со своим ключом, поэтому в следующий раз спросит пароль.</string>
+
+    <string name="ms_server_title">Сервер</string>
+    <string name="ms_gone">Этого сервера больше нет.</string>
+    <string name="ms_live">Использование сейчас</string>
+    <string name="ms_reading">Читаем…</string>
+    <string name="ms_stat_now">Подключено сейчас</string>
+    <string name="ms_stat_recent">За последние %1$d мин</string>
+    <string name="ms_stat_sessions">Открытые сеансы</string>
+    <string name="ms_traffic">Трафик с запуска: отправлено %1$s, получено %2$s</string>
+    <string name="ms_masterdns_lag">Считается по журналу сервера: отстаёт до 5 минут, трафика нет.</string>
+    <string name="ms_test">Проверить MasterDNS отсюда</string>
+    <string name="ms_testing">Проверяем…</string>
+    <string name="ms_probe_none">MasterDNS не ответил ни через один публичный резолвер. Проверьте две записи DNS и подождите несколько минут.</string>
+    <string name="ms_probe_ok">MasterDNS работает: достучались %1$d из %2$d резолверов (лучший — %3$d мс).</string>
+    <string name="ms_remove">Удалить с сервера</string>
+    <string name="ms_removed">Удалено. Сервер снова чист.</string>
+
+    <string name="ms_remove_title">Удалить всё?</string>
+    <string name="ms_remove_what">ZeroNet будет удалён с %1$s.</string>
+    <string name="ms_remove_detail">Будут остановлены и удалены программа сервера и её настройки, закрыты открытые порты и убран ключ этого приложения. Всё остальное на сервере останется. Выданные людям конфигурации перестанут работать.</string>
+    <string name="ms_remove_type">Для подтверждения введите %1$s:</string>
+    <string name="ms_remove_word" translatable="false">remove</string>
+    <string name="ms_remove_confirm">Удалить</string>
+    <string name="ms_cancel">Отмена</string>
+    <string name="ms_forget">Только забыть в этом приложении</string>
+    <string name="ms_forget_note">Подойдёт, если сервера уже нет или он недоступен. На сервере ничего не меняется.</string>
+    <string name="ms_login_with">Войти с помощью</string>
+    <string name="ms_login_password">Пароль</string>
+    <string name="ms_login_key">SSH-ключ</string>
+    <string name="ms_field_key">Закрытый ключ</string>
+    <string name="ms_key_hint">Вставьте текст ключа (-----BEGIN … PRIVATE KEY-----)</string>
+    <string name="ms_key_choose">Выбрать файл ключа</string>
+    <string name="ms_field_passphrase">Пароль ключа (только если он есть)</string>
+    <string name="ms_key_note">Используйте это, если сервер не принимает пароли. Ключ нужен один раз для входа и нигде не сохраняется. Нужен закрытый ключ, а не файл .pub.</string>
+    <string name="ms_err_key">Вставьте или выберите ваш закрытый SSH-ключ.</string>
+    <string name="ms_err_key_shape">Это не закрытый ключ. Он должен начинаться с -----BEGIN … PRIVATE KEY-----. Может, вы выбрали файл .pub?</string>
+    <string name="ms_key_unreadable">Не удалось прочитать этот файл.</string>
+</resources>

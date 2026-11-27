@@ -1,0 +1,137 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The "My server" page: setting up the person's own server and watching its use. -->
+<resources>
+    <string name="ms_card_title">My server</string>
+    <string name="ms_card_body">Set up your own server in a few minutes</string>
+    <string name="ms_title">My server</string>
+    <string name="ms_default_name">My server</string>
+    <string name="ms_intro_1">Rent a small server (a VPS), then type its address and password here. ZeroNet installs and starts everything on it and gives you the configs to use.</string>
+    <string name="ms_intro_2">You can also see how many devices are connected to it, live.</string>
+    <string name="ms_privacy">Only counts are shown. No address of anyone connected is ever read, kept or sent.</string>
+    <string name="ms_add">Add a server</string>
+    <string name="ms_connected_count">%1$d connected</string>
+    <string name="ms_service_reality">VLESS + REALITY</string>
+    <string name="ms_service_xhttp">VLESS + XHTTP</string>
+    <string name="ms_service_masterdns">MasterDnsVPN</string>
+
+    <string name="ms_form_title">Add a server</string>
+    <string name="ms_field_name">Name</string>
+    <string name="ms_field_address">Server address</string>
+    <string name="ms_field_port">SSH port</string>
+    <string name="ms_field_user">Login user</string>
+    <string name="ms_field_password">Password</string>
+    <string name="ms_field_domain">Tunnel domain</string>
+    <string name="ms_password_note">The password is used once to log in and is not kept. The app puts its own key on the server instead.</string>
+    <string name="ms_what_to_install">What to install</string>
+    <string name="ms_reality_note">Fast, and looks like a normal website</string>
+    <string name="ms_xhttp_note">Also over REALITY, on its own port. A different traffic shape to try when the first does not connect.</string>
+    <string name="ms_masterdns_note">Works through DNS only. Needs your own domain.</string>
+    <string name="ms_domain_note">A subdomain you own, like t.example.com. The next screens show what to set up.</string>
+    <string name="ms_connect">Connect and install</string>
+    <string name="ms_err_address">Type the server\'s address (its IP).</string>
+    <string name="ms_err_address_shape">The address is just the IP, like 203.0.113.7.</string>
+    <string name="ms_err_port">The SSH port is a number, usually 22.</string>
+    <string name="ms_err_user">Type the login user (usually root).</string>
+    <string name="ms_err_password">Type the server\'s password.</string>
+    <string name="ms_err_choose">Choose what to install.</string>
+    <string name="ms_err_domain">Type your tunnel domain, like t.example.com.</string>
+
+    <string name="ms_busy_title">Please wait</string>
+    <string name="ms_busy">Contacting the server…</string>
+
+    <string name="ms_identity_title">Is this your server?</string>
+    <string name="ms_identity_body">Connected. The server says its identity is:</string>
+    <string name="ms_identity_help">Compare it with the one in your hosting panel (many show it on the server\'s page or console). If it is the same, continue. Nothing secret has been sent yet.</string>
+    <string name="ms_identity_yes">Yes, it matches</string>
+    <string name="ms_identity_no">No, or I cannot check</string>
+
+    <string name="ms_dns_title">Point your domain at the server</string>
+    <string name="ms_dns_step1">1. Open dash.cloudflare.com, pick your domain, then DNS, Records, Add record.</string>
+    <string name="ms_dns_step2">2. Add these two records. Keep the cloud grey (DNS only), never orange.</string>
+    <string name="ms_dns_record">Record %1$d: type %2$s</string>
+    <string name="ms_dns_name">Name</string>
+    <string name="ms_dns_value">Value (IPv4 address)</string>
+    <string name="ms_dns_nameserver">Nameserver</string>
+    <string name="ms_dns_needs_ip">You typed a name, not an IP: use the server\'s IP address as the value of the first record.</string>
+    <string name="ms_dns_step3">3. Check it. It can take a few minutes to spread; you can also install now and test later.</string>
+    <string name="ms_dns_other">Not on Cloudflare? Any registrar works: add the same two records.</string>
+    <string name="ms_dns_not_checked">Not checked yet.</string>
+    <string name="ms_dns_checking">Checking…</string>
+    <string name="ms_dns_right">The record points at your server. Good.</string>
+    <string name="ms_dns_wrong">The name resolves, but not to this server. Check the first record\'s value.</string>
+    <string name="ms_dns_unknown">Not visible yet. If you just added it, wait a few minutes and check again.</string>
+    <string name="ms_dns_check">Check the records</string>
+    <string name="ms_dns_install">Install now</string>
+    <string name="ms_copy">Copy</string>
+
+    <string name="ms_progress_title">Setting up</string>
+    <string name="ms_progress_wait">This takes a minute or two. Keep the app open.</string>
+    <string name="ms_step_check">Checking the server</string>
+    <string name="ms_step_packages">Getting what it needs</string>
+    <string name="ms_step_download">Downloading and verifying</string>
+    <string name="ms_step_install">Installing</string>
+    <string name="ms_step_configure">Writing the settings</string>
+    <string name="ms_step_start">Starting</string>
+    <string name="ms_step_firewall">Opening the ports</string>
+    <string name="ms_step_access">Saving this app\'s access</string>
+    <string name="ms_failed">It stopped:</string>
+    <string name="ms_failed_note">Nothing half-finished is left running. Fix the cause and try again.</string>
+    <string name="ms_back">Go back</string>
+
+    <string name="ms_result_title">Your server is ready</string>
+    <string name="ms_ready">%1$s is running.</string>
+    <string name="ms_config_for">Config: %1$s</string>
+    <string name="ms_copy_link">Copy link</string>
+    <string name="ms_show_code">Show code</string>
+    <string name="ms_hide_code">Hide code</string>
+    <string name="ms_qr_description">QR code of the config link</string>
+    <string name="ms_use_here">Use it in this app</string>
+    <string name="ms_used_in_app">Added to your servers. You can connect to it now.</string>
+    <string name="ms_use_failed">Could not add it to your servers.</string>
+    <string name="ms_files_note">These files are for the MasterDnsVPN program on a computer. In this app, use the link above.</string>
+    <string name="ms_files_secret">The files hold the tunnel\'s key: share them only with people you trust.</string>
+    <string name="ms_share">Share</string>
+    <string name="ms_open_server">Open the server page</string>
+    <string name="ms_note_port_moved">Port %1$d was already used by %2$s, so port %3$d is used instead.</string>
+    <string name="ms_note_firewall_opened">The ports were opened in the server\'s firewall (%1$s).</string>
+    <string name="ms_note_provider_firewall">Your hosting provider may have its own firewall. If nothing connects, open %1$s in its panel.</string>
+    <string name="ms_note_unverified">The server program was uploaded from this app and was not checked against the signed list.</string>
+    <string name="ms_note_key">The app could not log back in with its own key, so it will ask for the password next time.</string>
+
+    <string name="ms_server_title">Server</string>
+    <string name="ms_gone">This server is gone.</string>
+    <string name="ms_live">Live use</string>
+    <string name="ms_reading">Reading…</string>
+    <string name="ms_stat_now">Connected now</string>
+    <string name="ms_stat_recent">Last %1$d min</string>
+    <string name="ms_stat_sessions">Open sessions</string>
+    <string name="ms_traffic">Traffic since start: up %1$s, down %2$s</string>
+    <string name="ms_masterdns_lag">Counted from the server\'s log: up to 5 minutes behind, with no traffic figure.</string>
+    <string name="ms_test">Test MasterDNS from here</string>
+    <string name="ms_testing">Testing…</string>
+    <string name="ms_probe_none">MasterDNS did not answer through any public resolver. Check that the two DNS records are right and wait a few minutes.</string>
+    <string name="ms_probe_ok">MasterDNS works: %1$d of %2$d resolvers reached it (best %3$d ms).</string>
+    <string name="ms_remove">Remove from the server</string>
+    <string name="ms_removed">Removed. The server is clean again.</string>
+
+    <string name="ms_remove_title">Remove everything?</string>
+    <string name="ms_remove_what">This takes ZeroNet off %1$s.</string>
+    <string name="ms_remove_detail">It stops and deletes the server program and its settings, closes the ports it opened, and removes this app\'s key from the server. Everything else on the server stays. Configs you gave to people stop working.</string>
+    <string name="ms_remove_type">Type %1$s to confirm:</string>
+    <string name="ms_remove_word" translatable="false">remove</string>
+    <string name="ms_remove_confirm">Remove</string>
+    <string name="ms_cancel">Cancel</string>
+    <string name="ms_forget">Only forget it in this app</string>
+    <string name="ms_forget_note">Use this when the server is gone or you cannot reach it. Nothing is changed on the server.</string>
+    <string name="ms_login_with">Log in with</string>
+    <string name="ms_login_password">Password</string>
+    <string name="ms_login_key">SSH key</string>
+    <string name="ms_field_key">Private key</string>
+    <string name="ms_key_hint">Paste the key text (-----BEGIN … PRIVATE KEY-----)</string>
+    <string name="ms_key_choose">Choose a key file</string>
+    <string name="ms_field_passphrase">Key passphrase (only if it has one)</string>
+    <string name="ms_key_note">Use this when the server does not allow passwords. The key is used once to log in and is never saved. Use the private key, not the .pub file.</string>
+    <string name="ms_err_key">Paste or choose your private SSH key.</string>
+    <string name="ms_err_key_shape">That is not a private key. It should start with -----BEGIN … PRIVATE KEY-----. Did you pick the .pub file?</string>
+    <string name="ms_key_unreadable">Could not read that file.</string>
+</resources>

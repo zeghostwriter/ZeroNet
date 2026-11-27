@@ -1,0 +1,82 @@
+{
+ "tls/xray": {
+  "idle_rss_mb": 29.2890625,
+  "peak_rss_mb": 51.4921875,
+  "download 1 stream": {
+   "MBps": 348.9,
+   "cpu_s_per_GB": 3.0050000000000003
+  },
+  "download 8 streams": {
+   "MBps": 826.4,
+   "cpu_s_per_GB": 1.7649999999999997
+  },
+  "upload 1 stream": {
+   "MBps": 341.6,
+   "cpu_s_per_GB": 1.7850000000000001
+  },
+  "download 64 streams": {
+   "MBps": 758.4,
+   "cpu_s_per_GB": 1.8900000000000006
+  }
+ },
+ "tls/zray": {
+  "idle_rss_mb": 8.00390625,
+  "peak_rss_mb": 21.1015625,
+  "download 1 stream": {
+   "MBps": 532.3,
+   "cpu_s_per_GB": 1.615
+  },
+  "download 8 streams": {
+   "MBps": 910.7,
+   "cpu_s_per_GB": 1.61
+  },
+  "upload 1 stream": {
+   "MBps": 352.6,
+   "cpu_s_per_GB": 1.185
+  },
+  "download 64 streams": {
+   "MBps": 828.2,
+   "cpu_s_per_GB": 1.67
+  }
+ },
+ "plain/xray": {
+  "idle_rss_mb": 29.5390625,
+  "peak_rss_mb": 45.59765625,
+  "download 1 stream": {
+   "MBps": 873.3,
+   "cpu_s_per_GB": 1.1050000000000002
+  },
+  "download 8 streams": {
+   "MBps": 1239.2,
+   "cpu_s_per_GB": 1.0899999999999999
+  },
+  "upload 1 stream": {
+   "MBps": 818.0,
+   "cpu_s_per_GB": 1.1149999999999998
+  },
+  "download 64 streams": {
+   "MBps": 1085.0,
+   "cpu_s_per_GB": 1.0949999999999998
+  }
+ },
+ "plain/zray": {
+  "idle_rss_mb": 8.02734375,
+  "peak_rss_mb": 17.0546875,
+  "download 1 stream": {
+   "MBps": 799.3,
+   "cpu_s_per_GB": 1.02
+  },
+  "download 8 streams": {
+   "MBps": 1344.7,
+   "cpu_s_per_GB": 0.845
+  },
+  "upload 1 stream": {
+   "MBps": 876.5,
+   "cpu_s_per_GB": 0.8899999999999999
+  },
+  "download 64 streams": {
+   "MBps": 1343.9,
+   "cpu_s_per_GB": 0.9050000000000002
+  }
+ }
+}

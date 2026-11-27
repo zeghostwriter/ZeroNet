@@ -1,0 +1,945 @@
+//! The client-side XTLS Vision padding stream.
+//! Vision is a byte framing layer inside the outer TLS/REALITY stream. The
+//! VLESS response header stays unframed; after it, both directions begin with
+//! the account UUID followed by command/length/padding frames. Command 0
+//! continues padding, while command 1 ends it and leaves subsequent bytes as
+//! ordinary plaintext inside the outer stream.
+//!
+//! A frame's content is delivered from the buffer `split_to` returned, which
+//! is already contiguous and initialized, rather than copied into a `Vec` and
+//! staged again. A downloaded byte is copied once on its way to the caller
+//! instead of twice, and one allocation per frame goes with it.
+//! `bench/hotpath` counts what that saves.
+//!
+//! The client's request header is not written on its own. It waits in
+//! `pending_write` and leaves in the same carrier write as the first padded
+//! frame, so a connection does not open with one short record of a telltale
+//! size followed by a second one. A caller that reads before it writes (a
+//! server-first protocol) would leave it waiting forever, so the first read
+//! starts [`FIRST_PAYLOAD_WAIT`]; when that runs out the header goes with an
+//! empty padded frame instead, as Xray's client does.
+//!
+//! This implementation deliberately emits `PaddingEnd`, never
+//! `PaddingDirect`. The latter requires handing an already-record-aligned raw
+//! TCP socket back through the outer TLS implementation; emitting End is the
+//! interoperable Xray mode and keeps the stream safe on transports that cannot
+//! expose that handoff. Xray still accepts the resulting Vision flow.
+
+use std::future::Future;
+use std::io;
+use std::pin::Pin;
+use std::task::{ready, Context, Poll};
+
+use bytes::{Buf, BufMut, BytesMut};
+use rand::RngCore;
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+use tokio::time::Sleep;
+
+use crate::first_flight::FIRST_PAYLOAD_WAIT;
+
+const COMMAND_CONTINUE: u8 = 0x00;
+const COMMAND_END: u8 = 0x01;
+const COMMAND_DIRECT: u8 = 0x02;
+/// How much padding Vision adds (Xray's `testseed`, four numbers). While the
+/// traffic inside is a TLS handshake, a frame shorter than `threshold` is
+/// padded to `base` bytes plus a random amount below `long_random`; every
+/// other frame gets a random amount below `short_random`. The defaults are
+/// 900, 500, 900, 256. The padding is sized by the sender and read by
+/// length, so the two ends need not agree on the numbers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VisionSeed {
+    pub threshold: u32,
+    pub long_random: u32,
+    pub base: u32,
+    pub short_random: u32,
+}
+
+impl Default for VisionSeed {
+    fn default() -> Self {
+        Self::new([900, 500, 900, 256])
+    }
+}
+
+impl VisionSeed {
+    pub fn new(values: [u32; 4]) -> Self {
+        Self {
+            threshold: values[0],
+            long_random: values[1],
+            base: values[2],
+            short_random: values[3],
+        }
+    }
+}
+
+/// A random number below `limit`; below zero is zero, so an unset limit adds
+/// nothing instead of failing.
+fn below(rng: &mut impl RngCore, limit: u32) -> usize {
+    if limit == 0 {
+        0
+    } else {
+        (rng.next_u32() % limit) as usize
+    }
+}
+const MAX_FRAME_PLAINTEXT: usize = 8171; // Xray buf.Size (8192) - UUID/header room
+const READ_CHUNK: usize = 8192;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReadMode {
+    ResponseHeader,
+    InitialUuid,
+    Frames,
+    Plain,
+}
+
+/// A Vision stream for a VLESS TCP connection.
+pub struct VisionStream<S> {
+    inner: S,
+    uuid: [u8; 16],
+    seed: VisionSeed,
+    read_mode: ReadMode,
+    read_input: BytesMut,
+    /// The frame or header split off `read_input`, and the part of it still to
+    /// deliver. `split_to` hands back a view of the same bytes, so the content
+    /// is already contiguous and initialized here.
+    read_pending: BytesMut,
+    read_window: std::ops::Range<usize>,
+    eof: bool,
+
+    write_padding: bool,
+    write_attempts: u8,
+    inner_looks_tls: bool,
+    write_first: bool,
+    pending_write: BytesMut,
+    /// The request header sits in `pending_write` waiting for the first frame
+    /// to leave with.
+    header_held: bool,
+    /// Runs from the first read while the header is held.
+    header_wait: Option<Pin<Box<Sleep>>>,
+    /// The carrier owes a flush for a first flight nobody wrote (the caller
+    /// flushes after its own writes; nobody flushes after a timer).
+    flush_due: bool,
+    direct_read_switch: Option<DirectReadSwitch<S>>,
+}
+
+/// Hook that hands the underlying stream back to raw mode once Vision has
+/// spliced the last padded frame.
+type DirectReadSwitch<S> = Box<dyn FnMut(&mut S) + Send>;
+
+impl<S> VisionStream<S> {
+    /// Construct the client side. The first read exposes the plain VLESS
+    /// response header so `VlessStream` can strip it; all later reads unpad
+    /// Vision frames.
+    pub fn new_client(inner: S, uuid: [u8; 16]) -> Self {
+        Self {
+            inner,
+            uuid,
+            seed: VisionSeed::default(),
+            read_mode: ReadMode::ResponseHeader,
+            read_input: BytesMut::with_capacity(READ_CHUNK),
+            read_pending: BytesMut::new(),
+            read_window: 0..0,
+            eof: false,
+            write_padding: true,
+            write_attempts: 0,
+            inner_looks_tls: false,
+            write_first: true,
+            pending_write: BytesMut::new(),
+            header_held: false,
+            header_wait: None,
+            flush_due: false,
+            direct_read_switch: None,
+        }
+    }
+
+    /// Pad with these numbers instead of the defaults.
+    pub fn with_seed(mut self, seed: VisionSeed) -> Self {
+        self.seed = seed;
+        self
+    }
+
+    /// Construct the server side. The VLESS response header is emitted by the
+    /// server dispatcher before this wrapper is installed, so server reads
+    /// begin at the UUID-prefixed Vision frame immediately.
+    pub fn new_server(inner: S, uuid: [u8; 16]) -> Self {
+        Self {
+            inner,
+            uuid,
+            seed: VisionSeed::default(),
+            read_mode: ReadMode::InitialUuid,
+            read_input: BytesMut::with_capacity(READ_CHUNK),
+            read_pending: BytesMut::new(),
+            read_window: 0..0,
+            eof: false,
+            write_padding: true,
+            write_attempts: 0,
+            inner_looks_tls: false,
+            write_first: true,
+            pending_write: BytesMut::new(),
+            header_held: false,
+            header_wait: None,
+            flush_due: false,
+            direct_read_switch: None,
+        }
+    }
+
+    /// Install a carrier-specific callback for the authenticated Vision
+    /// `PaddingDirect` transition. The protocol stays independent of the
+    /// concrete REALITY/TLS implementation while the carrier can preserve
+    /// already-buffered bytes and enter raw mode deliberately.
+    pub fn with_direct_read_switch<F>(mut self, switch: F) -> Self
+    where
+        F: FnMut(&mut S) + Send + 'static,
+    {
+        self.direct_read_switch = Some(Box::new(switch));
+        self
+    }
+
+    /// Give the stream the VLESS request header to send in front of its
+    /// first frame. Call it before any I/O; nothing is written here.
+    pub fn with_request_header(mut self, header: &[u8]) -> Self {
+        self.pending_write.extend_from_slice(header);
+        self.header_held = true;
+        self
+    }
+
+    /// Let the held header go with an empty padded frame behind it. Xray
+    /// sends this frame too when the application has nothing to say yet; it
+    /// keeps the header from being a short record of its own.
+    fn release_header_alone(&mut self) {
+        let mut framed = std::mem::take(&mut self.pending_write);
+        make_frame_into(
+            &[],
+            Some(&self.uuid),
+            COMMAND_CONTINUE,
+            true,
+            &self.seed,
+            &mut framed,
+        );
+        self.pending_write = framed;
+        self.write_first = false;
+        self.header_held = false;
+        self.header_wait = None;
+        self.flush_due = true;
+    }
+
+    /// Append the framed (or, once padding has ended, verbatim) form of
+    /// `input` onto `out` — the writer's own `pending_write`, so the framed
+    /// bytes are copied exactly once. The previous shape built a fresh `Vec`
+    /// per call and swept every framed byte a second time into `pending_write`.
+    fn append_write_payload(&mut self, input: &[u8], out: &mut BytesMut) {
+        if !self.write_padding {
+            out.reserve(input.len());
+            out.put_slice(input);
+            return;
+        }
+
+        self.write_attempts = self.write_attempts.saturating_add(1);
+        if looks_like_tls_client_hello(input) {
+            self.inner_looks_tls = true;
+        }
+
+        let complete_app_data = is_complete_tls_application_data(input);
+        let end_padding = complete_app_data || (!self.inner_looks_tls && self.write_attempts >= 8);
+        let command = if end_padding {
+            self.write_padding = false;
+            COMMAND_END
+        } else {
+            COMMAND_CONTINUE
+        };
+
+        let mut offset = 0usize;
+        let long_padding = self.inner_looks_tls;
+        while offset < input.len() {
+            let end = (offset + MAX_FRAME_PLAINTEXT).min(input.len());
+            let prefix = self.write_first.then_some(&self.uuid);
+            // Only the final frame can terminate padding. Earlier chunks must
+            // remain Continue even when a large application write is split.
+            let frame_command = if end == input.len() {
+                command
+            } else {
+                COMMAND_CONTINUE
+            };
+            make_frame_into(
+                &input[offset..end],
+                prefix,
+                frame_command,
+                long_padding,
+                &self.seed,
+                out,
+            );
+            self.write_first = false;
+            offset = end;
+        }
+    }
+
+    fn poll_flush_pending(&mut self, cx: &mut Context<'_>) -> Poll<io::Result<()>>
+    where
+        S: AsyncWrite + Unpin,
+    {
+        while !self.pending_write.is_empty() {
+            match Pin::new(&mut self.inner).poll_write(cx, &self.pending_write) {
+                Poll::Ready(Ok(0)) => {
+                    return Poll::Ready(Err(io::Error::new(
+                        io::ErrorKind::WriteZero,
+                        "Vision inner stream accepted zero bytes",
+                    )))
+                }
+                Poll::Ready(Ok(n)) => self.pending_write.advance(n),
+                Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
+                Poll::Pending => return Poll::Pending,
+            }
+        }
+        Poll::Ready(Ok(()))
+    }
+
+    fn poll_fill(&mut self, cx: &mut Context<'_>) -> Poll<io::Result<bool>>
+    where
+        S: AsyncRead + Unpin,
+    {
+        // Read into the buffer the bytes are heading for. The stack scratch
+        // array this replaces was zeroed per call and then copied over.
+        self.read_input.reserve(READ_CHUNK);
+        let mut read_buf = ReadBuf::uninit(self.read_input.spare_capacity_mut());
+        match Pin::new(&mut self.inner).poll_read(cx, &mut read_buf) {
+            Poll::Ready(Ok(())) => {
+                let n = read_buf.filled().len();
+                if n == 0 {
+                    self.eof = true;
+                    Poll::Ready(Ok(false))
+                } else {
+                    // SAFETY: `filled` is the prefix the reader wrote.
+                    unsafe { self.read_input.advance_mut(n) };
+                    Poll::Ready(Ok(true))
+                }
+            }
+            Poll::Ready(Err(e)) => Poll::Ready(Err(e)),
+            Poll::Pending => Poll::Pending,
+        }
+    }
+
+    fn parse_response_header(&mut self) -> io::Result<bool> {
+        if self.read_input.len() < 2 {
+            return Ok(false);
+        }
+        let total = 2usize + self.read_input[1] as usize;
+        if total > 2 + 255 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "VLESS response addons are too large",
+            ));
+        }
+        if self.read_input.len() < total {
+            return Ok(false);
+        }
+        if self.read_input[0] != 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "unexpected VLESS response version",
+            ));
+        }
+        let header = self.read_input.split_to(total);
+        self.read_pending = header;
+        self.read_window = 0..self.read_pending.len();
+        self.read_mode = ReadMode::InitialUuid;
+        Ok(true)
+    }
+
+    /// `Ok(true)` when a frame was consumed, left in `read_pending` for
+    /// [`AsyncRead::poll_read`] to hand over.
+    fn parse_one_frame(&mut self) -> io::Result<bool> {
+        if self.read_mode == ReadMode::InitialUuid {
+            if self.read_input.len() < self.uuid.len() {
+                return Ok(false);
+            }
+            if self.read_input[..16] != self.uuid {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "Vision UUID prefix does not match the VLESS account",
+                ));
+            }
+            self.read_input.advance(16);
+            self.read_mode = ReadMode::Frames;
+        }
+
+        if self.read_input.len() < 5 {
+            return Ok(false);
+        }
+        let command = self.read_input[0];
+        if !matches!(command, COMMAND_CONTINUE | COMMAND_END | COMMAND_DIRECT) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("unknown Vision command {command:#04x}"),
+            ));
+        }
+        let content_len = u16::from_be_bytes([self.read_input[1], self.read_input[2]]) as usize;
+        let padding_len = u16::from_be_bytes([self.read_input[3], self.read_input[4]]) as usize;
+        if content_len + padding_len > MAX_FRAME_PLAINTEXT {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Vision frame exceeds the Xray plaintext bound",
+            ));
+        }
+        let total = 5 + content_len + padding_len;
+        if self.read_input.len() < total {
+            return Ok(false);
+        }
+
+        // The window skips the 5-byte header and the trailing padding. A frame
+        // with no content leaves the window empty, the same signal an empty
+        // payload gave before, and is dropped rather than held while the parser
+        // waits for the next one.
+        let frame = self.read_input.split_to(total);
+        if content_len == 0 {
+            self.read_window = 0..0;
+            drop(frame);
+        } else {
+            self.read_pending = frame;
+            self.read_window = 5..5 + content_len;
+        }
+        if command != COMMAND_CONTINUE {
+            if command == COMMAND_DIRECT {
+                if let Some(switch) = self.direct_read_switch.as_mut() {
+                    switch(&mut self.inner);
+                }
+            }
+            self.read_mode = ReadMode::Plain;
+        }
+        Ok(true)
+    }
+}
+
+impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for VisionStream<S> {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        if self.header_held {
+            let wait = self
+                .header_wait
+                .get_or_insert_with(|| Box::pin(tokio::time::sleep(FIRST_PAYLOAD_WAIT)));
+            if wait.as_mut().poll(cx).is_ready() {
+                self.release_header_alone();
+            }
+        }
+        if self.flush_due {
+            // Nobody else will push a first flight the timer released.
+            match self.poll_flush_pending(cx) {
+                Poll::Ready(Ok(())) => {
+                    if Pin::new(&mut self.inner).poll_flush(cx)?.is_ready() {
+                        self.flush_due = false;
+                    }
+                }
+                Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
+                Poll::Pending => {}
+            }
+        }
+        loop {
+            if !self.read_window.is_empty() {
+                let n = self.read_window.len().min(buf.remaining());
+                // Straight out of the split-off frame: one copy per byte.
+                let from = self.read_window.start;
+                buf.put_slice(&self.read_pending[from..from + n]);
+                self.read_window.start += n;
+                if self.read_window.is_empty() {
+                    self.read_pending.clear();
+                }
+                return Poll::Ready(Ok(()));
+            }
+            if self.eof {
+                return Poll::Ready(Ok(()));
+            }
+
+            match self.read_mode {
+                ReadMode::ResponseHeader => match self.parse_response_header() {
+                    Ok(true) => continue,
+                    Ok(false) => {}
+                    Err(e) => return Poll::Ready(Err(e)),
+                },
+                ReadMode::InitialUuid | ReadMode::Frames => match self.parse_one_frame() {
+                    Ok(true) => continue,
+                    Ok(false) => {}
+                    Err(e) => return Poll::Ready(Err(e)),
+                },
+                ReadMode::Plain => {
+                    // The final Vision frame and the first raw/plain bytes
+                    // can arrive in one carrier read. Once the transition is
+                    // observed, those bytes are no longer frame data, but
+                    // they still belong before the next read from `inner`.
+                    // Dropping them here truncates the tunneled TLS stream.
+                    if !self.read_input.is_empty() {
+                        let n = self.read_input.len().min(buf.remaining());
+                        let bytes = self.read_input.split_to(n);
+                        buf.put_slice(&bytes);
+                        return Poll::Ready(Ok(()));
+                    }
+                    return Pin::new(&mut self.inner).poll_read(cx, buf);
+                }
+            }
+
+            match self.poll_fill(cx) {
+                Poll::Ready(Ok(true)) => continue,
+                Poll::Ready(Ok(false)) => continue,
+                Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
+                Poll::Pending => return Poll::Pending,
+            }
+        }
+    }
+}
+
+impl<S: AsyncRead + AsyncWrite + Unpin> AsyncWrite for VisionStream<S> {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        if buf.is_empty() {
+            return Poll::Ready(Ok(0));
+        }
+        if self.header_held {
+            // The frame built below joins the header in `pending_write`.
+            self.header_held = false;
+            self.header_wait = None;
+        } else if !self.pending_write.is_empty() {
+            ready!(self.poll_flush_pending(cx))?;
+        }
+
+        if !self.write_padding && self.pending_write.is_empty() {
+            return Pin::new(&mut self.inner).poll_write(cx, buf);
+        }
+
+        let mut framed = std::mem::take(&mut self.pending_write);
+        self.append_write_payload(buf, &mut framed);
+        self.pending_write = framed;
+        let accepted = buf.len();
+        match self.poll_flush_pending(cx) {
+            Poll::Ready(Ok(())) | Poll::Pending => Poll::Ready(Ok(accepted)),
+            Poll::Ready(Err(e)) => Poll::Ready(Err(e)),
+        }
+    }
+
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        if self.header_held {
+            // A flush before the first write has nothing of the caller's to
+            // push; the header keeps waiting for its payload.
+            return Pin::new(&mut self.inner).poll_flush(cx);
+        }
+        match self.poll_flush_pending(cx) {
+            Poll::Ready(Ok(())) => Pin::new(&mut self.inner).poll_flush(cx),
+            other => other,
+        }
+    }
+
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        if self.header_held {
+            self.release_header_alone();
+        }
+        match self.poll_flush_pending(cx) {
+            Poll::Ready(Ok(())) => Pin::new(&mut self.inner).poll_shutdown(cx),
+            other => other,
+        }
+    }
+}
+
+#[cfg(test)]
+fn make_frame(content: &[u8], uuid: Option<&[u8; 16]>, command: u8, long_padding: bool) -> Vec<u8> {
+    let mut out = BytesMut::with_capacity(uuid.map_or(0, |_| 16) + 5 + content.len() + 1024);
+    make_frame_into(
+        content,
+        uuid,
+        command,
+        long_padding,
+        &VisionSeed::default(),
+        &mut out,
+    );
+    out.to_vec()
+}
+
+/// `make_frame` appended onto an existing buffer, so a batch of frames is
+/// framed straight into the writer's own `pending_write` — no per-call `Vec`,
+/// and no second sweep copying the framed bytes there afterwards.
+fn make_frame_into(
+    content: &[u8],
+    uuid: Option<&[u8; 16]>,
+    command: u8,
+    long_padding: bool,
+    seed: &VisionSeed,
+    out: &mut BytesMut,
+) {
+    let max_padding = MAX_FRAME_PLAINTEXT.saturating_sub(content.len());
+    // Draw the padding length from the thread-local ChaCha CSPRNG, the way
+    // VMess and Shadowsocks2022 do in this crate, rather than from `OsRng`.
+    // The length only has to be unpredictable to an on-path observer, and a
+    // CSPRNG seeded from the OS already is; `OsRng` instead cost a `getrandom`
+    // syscall on every padded frame of every connection. Xray draws this
+    // length with `crypto/rand` by convention, not for a stronger guarantee.
+    let mut rng = rand::thread_rng();
+    let padding = if long_padding && content.len() < seed.threshold as usize {
+        (seed.base as usize)
+            .saturating_sub(content.len())
+            .saturating_add(below(&mut rng, seed.long_random))
+    } else {
+        below(&mut rng, seed.short_random)
+    }
+    .min(max_padding);
+
+    out.reserve(uuid.map_or(0, |_| 16) + 5 + content.len() + padding);
+    if let Some(uuid) = uuid {
+        out.put_slice(uuid);
+    }
+    out.put_u8(command);
+    out.put_u16(content.len() as u16);
+    out.put_u16(padding as u16);
+    out.put_slice(content);
+    // Padding is length noise, not a secret: the outer TLS/REALITY layer
+    // encrypts the whole frame, so zeros read on the wire exactly like random
+    // bytes and cost nothing to produce. Xray leaves these bytes uninitialized
+    // for the same reason, and mux here already zero-fills its filler. Writing
+    // zeros drops a second per-frame `getrandom` and the keystream fill behind
+    // it; a reader discards the padding by length, so the content is unused.
+    out.resize(out.len() + padding, 0);
+}
+
+fn looks_like_tls_client_hello(input: &[u8]) -> bool {
+    input.len() >= 6 && input[0] == 0x16 && input[1] == 0x03 && input[5] == 0x01
+}
+
+fn is_complete_tls_application_data(input: &[u8]) -> bool {
+    if input.is_empty() {
+        return false;
+    }
+    let mut at = 0usize;
+    while at < input.len() {
+        if input.len() - at < 5 || input[at..at + 3] != [0x17, 0x03, 0x03] {
+            return false;
+        }
+        let len = u16::from_be_bytes([input[at + 3], input[at + 4]]) as usize;
+        at += 5;
+        if input.len() - at < len {
+            return false;
+        }
+        at += len;
+    }
+    true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    const UUID: [u8; 16] = [0x42; 16];
+
+    #[test]
+    fn frame_has_uuid_and_protocol_lengths() {
+        let frame = make_frame(b"hello", Some(&UUID), COMMAND_CONTINUE, true);
+        assert_eq!(&frame[..16], &UUID);
+        assert_eq!(frame[16], COMMAND_CONTINUE);
+        assert_eq!(u16::from_be_bytes([frame[17], frame[18]]), 5);
+        let padding = u16::from_be_bytes([frame[19], frame[20]]) as usize;
+        assert_eq!(frame.len(), 21 + 5 + padding);
+        assert!(padding >= 895);
+    }
+
+    #[test]
+    fn application_record_detector_requires_complete_records() {
+        let mut record = vec![0x17, 0x03, 0x03, 0, 3, 1, 2, 3];
+        assert!(is_complete_tls_application_data(&record));
+        record.pop();
+        assert!(!is_complete_tls_application_data(&record));
+        assert!(!is_complete_tls_application_data(b"GET /"));
+    }
+
+    #[tokio::test]
+    async fn client_frame_roundtrip_preserves_header_and_payload() {
+        let (mut peer, server_side) = tokio::io::duplex(65536);
+        let mut client = VisionStream::new_client(server_side, UUID);
+        client.write_all(b"payload").await.unwrap();
+        client.flush().await.unwrap();
+
+        let mut wire = vec![0u8; 4096];
+        let n = peer.read(&mut wire).await.unwrap();
+        assert!(n > 16 + 5);
+
+        // Feed a realistic response: plain VLESS header, then the first
+        // server-to-client UUID-prefixed frame and a terminating frame.
+        let first = make_frame(&[], Some(&UUID), COMMAND_CONTINUE, true);
+        let second = make_frame(b"reply", None, COMMAND_END, false);
+        // The server side of the test uses its raw inner stream so we can
+        // validate the reader independently of the writer path.
+        let (mut producer, response_io) = tokio::io::duplex(65536);
+        let mut reader = VisionStream::new_client(response_io, UUID);
+        tokio::spawn(async move {
+            producer.write_all(&[0, 0]).await.unwrap();
+            producer.write_all(&first).await.unwrap();
+            producer.write_all(&second).await.unwrap();
+            producer.shutdown().await.unwrap();
+        });
+        let mut got = Vec::new();
+        reader.read_to_end(&mut got).await.unwrap();
+        let mut expected = vec![0, 0];
+        expected.extend_from_slice(b"reply");
+        assert_eq!(got, expected);
+
+        // Keep the client and server variables live long enough to ensure the
+        // generic stream remains usable in both directions.
+        let _ = (&mut client, n);
+    }
+
+    #[tokio::test]
+    async fn the_request_header_leaves_with_the_first_frame() {
+        use crate::first_flight::tests::Chunks;
+        let mut client =
+            VisionStream::new_client(Chunks::default(), UUID).with_request_header(b"HEADER");
+        client.flush().await.unwrap();
+        assert!(
+            client.inner.writes.is_empty(),
+            "a flush is not a first write"
+        );
+        client.write_all(b"payload").await.unwrap();
+        client.flush().await.unwrap();
+
+        assert_eq!(client.inner.writes.len(), 1, "one carrier write");
+        let wire = client.inner.writes[0].clone();
+        assert_eq!(&wire[..6], b"HEADER");
+
+        // What follows the header is an ordinary first Vision frame.
+        let (mut producer, server_io) = tokio::io::duplex(65536);
+        producer.write_all(&wire[6..]).await.unwrap();
+        let mut server = VisionStream::new_server(server_io, UUID);
+        let mut payload = [0u8; 7];
+        server.read_exact(&mut payload).await.unwrap();
+        assert_eq!(&payload, b"payload");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_reader_first_caller_gets_the_header_and_an_empty_frame() {
+        use crate::first_flight::tests::Chunks;
+        let mut client =
+            VisionStream::new_client(Chunks::default(), UUID).with_request_header(b"HEADER");
+        let mut byte = [0u8; 1];
+        let early = tokio::time::timeout(FIRST_PAYLOAD_WAIT / 2, client.read(&mut byte)).await;
+        assert!(early.is_err());
+        assert!(client.inner.writes.is_empty());
+
+        let late = tokio::time::timeout(FIRST_PAYLOAD_WAIT, client.read(&mut byte)).await;
+        assert!(late.is_err());
+        assert_eq!(client.inner.writes.len(), 1);
+        assert_eq!(client.inner.flushes, 1);
+        let wire = client.inner.writes[0].clone();
+        assert_eq!(&wire[..6], b"HEADER");
+        assert_eq!(&wire[6..22], &UUID);
+        assert_eq!(wire[22], COMMAND_CONTINUE);
+        assert_eq!(&wire[23..25], &[0, 0], "no content");
+        assert!(wire.len() >= 6 + 16 + 5 + VisionSeed::default().base as usize);
+
+        // The payload that follows is a later frame without the UUID.
+        client.write_all(b"late").await.unwrap();
+        assert_eq!(client.inner.writes.len(), 2);
+        assert_eq!(client.inner.writes[1][0], COMMAND_CONTINUE);
+    }
+
+    #[tokio::test]
+    async fn closing_before_writing_still_sends_the_header() {
+        use crate::first_flight::tests::Chunks;
+        let mut client =
+            VisionStream::new_client(Chunks::default(), UUID).with_request_header(b"HEADER");
+        client.shutdown().await.unwrap();
+        assert_eq!(&client.inner.writes.concat()[..6], b"HEADER");
+        assert!(client.inner.shut);
+    }
+
+    #[tokio::test]
+    async fn bad_uuid_is_rejected_after_response_header() {
+        let (mut producer, response_io) = tokio::io::duplex(4096);
+        let mut reader = VisionStream::new_client(response_io, UUID);
+        tokio::spawn(async move {
+            producer.write_all(&[0, 0]).await.unwrap();
+            producer.write_all(&[0x99; 16]).await.unwrap();
+        });
+        let mut out = [0u8; 64];
+        assert_eq!(reader.read(&mut out).await.unwrap(), 2);
+        assert!(reader.read(&mut out).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn server_reader_unframes_initial_uuid_and_payload() {
+        let (mut producer, input) = tokio::io::duplex(4096);
+        let mut server = VisionStream::new_server(input, UUID);
+        tokio::spawn(async move {
+            producer
+                .write_all(&make_frame(&[], Some(&UUID), COMMAND_CONTINUE, false))
+                .await
+                .unwrap();
+            producer
+                .write_all(&make_frame(b"request", None, COMMAND_END, false))
+                .await
+                .unwrap();
+            producer.shutdown().await.unwrap();
+        });
+        let mut got = Vec::new();
+        server.read_to_end(&mut got).await.unwrap();
+        assert_eq!(got, b"request");
+    }
+
+    #[tokio::test]
+    async fn transition_preserves_plain_bytes_already_buffered_after_final_frame() {
+        let (mut producer, response_io) = tokio::io::duplex(4096);
+        let mut reader = VisionStream::new_client(response_io, UUID);
+        let final_frame = make_frame(b"payload", Some(&UUID), COMMAND_DIRECT, false);
+        tokio::spawn(async move {
+            producer.write_all(&[0, 0]).await.unwrap();
+            producer.write_all(&final_frame).await.unwrap();
+            producer.write_all(b"tail").await.unwrap();
+        });
+
+        let mut got = Vec::new();
+        reader.read_to_end(&mut got).await.unwrap();
+        assert_eq!(got, [b"\0\0".as_slice(), b"payload", b"tail"].concat());
+    }
+
+    /// A reference unframer in the *old* shape, so the in-place append can be
+    /// compared against it byte for byte.
+    fn reference_unframe(bytes: &[u8]) -> Vec<u8> {
+        let mut input = BytesMut::from(bytes);
+        let mut out = Vec::new();
+        if !input.is_empty() {
+            if input.len() < 16 + 5 {
+                return out;
+            }
+            input.advance(16);
+        }
+        loop {
+            if input.len() < 5 {
+                break;
+            }
+            let command = input[0];
+            let content_len = u16::from_be_bytes([input[1], input[2]]) as usize;
+            let padding_len = u16::from_be_bytes([input[3], input[4]]) as usize;
+            let total = 5 + content_len + padding_len;
+            if content_len + padding_len > MAX_FRAME_PLAINTEXT || input.len() < total {
+                break;
+            }
+            let frame = input.split_to(total);
+            let content = frame[5..5 + content_len].to_vec();
+            out.extend_from_slice(&content);
+            if command != COMMAND_CONTINUE {
+                break;
+            }
+        }
+        out
+    }
+
+    /// Every content length that crosses a framing decision — empty, sub-MTU,
+    /// exactly the frame bound, and multiples of it — recovered by both the
+    /// stream's reader and the reference unframer.
+    #[tokio::test]
+    async fn written_frames_decode_to_the_exact_plaintext_by_both_unframers() {
+        for len in [
+            0usize,
+            1,
+            3,
+            5,
+            100,
+            895,
+            MAX_FRAME_PLAINTEXT - 1,
+            MAX_FRAME_PLAINTEXT,
+            MAX_FRAME_PLAINTEXT + 1,
+            2 * MAX_FRAME_PLAINTEXT,
+            2 * MAX_FRAME_PLAINTEXT + 777,
+        ] {
+            let plaintext: Vec<u8> = (0..len).map(|i| (i * 29 + 11) as u8).collect();
+            // `append_write_payload` needs no inner stream, so a dummy
+            // carrier type stands in for one.
+            let mut sent = BytesMut::new();
+            VisionStream::<Vec<u8>>::new_client(Vec::new(), UUID)
+                .append_write_payload(&plaintext, &mut sent);
+
+            let (mut producer, input) = tokio::io::duplex(4 * 1024 * 1024);
+            let mut server = VisionStream::new_server(input, UUID);
+            tokio::spawn(async move {
+                producer.write_all(&sent).await.unwrap();
+                producer.shutdown().await.unwrap();
+            });
+            let mut got = Vec::new();
+            server.read_to_end(&mut got).await.unwrap();
+            assert_eq!(got, plaintext, "stream reader, {len} B");
+
+            let wire = framed_wire(&plaintext);
+            assert_eq!(reference_unframe(&wire), plaintext, "reference, {len} B");
+        }
+    }
+
+    /// The framed form of `plaintext` as bytes, for the reference unframer.
+    fn framed_wire(plaintext: &[u8]) -> Vec<u8> {
+        let mut sent = BytesMut::new();
+        VisionStream::<Vec<u8>>::new_client(Vec::new(), UUID)
+            .append_write_payload(plaintext, &mut sent);
+        sent.to_vec()
+    }
+
+    /// With padding ended, a write appends the input verbatim.
+    #[test]
+    fn unpadded_append_is_the_input_itself() {
+        let mut stream = VisionStream::<Vec<u8>>::new_server(Vec::new(), UUID);
+        stream.write_padding = false;
+        let mut out = BytesMut::new();
+        stream.append_write_payload(b"payload", &mut out);
+        assert_eq!(&out[..], b"payload");
+
+        // And the padded branch still emits a UUID-prefixed header before its
+        // content, with the two length fields agreeing with what follows.
+        let mut padded = BytesMut::new();
+        let mut stream = VisionStream::<Vec<u8>>::new_server(Vec::new(), UUID);
+        stream.append_write_payload(b"payload", &mut padded);
+        assert_eq!(&padded[..16], &[0x42; 16]);
+        assert_eq!(padded[16], COMMAND_CONTINUE);
+        let content_len = u16::from_be_bytes([padded[17], padded[18]]) as usize;
+        let padding_len = u16::from_be_bytes([padded[19], padded[20]]) as usize;
+        assert_eq!(content_len, 7);
+        assert_eq!(padded.len(), 16 + 5 + content_len + padding_len);
+        assert_eq!(&padded[21..21 + content_len], b"payload");
+    }
+
+    #[test]
+    fn the_seed_sets_how_much_padding_a_handshake_frame_gets() {
+        let long_seed = VisionSeed::new([1000, 1, 1000, 1]);
+        let short_seed = VisionSeed::new([0, 0, 0, 0]);
+        let frame = |seed: &VisionSeed, long: bool| {
+            let mut out = BytesMut::new();
+            make_frame_into(&[7u8; 100], None, COMMAND_CONTINUE, long, seed, &mut out);
+            out
+        };
+        // The padding length is bytes 3..5 of the frame header.
+        let padding = |out: &BytesMut| usize::from(u16::from_be_bytes([out[3], out[4]]));
+        // Under the threshold, in a handshake: padded up to `base`, plus
+        // less than `long_random` (here at most 0).
+        assert_eq!(padding(&frame(&long_seed, true)), 900);
+        // Not in a handshake: a random amount below `short_random` (here 0).
+        assert_eq!(padding(&frame(&long_seed, false)), 0);
+        // All zeros means no padding at all, not a failure.
+        assert_eq!(padding(&frame(&short_seed, true)), 0);
+        // The defaults are Xray's.
+        let default = VisionSeed::default();
+        assert_eq!(
+            (
+                default.threshold,
+                default.long_random,
+                default.base,
+                default.short_random
+            ),
+            (900, 500, 900, 256)
+        );
+        // A frame longer than the threshold is not "long" padded.
+        let mut out = BytesMut::new();
+        make_frame_into(
+            &[7u8; 2000],
+            None,
+            COMMAND_CONTINUE,
+            true,
+            &long_seed,
+            &mut out,
+        );
+        assert_eq!(padding(&out), 0);
+    }
+}

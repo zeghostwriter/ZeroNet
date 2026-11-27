@@ -1,0 +1,7 @@
+{"log":{"loglevel":"warning"},
+ "inbounds":[
+  {"port":20000,"listen":"127.0.0.1","protocol":"vless","settings":{"clients":[{"id":"00000000-0000-4000-8000-000000000000"}],"decryption":"none"},
+   "streamSettings":{"network":"tcp","security":"tls","tlsSettings":{"certificates":[{"certificateFile":"cert.pem","keyFile":"key.pem"}]}}},
+  {"port":20001,"listen":"127.0.0.1","protocol":"vless","settings":{"clients":[{"id":"00000000-0000-4000-8000-000000000000"}],"decryption":"none"},
+   "streamSettings":{"network":"tcp","security":"none"}}],
+ "outbounds":[{"protocol":"freedom"}]}

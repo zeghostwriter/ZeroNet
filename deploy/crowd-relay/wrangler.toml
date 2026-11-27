@@ -1,0 +1,21 @@
+# The Worker's name is its address: https://<name>.<subdomain>.workers.dev.
+# A name that does not say "ZeroNet" draws less attention; the two
+# workflows below derive the address from it.
+name = "hellomrgoodytwoshoes"
+main = "src/worker.js"
+compatibility_date = "2026-09-01"
+
+# Deletes reports older than two days, every hour.
+[triggers]
+crons = ["17 * * * *"]
+
+# The "deploy crowd relay" workflow creates the database and fills in its id
+# at deploy time; the placeholder stays in the repository.
+[[d1_databases]]
+binding = "DB"
+database_name = "zeronet-crowd"
+database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
+
+# Secrets, never written here (this file is committed), set by the deploy
+# workflow: EXPORT_TOKEN (the crowd workflow's password for /v1/export) and
+# SALT_SECRET (keys the daily pseudonyms).

@@ -1,0 +1,30 @@
+[package]
+name = "zero-tor"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+zero-core = { workspace = true }
+zero-config = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+# Arti's TLS layer builds its rustls configs without naming a crypto provider.
+rustls = { workspace = true }
+# Arti, the Tor Project's own Rust client. Only the pieces a client needs:
+# no onion-service hosting, no RPC, no experimental APIs. rustls (not
+# native-tls) so no OpenSSL is linked, which keeps Android and musl builds
+# simple. `static-sqlite` bundles SQLite for the directory cache.
+arti-client = { version = "0.47", default-features = false, features = [
+    "tokio",
+    "rustls",
+    "static-sqlite",
+    "bridge-client",
+    "pt-client",
+    "onion-service-client",
+] }
+# Named only for types arti-client does not re-export: the runtime a client
+# is parameterised over, and the channel padding level.
+tor-rtcompat = { version = "0.47", default-features = false }
+tor-config = { version = "0.47", default-features = false }
+async-trait = "0.1"

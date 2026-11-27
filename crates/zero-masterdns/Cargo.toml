@@ -1,0 +1,23 @@
+[package]
+name = "zero-masterdns"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+zero-core = { workspace = true }
+zero-config = { workspace = true }
+zero-protocol = { workspace = true }
+tokio = { workspace = true }
+bytes = { workspace = true }
+tracing = { workspace = true }
+rand = { workspace = true }
+# The three optional payload codecs the handshake can negotiate. All pure
+# Rust, all already in the workspace except lz4_flex (block format only).
+flate2 = { workspace = true }
+zstd = { workspace = true }
+lz4_flex = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "io-util", "net", "time", "test-util"] }
+hex = { workspace = true }

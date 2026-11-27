@@ -1,0 +1,188 @@
+// ZeroNet crowd relay.
+//
+// Apps post the results of their server tests here; the `crowd` GitHub
+// Action exports them, ranks them and publishes rankings.json in the
+// repository. This Worker only queues: it ranks nothing, and all it tells
+// an app is the name of the network its results were counted under.
+//
+// Apps send reports through their own tunnel once connected, so this runs
+// on a plain *.workers.dev address even though that is filtered in Iran.
+//
+// What is stored, per result: the time; the network (a mobile carrier's
+// MCC+MNC that the phone names, the ISP's AS number when the report comes
+// straight from the user's network, or "any" when neither is known); two
+// daily pseudonyms; the server's link key or the Cloudflare address;
+// success; delay, rounded to two significant figures. Times are rounded to
+// five minutes. The pseudonyms are HMACs that change every day:
+// `source` of the sending address (for the tunnel, the VPN server's), used
+// for the rate limit and so one address cannot pose as many people, and
+// `reporter` of the address plus a random value the app picks each day, so
+// people sharing one VPN server still count separately. No address is ever
+// written. Rows are deleted after two days.
+
+const MAX_BODY = 8 * 1024;
+const MAX_RESULTS = 40;
+const MAX_CLEAN = 10;
+// The only technique ids a report may carry (zero-discovery `crowd::METHODS`).
+// A fixed list keeps method reports free of anything personal.
+const METHODS = new Set([
+  "tls:plain", "tls:fragment",
+  "cdn:plain", "cdn:fragment", "cdn:ech",
+  "sanction:bertina", "sanction:shecan", "sanction:electro", "sanction:ipm",
+  "sanction:begzar", "sanction:radar", "sanction:none",
+]);
+// The only ids a mode report may carry (zero-discovery `modestats`): four
+// connection modes, three measures each. How long a connect took, whether it
+// came up, the delay of the server in use, whether a long session stayed
+// steady. Nothing else can be in one.
+const MODES = ["normal", "fast", "gaming", "legacy"];
+const MODE_METRICS = ["connect", "ping", "stable"];
+const MODE_IDS = new Set(MODES.flatMap((m) => MODE_METRICS.map((x) => `${m}:${x}`)));
+// Results one address may add per hour. Many people can share a VPN
+// server's address, so this is generous; it is a ceiling for a flood.
+const PER_HOUR = 2000;
+const KEEP_SECONDS = 2 * 24 * 3600;
+const EXPORT_LIMIT = 100000;
+
+const json = (body, status = 200) =>
+  new Response(JSON.stringify(body), {
+    status,
+    headers: { "content-type": "application/json", "cache-control": "no-store" },
+  });
+
+const isServerId = (s) => typeof s === "string" && /^[0-9a-f]{16}$/.test(s);
+const isIpv4 = (s) =>
+  typeof s === "string" &&
+  /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(s) &&
+  s.split(".").every((p) => String(Number(p)) === p && Number(p) <= 255);
+// Delays are stored coarsely: two significant figures rank servers just as
+// well, and an exact millisecond count is one more thing that could tie a
+// person's reports together. Same buckets as the app (Crowd.kt) and
+// zero-discovery `crowd::bucket_ms`.
+const bucket = (ms) => {
+  const step = ms < 100 ? 10 : ms < 1000 ? 50 : 250;
+  return Math.min(60000, Math.round(ms / step) * step);
+};
+const delay = (ms) => (Number.isInteger(ms) && ms >= 0 && ms <= 60000 ? bucket(ms) : null);
+// Stored times are rounded to five minutes: decay works in hours, and a
+// precise time would line a report up with anything else seen that second.
+const STORED_TIME_STEP = 300;
+
+// A pseudonym for today: an HMAC of the day and `value`, so it cannot be
+// reversed and changes at midnight UTC.
+async function pseudonym(secret, value, now) {
+  const day = Math.floor(now / 86400);
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const mac = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(`${day}|${value}`));
+  return [...new Uint8Array(mac).slice(0, 8)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+function timingSafeEqual(a, b) {
+  const x = new TextEncoder().encode(a);
+  const y = new TextEncoder().encode(b);
+  if (x.length !== y.length) return false;
+  let diff = 0;
+  for (let i = 0; i < x.length; i++) diff |= x[i] ^ y[i];
+  return diff === 0;
+}
+
+async function report(request, env) {
+  if (!env.SALT_SECRET) return json({ error: "relay not configured" }, 503);
+  const text = await request.text();
+  if (text.length > MAX_BODY) return json({ error: "too large" }, 413);
+  let body;
+  try {
+    body = JSON.parse(text);
+  } catch {
+    return json({ error: "not JSON" }, 400);
+  }
+  if (body?.v !== 1) return json({ error: "unsupported version" }, 400);
+
+  // A carrier the phone named; "any" when it came through a tunnel from a
+  // network the phone cannot name (Wi-Fi); otherwise the ISP this request
+  // came from.
+  let net = null;
+  if (typeof body.net === "string" && (/^cell:\d{5,6}$/.test(body.net) || body.net === "any")) {
+    net = body.net;
+  } else if (request.cf?.asn) {
+    net = `asn:${request.cf.asn}`;
+  }
+  if (!net) return json({ error: "unknown network" }, 400);
+
+  const rows = [];
+  for (const r of (Array.isArray(body.results) ? body.results : []).slice(0, MAX_RESULTS)) {
+    if (isServerId(r?.id) && typeof r.ok === "boolean") rows.push(["server", r.id, r.ok, r.ok ? delay(r.ms) : null]);
+  }
+  for (const c of (Array.isArray(body.clean) ? body.clean : []).slice(0, MAX_CLEAN)) {
+    if (isIpv4(c?.ip)) rows.push(["ip", c.ip, true, delay(c.ms)]);
+  }
+  for (const m of (Array.isArray(body.methods) ? body.methods : []).slice(0, METHODS.size)) {
+    if (METHODS.has(m?.id) && typeof m.ok === "boolean") rows.push(["method", m.id, m.ok, m.ok ? delay(m.ms) : null]);
+  }
+  // How each mode did. Unlike a server, a mode that failed still has a
+  // time: how long the attempt took before it gave up.
+  for (const m of (Array.isArray(body.modes) ? body.modes : []).slice(0, MODE_IDS.size * 2)) {
+    if (MODE_IDS.has(m?.id) && typeof m.ok === "boolean") rows.push(["mode", m.id, m.ok, delay(m.ms)]);
+  }
+  if (rows.length === 0) return json({ net, accepted: 0 });
+
+  const now = Math.floor(Date.now() / 1000);
+  const stored = now - (now % STORED_TIME_STEP);
+  const ip = request.headers.get("CF-Connecting-IP") || "unknown";
+  const nonce = typeof body.nonce === "string" ? body.nonce.slice(0, 64) : "";
+  const source = await pseudonym(env.SALT_SECRET, ip, now);
+  const reporter = await pseudonym(env.SALT_SECRET, `${ip}|${nonce}`, now);
+
+  const recent = await env.DB.prepare("SELECT COUNT(*) AS n FROM reports WHERE source = ? AND ts > ?")
+    .bind(source, stored - 3600)
+    .first();
+  if ((recent?.n ?? 0) + rows.length > PER_HOUR) return json({ error: "slow down", net }, 429);
+
+  const insert = env.DB.prepare(
+    "INSERT INTO reports (ts, net, reporter, source, kind, item, ok, ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+  );
+  await env.DB.batch(
+    rows.map(([kind, item, ok, ms]) => insert.bind(stored, net, reporter, source, kind, item, ok ? 1 : 0, ms)),
+  );
+  return json({ net, accepted: rows.length });
+}
+
+async function exportReports(request, env) {
+  const auth = request.headers.get("Authorization") || "";
+  if (!env.EXPORT_TOKEN || !timingSafeEqual(auth, `Bearer ${env.EXPORT_TOKEN}`)) {
+    return json({ error: "unauthorized" }, 401);
+  }
+  const url = new URL(request.url);
+  const since = Number.parseInt(url.searchParams.get("since") || "0", 10) || 0;
+  const { results } = await env.DB.prepare(
+    "SELECT ts, net, reporter, source, kind, item, ok, ms FROM reports WHERE ts >= ? ORDER BY id LIMIT ?",
+  )
+    .bind(since, EXPORT_LIMIT)
+    .all();
+  return json(results.map((r) => ({ ...r, ok: r.ok === 1, ms: r.ms ?? null })));
+}
+
+export default {
+  async fetch(request, env) {
+    const { pathname } = new URL(request.url);
+    try {
+      if (pathname === "/v1/report" && request.method === "POST") return await report(request, env);
+      if (pathname === "/v1/export" && request.method === "GET") return await exportReports(request, env);
+      if (pathname === "/") return new Response("ZeroNet crowd relay\n", { headers: { "content-type": "text/plain" } });
+      return json({ error: "not found" }, 404);
+    } catch {
+      return json({ error: "internal error" }, 500);
+    }
+  },
+
+  async scheduled(_event, env) {
+    const cutoff = Math.floor(Date.now() / 1000) - KEEP_SECONDS;
+    await env.DB.prepare("DELETE FROM reports WHERE ts < ?").bind(cutoff).run();
+  },
+};

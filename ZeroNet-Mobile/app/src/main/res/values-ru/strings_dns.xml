@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="settings_local_dns">DNS для иранских сайтов</string>
+    <string name="settings_local_dns_hint">Запрашивается напрямую, без туннеля, для иранских сайтов и приложений</string>
+    <string name="settings_local_dns_note">Оставьте пустым, чтобы использовать провайдера выше. Принимает IP или tls://… / https://…/dns-query с IP-адресом.</string>
+    <string name="settings_fake_dns">Фейковый DNS (Fake DNS)</string>
+    <string name="settings_fake_dns_hint">Выдаёт приложениям временные адреса, а настоящие ищет туннель. Оставьте включённым, если приложения работают нормально.</string>
+    <string name="import_serverless">Добавить профиль без сервера</string>
+    <string name="import_serverless_hint">Подключается напрямую и скрывает имя сайта от фильтра. Сервер не нужен, но помогает только для сайтов, адрес которых не заблокирован.</string>
+</resources>

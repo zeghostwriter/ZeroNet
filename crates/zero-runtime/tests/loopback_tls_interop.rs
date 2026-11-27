@@ -1,0 +1,1341 @@
+//! Interoperability for the TLS- and QUIC-based protocols.
+//!
+//! Separate from `loopback_interop` because everything here needs a server
+//! certificate, and because the QUIC protocols bind UDP sockets rather than
+//! reusing the TCP listener path. The certificate is a committed test fixture
+//! and the clients set `allowInsecure`, so nothing outside the test process
+//! ever trusts it.
+//!
+//! These are the protocols PLAN-01 lists but that no automated test had
+//! exercised end to end: AnyTLS, Hysteria2 and TUIC each carry their own
+//! handshake *inside* TLS or QUIC, which is precisely the arrangement where a
+//! unit test over the codec proves the least.
+
+use std::net::{SocketAddr, TcpListener as StdListener, UdpSocket as StdUdpSocket};
+use std::sync::Arc;
+use std::time::Duration;
+
+use serde_json::{json, Value};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::{TcpListener, TcpStream, UdpSocket};
+
+const UUID: &str = "b831381d-6324-4d53-ad4f-8cda48b30811";
+const PASSWORD: &str = "an-example-shared-password";
+const SERVER_NAME: &str = "zray.test";
+
+const CERTIFICATE: &str = include_str!("fixtures/loopback-cert.pem");
+const PRIVATE_KEY: &str = include_str!("fixtures/loopback-key.pem");
+const CA_CERTIFICATE: &str = include_str!("fixtures/loopback-ca.pem");
+
+/// Hand out a port no other test in this process has been given.
+///
+/// Binding `:0` and releasing is the usual trick, but two tests running
+/// concurrently can be handed the *same* ephemeral port, and the second server
+/// to bind it then fails or steals the first one's traffic. That produced a
+/// failure that looked exactly like a protocol race, so the allocator keeps a
+/// process-wide record instead.
+fn reserve_port(udp: bool) -> u16 {
+    use std::collections::HashSet;
+    use std::sync::Mutex;
+    static TAKEN: Mutex<Option<HashSet<u16>>> = Mutex::new(None);
+
+    for _ in 0..500 {
+        let port = if udp {
+            StdUdpSocket::bind("127.0.0.1:0")
+                .unwrap()
+                .local_addr()
+                .unwrap()
+                .port()
+        } else {
+            StdListener::bind("127.0.0.1:0")
+                .unwrap()
+                .local_addr()
+                .unwrap()
+                .port()
+        };
+        let mut taken = TAKEN
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if taken.get_or_insert_with(HashSet::new).insert(port) {
+            return port;
+        }
+    }
+    panic!("could not reserve a free port");
+}
+
+fn free_tcp_port() -> u16 {
+    reserve_port(false)
+}
+
+fn free_udp_port() -> u16 {
+    reserve_port(true)
+}
+
+fn init_logging() {
+    use std::sync::Once;
+    static ONCE: Once = Once::new();
+    ONCE.call_once(|| {
+        if std::env::var_os("ZRAY_TEST_LOG").is_some() {
+            let _ = tracing_subscriber::fmt()
+                .with_env_filter(
+                    tracing_subscriber::EnvFilter::try_from_env("ZRAY_TEST_LOG")
+                        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("debug")),
+                )
+                .with_test_writer()
+                .try_init();
+        }
+    });
+}
+
+fn spawn(config: Value) -> Arc<zero_runtime::Server> {
+    init_logging();
+    let (generation, _) = zero_config::compile_config(&config, zero_core::GenerationId(1))
+        .unwrap_or_else(|error| panic!("configuration rejected: {error}\n{config:#}"));
+    let server = Arc::new(zero_runtime::Server::new(zero_runtime::ServerConfig {
+        config: Arc::clone(&generation.config),
+        generation: generation.id,
+    }));
+    let running = Arc::clone(&server);
+    tokio::spawn(async move {
+        if let Err(error) = running.run().await {
+            panic!("server failed to start: {error}");
+        }
+    });
+    server
+}
+
+/// Wait for a spawned server to report every listener bound.
+///
+/// This asks the server rather than probing its ports. Probing was not just
+/// imprecise, it was harmful: a UDP readiness probe has to *bind* the port to
+/// learn whether it is free, which races the listener for that same port and
+/// can make the startup it was checking on fail.
+async fn wait_until_listening(server: &Arc<zero_runtime::Server>) {
+    tokio::time::timeout(Duration::from_secs(30), server.wait_until_listening())
+        .await
+        .expect("server never reported its listeners bound");
+}
+
+fn inbound_tls() -> Value {
+    json!({
+        "security": "tls",
+        "tlsSettings": {
+            "certificates": [{
+                "certificate": [CERTIFICATE],
+                "key": [PRIVATE_KEY],
+            }],
+        },
+    })
+}
+
+/// Trust the fixture CA explicitly rather than switching verification off.
+/// `allowInsecure` is refused by the config validator, and rightly so — this is
+/// the supported way to reach a privately-issued certificate.
+fn client_tls() -> Value {
+    json!({
+        "security": "tls",
+        "tlsSettings": {
+            "serverName": SERVER_NAME,
+            "certificates": [{"usage": "verify", "certificate": [CA_CERTIFICATE]}],
+        },
+    })
+}
+
+async fn echo_service() -> SocketAddr {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        while let Ok((mut stream, _)) = listener.accept().await {
+            tokio::spawn(async move {
+                let mut buffer = vec![0u8; 64 * 1024];
+                loop {
+                    match stream.read(&mut buffer).await {
+                        Ok(0) | Err(_) => return,
+                        Ok(read) => {
+                            if stream.write_all(&buffer[..read]).await.is_err() {
+                                return;
+                            }
+                        }
+                    }
+                }
+            });
+        }
+    });
+    address
+}
+
+/// A UDP echo, for the datagram paths.
+async fn udp_echo_service() -> SocketAddr {
+    let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let address = socket.local_addr().unwrap();
+    tokio::spawn(async move {
+        let mut buffer = vec![0u8; 64 * 1024];
+        loop {
+            match socket.recv_from(&mut buffer).await {
+                Ok((read, peer)) => {
+                    let _ = socket.send_to(&buffer[..read], peer).await;
+                }
+                Err(_) => return,
+            }
+        }
+    });
+    address
+}
+
+async fn socks_connect(socks: SocketAddr, target: SocketAddr) -> std::io::Result<TcpStream> {
+    let mut stream = TcpStream::connect(socks).await?;
+    stream.set_nodelay(true)?;
+    stream.write_all(&[0x05, 0x01, 0x00]).await?;
+    let mut greeting = [0u8; 2];
+    stream.read_exact(&mut greeting).await?;
+    assert_eq!(greeting, [0x05, 0x00]);
+
+    let mut request = vec![0x05, 0x01, 0x00, 0x01];
+    let std::net::IpAddr::V4(ip) = target.ip() else {
+        panic!("IPv4 only");
+    };
+    request.extend_from_slice(&ip.octets());
+    request.extend_from_slice(&target.port().to_be_bytes());
+    stream.write_all(&request).await?;
+
+    let mut reply = [0u8; 4];
+    stream.read_exact(&mut reply).await?;
+    assert_eq!(
+        reply[1], 0x00,
+        "SOCKS5 CONNECT failed with code {}",
+        reply[1]
+    );
+    let skip = match reply[3] {
+        0x01 => 4,
+        0x04 => 16,
+        0x03 => {
+            let mut length = [0u8; 1];
+            stream.read_exact(&mut length).await?;
+            length[0] as usize
+        }
+        other => panic!("unexpected address type {other}"),
+    };
+    let mut discard = vec![0u8; skip + 2];
+    stream.read_exact(&mut discard).await?;
+    Ok(stream)
+}
+
+async fn round_trip(stream: &mut TcpStream, payload: &[u8]) {
+    stream.write_all(payload).await.unwrap();
+    stream.flush().await.unwrap();
+    let mut echoed = vec![0u8; payload.len()];
+    tokio::time::timeout(Duration::from_secs(10), stream.read_exact(&mut echoed))
+        .await
+        .expect("echo timed out")
+        .expect("echo failed");
+    assert_eq!(echoed, payload);
+}
+
+fn payload(seed: u8, length: usize) -> Vec<u8> {
+    (0..length)
+        .map(|index| (index as u8).wrapping_mul(17).wrapping_add(seed))
+        .collect()
+}
+
+struct Tunnel {
+    socks: SocketAddr,
+    echo: SocketAddr,
+    udp_echo: SocketAddr,
+    /// The relay's listener, which the client's QUIC pool keys on.
+    relay: SocketAddr,
+}
+
+/// Build a client/server pair for a TLS- or QUIC-terminated protocol.
+async fn tunnel(protocol: &str, quic: bool, transport: Value) -> Tunnel {
+    tunnel_with(protocol, quic, transport, json!({})).await
+}
+
+/// [`tunnel`], with `outbound_extra` merged into the client's outbound (an
+/// `evasion` block, say).
+async fn tunnel_with(
+    protocol: &str,
+    quic: bool,
+    transport: Value,
+    outbound_extra: Value,
+) -> Tunnel {
+    let echo = echo_service().await;
+    let udp_echo = udp_echo_service().await;
+    let relay_port = if quic {
+        free_udp_port()
+    } else {
+        free_tcp_port()
+    };
+    let socks_port = free_tcp_port();
+
+    let (server_settings, client_settings) = match protocol {
+        "anytls" => (
+            json!({"users": [{"password": PASSWORD}]}),
+            json!({"servers": [{"address": SERVER_NAME, "port": relay_port, "password": PASSWORD}]}),
+        ),
+        "hysteria2" => (
+            json!({"users": [{"password": PASSWORD}]}),
+            json!({"servers": [{"address": SERVER_NAME, "port": relay_port, "password": PASSWORD}]}),
+        ),
+        "tuic" => (
+            json!({"uuid": UUID, "password": PASSWORD}),
+            json!({"servers": [{
+                "address": SERVER_NAME,
+                "port": relay_port,
+                "uuid": UUID,
+                "password": PASSWORD
+            }]}),
+        ),
+        "tide" => {
+            use zero_protocol::tide::{encode_key, generate_keypair};
+            let (secret, public) = generate_keypair();
+            let user = [7u8; 16];
+            (
+                json!({
+                    "path": "/assets/app",
+                    "secretKey": encode_key(&secret),
+                    "users": [{"id": encode_key(&user), "name": "test"}],
+                }),
+                json!({
+                    "address": SERVER_NAME,
+                    "port": relay_port,
+                    "path": "/assets/app",
+                    "serverKey": encode_key(&public),
+                    "user": encode_key(&user),
+                    "datagrams": true,
+                }),
+            )
+        }
+        "vless" => (
+            json!({"clients": [{"id": UUID}]}),
+            json!({"vnext": [{
+                "address": SERVER_NAME,
+                "port": relay_port,
+                "users": [{"id": UUID, "encryption": "none"}]
+            }]}),
+        ),
+        other => panic!("unsupported protocol {other}"),
+    };
+
+    let mut inbound_stream = inbound_tls();
+    let mut outbound_stream = client_tls();
+    merge(&mut inbound_stream, &transport);
+    merge(&mut outbound_stream, &transport);
+
+    let relay = spawn(json!({
+        "log": {"loglevel": "warning"},
+        "inbounds": [{
+            "tag": "relay-in",
+            "listen": "127.0.0.1",
+            "port": relay_port,
+            "protocol": protocol,
+            "settings": server_settings,
+            "streamSettings": inbound_stream,
+        }],
+        "outbounds": [{"tag": "direct", "protocol": "freedom"}],
+    }));
+
+    let mut outbound = json!({
+        "tag": "proxy",
+        "protocol": protocol,
+        "settings": client_settings,
+        "streamSettings": outbound_stream,
+    });
+    merge(&mut outbound, &outbound_extra);
+    let client = spawn(json!({
+        "log": {"loglevel": "warning"},
+        "inbounds": [{
+            "tag": "socks-in",
+            "listen": "127.0.0.1",
+            "port": socks_port,
+            "protocol": "socks",
+            "settings": {"udp": true},
+        }],
+        "outbounds": [outbound],
+        // The server name resolves to the loopback listener; nothing leaves
+        // the machine.
+        "dns": {"hosts": {SERVER_NAME: ["127.0.0.1"]}},
+    }));
+
+    wait_until_listening(&relay).await;
+    wait_until_listening(&client).await;
+
+    Tunnel {
+        socks: SocketAddr::new("127.0.0.1".parse().unwrap(), socks_port),
+        echo,
+        udp_echo,
+        relay: SocketAddr::new("127.0.0.1".parse().unwrap(), relay_port),
+    }
+}
+
+fn merge(target: &mut Value, extra: &Value) {
+    let (Some(target), Some(extra)) = (target.as_object_mut(), extra.as_object()) else {
+        return;
+    };
+    for (key, value) in extra {
+        target.insert(key.clone(), value.clone());
+    }
+}
+
+fn raw() -> Value {
+    json!({"network": "tcp"})
+}
+
+fn xhttp(mode: &str, version: &str) -> Value {
+    // `httpVersion` belongs inside `xhttpSettings`. Placed at the top level of
+    // `streamSettings` — where it was — the parser never sees it and falls
+    // back to guessing from ALPN, so the HTTP/3 case below silently ran over
+    // HTTP/2 and the QUIC carrier was never exercised at all.
+    json!({
+        "network": "xhttp",
+        "xhttpSettings": {"path": "/tunnel", "mode": mode, "httpVersion": version},
+    })
+}
+
+// ------------------------------------------------------------------- TCP/TLS
+
+/// A client hiding the server name with an urgent byte
+/// (`zero_evasion::urgent`) gets through a Zray TLS inbound. Over the
+/// loopback the whole hello is queued before the server reads, which is
+/// exactly when a tokio server used to stop at the urgent mark and wait for
+/// ever.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_zray_tls_inbound_reads_a_hello_with_an_urgent_byte() {
+    let tunnel = tunnel_with(
+        "vless",
+        false,
+        raw(),
+        json!({"evasion": {"sniSpoof": {"method": "urgent"}}}),
+    )
+    .await;
+    for seed in 0..4 {
+        let mut stream = tokio::time::timeout(
+            Duration::from_secs(10),
+            socks_connect(tunnel.socks, tunnel.echo),
+        )
+        .await
+        .expect("the tunnel opened in time")
+        .unwrap();
+        tokio::time::timeout(
+            Duration::from_secs(10),
+            round_trip(&mut stream, &payload(seed, 4096)),
+        )
+        .await
+        .expect("the payload came back in time");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn anytls_carries_payload_intact() {
+    let tunnel = tunnel("anytls", false, raw()).await;
+    let mut stream = socks_connect(tunnel.socks, tunnel.echo).await.unwrap();
+    round_trip(&mut stream, &payload(1, 64)).await;
+    round_trip(&mut stream, &payload(2, 128 * 1024)).await;
+}
+
+/// Tide end to end through two running cores: a SOCKS client, the Tide
+/// outbound over real TLS and HTTP/2, the Tide inbound, and out to an echo.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn tide_carries_payload_intact() {
+    let tunnel = tunnel("tide", false, raw()).await;
+    let mut stream = socks_connect(tunnel.socks, tunnel.echo).await.unwrap();
+    round_trip(&mut stream, &payload(1, 64)).await;
+    round_trip(&mut stream, &payload(2, 512 * 1024)).await;
+    // A second connection rides the session the first one made.
+    let mut again = socks_connect(tunnel.socks, tunnel.echo).await.unwrap();
+    round_trip(&mut again, &payload(3, 64)).await;
+}
+
+/// A Tide relay in the middle: the client dials only the relay, the relay
+/// holds no key and forwards to the egress, and a stream still arrives
+/// intact. Three running cores, real TLS on both hops.
+/// One round trip through a SOCKS proxy that reports a failure as `false`
+/// instead of panicking, for tests that expect the tunnel to be refused.
+async fn works_through(socks: SocketAddr, target: SocketAddr) -> bool {
+    let attempt = async {
+        let mut stream = TcpStream::connect(socks).await.ok()?;
+        stream.write_all(&[0x05, 0x01, 0x00]).await.ok()?;
+        let mut greeting = [0u8; 2];
+        stream.read_exact(&mut greeting).await.ok()?;
+        let std::net::IpAddr::V4(ip) = target.ip() else {
+            return None;
+        };
+        let mut request = vec![0x05, 0x01, 0x00, 0x01];
+        request.extend_from_slice(&ip.octets());
+        request.extend_from_slice(&target.port().to_be_bytes());
+        stream.write_all(&request).await.ok()?;
+        let mut reply = [0u8; 10];
+        stream.read_exact(&mut reply).await.ok()?;
+        if reply[1] != 0 {
+            return None;
+        }
+        stream.write_all(b"ping").await.ok()?;
+        let mut echoed = [0u8; 4];
+        stream.read_exact(&mut echoed).await.ok()?;
+        (&echoed == b"ping").then_some(())
+    };
+    matches!(
+        tokio::time::timeout(Duration::from_secs(10), attempt).await,
+        Ok(Some(()))
+    )
+}
+
+/// "Allow insecure": a server whose certificate the client does not trust
+/// (the fixture CA is not in any root store) is refused by default, and
+/// reached when the outbound is told to skip the check. Real TLS, two cores.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn allow_insecure_reaches_a_server_with_an_untrusted_certificate() {
+    let echo = echo_service().await;
+    let relay_port = free_tcp_port();
+    let server = spawn(json!({
+        "log": {"loglevel": "warning"},
+        "inbounds": [{
+            "tag": "relay-in",
+            "listen": "127.0.0.1",
+            "port": relay_port,
+            "protocol": "vless",
+            "settings": {"clients": [{"id": UUID}]},
+            "streamSettings": inbound_tls(),
+        }],
+        "outbounds": [{"tag": "direct", "protocol": "freedom"}],
+    }));
+    wait_until_listening(&server).await;
+    let link = format!(
+        "vless://{UUID}@{SERVER_NAME}:{relay_port}?security=tls&sni={SERVER_NAME}&type=tcp&encryption=none#t"
+    );
+    let client = |extra: Value| {
+        let socks_port = free_tcp_port();
+        let mut outbound = json!({"tag": "proxy", "link": link});
+        merge(&mut outbound, &extra);
+        let core = spawn(json!({
+            "log": {"loglevel": "warning"},
+            "inbounds": [{
+                "tag": "socks-in",
+                "listen": "127.0.0.1",
+                "port": socks_port,
+                "protocol": "socks",
+                "settings": {"udp": false},
+            }],
+            "outbounds": [outbound],
+            "dns": {"hosts": {SERVER_NAME: ["127.0.0.1"]}},
+        }));
+        (
+            core,
+            SocketAddr::new("127.0.0.1".parse().unwrap(), socks_port),
+        )
+    };
+
+    let (strict, strict_socks) = client(json!({}));
+    wait_until_listening(&strict).await;
+    assert!(
+        !works_through(strict_socks, echo).await,
+        "an untrusted certificate was accepted without being asked to"
+    );
+
+    let (loose, loose_socks) = client(json!({"allowInsecure": true}));
+    wait_until_listening(&loose).await;
+    assert!(
+        works_through(loose_socks, echo).await,
+        "the tunnel did not open with the certificate check skipped"
+    );
+
+    // `false` is the same as not asking.
+    let (off, off_socks) = client(json!({"allowInsecure": false}));
+    wait_until_listening(&off).await;
+    assert!(!works_through(off_socks, echo).await);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn tide_through_a_relay_carries_payload_intact() {
+    use zero_protocol::tide::{encode_key, generate_keypair};
+    let echo = echo_service().await;
+    let (egress_port, relay_port, socks_port) = (free_tcp_port(), free_tcp_port(), free_tcp_port());
+    let (secret, public) = generate_keypair();
+    let user = [7u8; 16];
+    let egress = spawn(json!({
+        "log": {"loglevel": "warning"},
+        "inbounds": [{
+            "tag": "egress-in",
+            "listen": "127.0.0.1",
+            "port": egress_port,
+            "protocol": "zerov1",
+            "settings": {
+                "path": "/assets/app",
+                "secretKey": encode_key(&secret),
+                "users": [{"id": encode_key(&user), "name": "test"}],
+            },
+            "streamSettings": inbound_tls(),
+        }],
+        "outbounds": [{"tag": "direct", "protocol": "freedom"}],
+    }));
+    let relay = spawn(json!({
+        "log": {"loglevel": "warning"},
+        "inbounds": [{
+            "tag": "relay-in",
+            "listen": "127.0.0.1",
+            "port": relay_port,
+            "protocol": "zerov1-relay",
+            "settings": {
+                "path": "/assets/app",
+                "upstream": format!("127.0.0.1:{egress_port}"),
+                "upstreamName": SERVER_NAME,
+                "tlsSettings": {
+                    "certificates": [{"usage": "verify", "certificate": [CA_CERTIFICATE]}],
+                },
+            },
+            "streamSettings": inbound_tls(),
+        }],
+        "outbounds": [{"tag": "direct", "protocol": "freedom"}],
+    }));
+    let client = spawn(json!({
+        "log": {"loglevel": "warning"},
+        "inbounds": [{
+            "tag": "socks-in",
+            "listen": "127.0.0.1",
+            "port": socks_port,
+            "protocol": "socks",
+            "settings": {"udp": true},
+        }],
+        "outbounds": [{
+            "tag": "proxy",
+            "protocol": "zerov1",
+            "settings": {
+                "address": SERVER_NAME,
+                "port": relay_port,
+                "path": "/assets/app",
+                "serverKey": encode_key(&public),
+                "user": encode_key(&user),
+            },
+            "streamSettings": client_tls(),
+        }],
+        "dns": {"hosts": {SERVER_NAME: ["127.0.0.1"]}},
+    }));
+    wait_until_listening(&egress).await;
+    wait_until_listening(&relay).await;
+    wait_until_listening(&client).await;
+    let socks = SocketAddr::new("127.0.0.1".parse().unwrap(), socks_port);
+    let mut stream = socks_connect(socks, echo).await.unwrap();
+    round_trip(&mut stream, &payload(1, 64)).await;
+    round_trip(&mut stream, &payload(2, 512 * 1024)).await;
+    let mut again = socks_connect(socks, echo).await.unwrap();
+    round_trip(&mut again, &payload(3, 64)).await;
+}
+
+/// A ZeroV1 server that sits behind REALITY instead of a certificate: the
+/// client proves itself with the REALITY key, then speaks HTTP/2 over the
+/// stream that results. A client with the wrong key never gets a tunnel.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn tide_runs_over_reality_and_refuses_the_wrong_key() {
+    use base64::Engine as _;
+    use zero_protocol::tide::{encode_key, generate_keypair};
+    let encode = |bytes: &[u8]| base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes);
+    let reality_secret = x25519_dalek::StaticSecret::from([21u8; 32]);
+    let reality_public = x25519_dalek::PublicKey::from(&reality_secret);
+    let other_public = x25519_dalek::PublicKey::from(&x25519_dalek::StaticSecret::from([22u8; 32]));
+    let echo = echo_service().await;
+    let (server_port, socks_port, wrong_port) = (free_tcp_port(), free_tcp_port(), free_tcp_port());
+    let (secret, public) = generate_keypair();
+    let user = [7u8; 16];
+    let server = spawn(json!({
+        "log": {"loglevel": "warning"},
+        "inbounds": [{
+            "tag": "zerov1-in",
+            "listen": "127.0.0.1",
+            "port": server_port,
+            "protocol": "zerov1",
+            "settings": {
+                "path": "/assets/app",
+                "secretKey": encode_key(&secret),
+                "users": [{"id": encode_key(&user), "name": "test"}],
+            },
+            "streamSettings": {
+                "network": "tcp",
+                "security": "reality",
+                "realitySettings": {
+                    "dest": echo.to_string(),
+                    "serverNames": ["www.example.test"],
+                    "privateKey": encode(&reality_secret.to_bytes()),
+                    "shortIds": ["ab12cd34ef56ab12"],
+                },
+            },
+        }],
+        "outbounds": [{"tag": "direct", "protocol": "freedom"}],
+    }));
+    let client = |socks_port: u16, public_key: &x25519_dalek::PublicKey| {
+        spawn(json!({
+            "log": {"loglevel": "warning"},
+            "inbounds": [{
+                "tag": "socks-in",
+                "listen": "127.0.0.1",
+                "port": socks_port,
+                "protocol": "socks",
+                "settings": {},
+            }],
+            "outbounds": [{
+                "tag": "proxy",
+                "protocol": "zerov1",
+                "settings": {
+                    "address": "127.0.0.1",
+                    "port": server_port,
+                    "path": "/assets/app",
+                    "serverKey": encode_key(&public),
+                    "user": encode_key(&user),
+                },
+                "streamSettings": {
+                    "network": "tcp",
+                    "security": "reality",
+                    "realitySettings": {
+                        "serverName": "www.example.test",
+                        "publicKey": encode(public_key.as_bytes()),
+                        "shortId": "ab12cd34ef56ab12",
+                        "fingerprint": "chrome",
+                    },
+                },
+            }],
+        }))
+    };
+    let good = client(socks_port, &reality_public);
+    let wrong = client(wrong_port, &other_public);
+    wait_until_listening(&server).await;
+    wait_until_listening(&good).await;
+    wait_until_listening(&wrong).await;
+
+    let socks = SocketAddr::new("127.0.0.1".parse().unwrap(), socks_port);
+    let mut stream = socks_connect(socks, echo).await.unwrap();
+    round_trip(&mut stream, &payload(1, 64)).await;
+    round_trip(&mut stream, &payload(2, 512 * 1024)).await;
+
+    // The server's "who is connected" figures count the proven client, and
+    // only that one: the wrong-key attempt below never shows up.
+    let usage = server.stats.usage.snapshot();
+    let figure = usage
+        .inbounds
+        .iter()
+        .find(|inbound| inbound.tag == "zerov1-in")
+        .expect("the ZeroV1 inbound is counted");
+    assert_eq!(figure.devices_now, 1);
+    let sessions_before = figure.sessions;
+
+    // The wrong REALITY key is sent to the camouflage target, so no ZeroV1
+    // session ever opens: the SOCKS client is told the host is unreachable
+    // (`socks_connect` panics on that reply) or gets nothing back.
+    let wrong_socks = SocketAddr::new("127.0.0.1".parse().unwrap(), wrong_port);
+    let attempt = tokio::time::timeout(
+        Duration::from_secs(20),
+        tokio::spawn(async move {
+            let mut stream = socks_connect(wrong_socks, echo).await?;
+            stream.write_all(&payload(3, 64)).await?;
+            let mut back = vec![0u8; 64];
+            stream.read_exact(&mut back).await?;
+            std::io::Result::Ok(back == payload(3, 64))
+        }),
+    )
+    .await;
+    assert!(
+        !matches!(attempt, Ok(Ok(Ok(true)))),
+        "a client with the wrong REALITY key got a tunnel"
+    );
+    let after = server.stats.usage.snapshot();
+    let figure = after
+        .inbounds
+        .iter()
+        .find(|inbound| inbound.tag == "zerov1-in")
+        .unwrap();
+    assert_eq!(
+        figure.sessions, sessions_before,
+        "a prober was counted as a user"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+async fn tide_keeps_concurrent_flows_separate() {
+    // Every flow shares one session and two connections; a mistake in stream
+    // ids or ordering would hand one flow's bytes to another.
+    let tunnel = tunnel("tide", false, raw()).await;
+    let mut tasks = Vec::new();
+    for index in 0..32 {
+        let socks = tunnel.socks;
+        let echo = tunnel.echo;
+        tasks.push(tokio::spawn(async move {
+            let mut stream = socks_connect(socks, echo).await.unwrap();
+            round_trip(&mut stream, &payload(index as u8, 48 * 1024)).await;
+        }));
+    }
+    for task in tasks {
+        task.await.unwrap();
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn xhttp_over_http2_carries_payload_intact() {
+    let tunnel = tunnel("vless", false, xhttp("stream-one", "h2")).await;
+    let mut stream = socks_connect(tunnel.socks, tunnel.echo).await.unwrap();
+    round_trip(&mut stream, &payload(3, 64)).await;
+    round_trip(&mut stream, &payload(4, 128 * 1024)).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+async fn xhttp_over_http2_keeps_concurrent_flows_separate() {
+    // HTTP/2 multiplexes every flow onto one connection, so a stream-id
+    // mistake here delivers one session's bytes to another rather than failing.
+    let tunnel = tunnel("vless", false, xhttp("stream-one", "h2")).await;
+    let mut tasks = Vec::new();
+    for index in 0..16 {
+        let socks = tunnel.socks;
+        let echo = tunnel.echo;
+        tasks.push(tokio::spawn(async move {
+            let mut stream = socks_connect(socks, echo).await.unwrap();
+            round_trip(&mut stream, &payload(index as u8, 16 * 1024)).await;
+        }));
+    }
+    for task in tasks {
+        task.await.unwrap();
+    }
+}
+
+/// The split modes over HTTP/2 with XMUX: every flow's GET and POSTs ride
+/// the pooled connections, and no flow's bytes reach another.
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+async fn xhttp_split_modes_over_reused_http2_keep_flows_separate() {
+    for mode in ["packet-up", "stream-up"] {
+        let tunnel = tunnel("vless", false, xhttp(mode, "h2")).await;
+        let mut tasks = Vec::new();
+        for index in 0..12 {
+            let socks = tunnel.socks;
+            let echo = tunnel.echo;
+            tasks.push(tokio::spawn(async move {
+                let mut stream = socks_connect(socks, echo).await.unwrap();
+                round_trip(&mut stream, &payload(index as u8, 24 * 1024)).await;
+            }));
+        }
+        for task in tasks {
+            task.await.unwrap();
+        }
+    }
+}
+
+/// With reuse switched off every flow gets a connection of its own, and
+/// still carries its bytes intact.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn xhttp_over_http2_without_reuse_carries_payload_intact() {
+    let mut transport = xhttp("stream-one", "h2");
+    transport["xhttpSettings"]["xmux"] = json!({"hMaxRequestTimes": 1});
+    let tunnel = tunnel("vless", false, transport).await;
+    for index in 0..3 {
+        let mut stream = socks_connect(tunnel.socks, tunnel.echo).await.unwrap();
+        round_trip(&mut stream, &payload(index, 32 * 1024)).await;
+    }
+}
+
+// ---------------------------------------------------------------- QUIC
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn hysteria2_carries_payload_intact() {
+    let tunnel = tunnel("hysteria2", true, raw()).await;
+    let mut stream = socks_connect(tunnel.socks, tunnel.echo).await.unwrap();
+    round_trip(&mut stream, &payload(5, 64)).await;
+    round_trip(&mut stream, &payload(6, 128 * 1024)).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn tuic_carries_payload_intact() {
+    let tunnel = tunnel("tuic", true, raw()).await;
+    let mut stream = socks_connect(tunnel.socks, tunnel.echo).await.unwrap();
+    round_trip(&mut stream, &payload(7, 64)).await;
+    round_trip(&mut stream, &payload(8, 128 * 1024)).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn xhttp_over_http3_carries_payload_intact() {
+    let tunnel = tunnel("vless", true, xhttp("stream-one", "h3")).await;
+    let mut stream = socks_connect(tunnel.socks, tunnel.echo).await.unwrap();
+    round_trip(&mut stream, &payload(9, 64)).await;
+    round_trip(&mut stream, &payload(10, 128 * 1024)).await;
+}
+
+// ----------------------------------------------------------------- UDP
+
+/// SOCKS5 UDP ASSOCIATE through a QUIC protocol that supports datagrams.
+async fn udp_round_trip(tunnel: &Tunnel, body: &[u8]) {
+    let mut control = TcpStream::connect(tunnel.socks).await.unwrap();
+    control.write_all(&[0x05, 0x01, 0x00]).await.unwrap();
+    let mut greeting = [0u8; 2];
+    control.read_exact(&mut greeting).await.unwrap();
+
+    // UDP ASSOCIATE with an unspecified client address: the relay learns it
+    // from the first datagram.
+    control
+        .write_all(&[0x05, 0x03, 0x00, 0x01, 0, 0, 0, 0, 0, 0])
+        .await
+        .unwrap();
+    let mut reply = [0u8; 10];
+    control.read_exact(&mut reply).await.unwrap();
+    assert_eq!(reply[1], 0x00, "UDP ASSOCIATE refused with {}", reply[1]);
+    let relay_port = u16::from_be_bytes([reply[8], reply[9]]);
+    let relay = SocketAddr::new("127.0.0.1".parse().unwrap(), relay_port);
+
+    let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let std::net::IpAddr::V4(target_ip) = tunnel.udp_echo.ip() else {
+        panic!("IPv4 only");
+    };
+    let mut datagram = vec![0x00, 0x00, 0x00, 0x01];
+    datagram.extend_from_slice(&target_ip.octets());
+    datagram.extend_from_slice(&tunnel.udp_echo.port().to_be_bytes());
+    datagram.extend_from_slice(body);
+    socket.send_to(&datagram, relay).await.unwrap();
+
+    let mut received = vec![0u8; 64 * 1024];
+    let (read, _) = tokio::time::timeout(Duration::from_secs(10), socket.recv_from(&mut received))
+        .await
+        .expect("UDP echo timed out")
+        .unwrap();
+    // Strip the SOCKS5 UDP header: RSV(2) FRAG(1) ATYP(1) ADDR(4) PORT(2).
+    assert!(read > 10, "reply is too short to contain a payload");
+    assert_eq!(&received[10..read], body);
+
+    drop(control);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn hysteria2_carries_udp_datagrams() {
+    let tunnel = tunnel("hysteria2", true, raw()).await;
+    udp_round_trip(&tunnel, b"datagram over hysteria2").await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn tide_carries_udp_datagrams() {
+    let tunnel = tunnel("tide", false, raw()).await;
+    udp_round_trip(&tunnel, b"datagram over zerov1").await;
+    // Streams and datagrams share the session and do not disturb each other.
+    let mut stream = socks_connect(tunnel.socks, tunnel.echo).await.unwrap();
+    round_trip(&mut stream, &payload(11, 200 * 1024)).await;
+    udp_round_trip(&tunnel, b"and again").await;
+}
+
+/// Two client UDP sockets are two flows: each gets back its own datagrams,
+/// all of them, while a TCP transfer runs on the same session.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn tide_udp_keeps_flows_apart_and_loses_nothing_on_a_clean_path() {
+    let tunnel = tunnel("tide", false, raw()).await;
+    let transfer = {
+        let (socks, echo) = (tunnel.socks, tunnel.echo);
+        tokio::spawn(async move {
+            let mut stream = socks_connect(socks, echo).await.unwrap();
+            round_trip(&mut stream, &payload(21, 600 * 1024)).await;
+        })
+    };
+    let mut clients = Vec::new();
+    for flow in 0..2u8 {
+        let (socks, udp_echo) = (tunnel.socks, tunnel.udp_echo);
+        clients.push(tokio::spawn(async move {
+            let mut control = TcpStream::connect(socks).await.unwrap();
+            control.write_all(&[0x05, 0x01, 0x00]).await.unwrap();
+            let mut greeting = [0u8; 2];
+            control.read_exact(&mut greeting).await.unwrap();
+            control
+                .write_all(&[0x05, 0x03, 0x00, 0x01, 0, 0, 0, 0, 0, 0])
+                .await
+                .unwrap();
+            let mut reply = [0u8; 10];
+            control.read_exact(&mut reply).await.unwrap();
+            let relay = SocketAddr::new(
+                "127.0.0.1".parse().unwrap(),
+                u16::from_be_bytes([reply[8], reply[9]]),
+            );
+            let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+            let std::net::IpAddr::V4(ip) = udp_echo.ip() else {
+                panic!("IPv4 only");
+            };
+            for index in 0..25u8 {
+                let mut datagram = vec![0, 0, 0, 1];
+                datagram.extend_from_slice(&ip.octets());
+                datagram.extend_from_slice(&udp_echo.port().to_be_bytes());
+                datagram.extend_from_slice(&[flow, index, 7, 7, 7]);
+                socket.send_to(&datagram, relay).await.unwrap();
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+            let mut seen = std::collections::BTreeSet::new();
+            let mut buffer = vec![0u8; 2048];
+            while seen.len() < 25 {
+                let (read, _) =
+                    tokio::time::timeout(Duration::from_secs(10), socket.recv_from(&mut buffer))
+                        .await
+                        .expect("a datagram never came back")
+                        .unwrap();
+                assert_eq!(buffer[10], flow, "another flow's datagram");
+                assert_eq!(&buffer[12..read], &[7, 7, 7]);
+                seen.insert(buffer[11]);
+            }
+            drop(control);
+        }));
+    }
+    for client in clients {
+        client.await.unwrap();
+    }
+    transfer.await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn tuic_carries_udp_datagrams() {
+    let tunnel = tunnel("tuic", true, raw()).await;
+    udp_round_trip(&tunnel, b"datagram over tuic").await;
+}
+
+// ---------------------------------------------------------- QUIC pooling
+
+/// Hysteria2 and TUIC multiplex every proxied stream over one authenticated
+/// QUIC connection per server, as their reference clients do, instead of a
+/// handshake and authentication per stream.
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+async fn quic_carriers_reuse_one_connection_for_many_streams() {
+    for protocol in ["hysteria2", "tuic"] {
+        let tunnel = tunnel(protocol, true, raw()).await;
+        for seed in 0..5u8 {
+            let mut stream = socks_connect(tunnel.socks, tunnel.echo).await.unwrap();
+            round_trip(&mut stream, &payload(seed, 4096)).await;
+        }
+        let concurrent = (0..6u8).map(|seed| {
+            let socks = tunnel.socks;
+            let echo = tunnel.echo;
+            tokio::spawn(async move {
+                let mut stream = socks_connect(socks, echo).await.unwrap();
+                round_trip(&mut stream, &payload(100 + seed, 64 * 1024)).await;
+            })
+        });
+        for task in futures::future::join_all(concurrent).await {
+            task.unwrap();
+        }
+        assert_eq!(
+            zero_transport::quic_pool::live_connections_to(tunnel.relay),
+            1,
+            "{protocol}: eleven streams should share one QUIC connection"
+        );
+    }
+}
+
+/// Concurrent UDP sessions share the pooled connection, and each gets its
+/// own answer back: one reader hands every response to its session.
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+async fn quic_udp_sessions_share_a_connection_without_crossing() {
+    for protocol in ["hysteria2", "tuic"] {
+        let tunnel = std::sync::Arc::new(tunnel(protocol, true, raw()).await);
+        let sessions = (0..8u8).map(|n| {
+            let tunnel = std::sync::Arc::clone(&tunnel);
+            tokio::spawn(async move {
+                let body = format!("{protocol} datagram {n} {}", "x".repeat(n as usize * 50));
+                udp_round_trip(&tunnel, body.as_bytes()).await;
+            })
+        });
+        for task in futures::future::join_all(sessions).await {
+            task.unwrap();
+        }
+        assert_eq!(
+            zero_transport::quic_pool::live_connections_to(tunnel.relay),
+            1,
+            "{protocol}"
+        );
+    }
+}
+
+/// After a network change the pooled connections move to a new socket
+/// (QUIC connection migration): a stream opened before keeps working, and
+/// new streams still share the migrated connection.
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+async fn a_quic_connection_survives_moving_to_a_new_socket() {
+    for protocol in ["hysteria2", "tuic"] {
+        let tunnel = tunnel(protocol, true, raw()).await;
+        let mut before = socks_connect(tunnel.socks, tunnel.echo).await.unwrap();
+        round_trip(&mut before, &payload(1, 2048)).await;
+
+        // Rebind only this tunnel's connection. `rebind_all` is process-wide
+        // and would move the pooled connections of every other test running
+        // in this binary, closing any it cannot migrate.
+        assert!(
+            zero_transport::quic_pool::rebind_to(tunnel.relay) >= 1,
+            "{protocol}: nothing was migrated"
+        );
+
+        round_trip(&mut before, &payload(2, 256 * 1024)).await;
+        let mut after = socks_connect(tunnel.socks, tunnel.echo).await.unwrap();
+        round_trip(&mut after, &payload(3, 2048)).await;
+        assert_eq!(
+            zero_transport::quic_pool::live_connections_to(tunnel.relay),
+            1,
+            "{protocol}"
+        );
+    }
+}
+
+/// Migration in the middle of transfers: streams in flight when the socket
+/// changes must finish intact.
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+async fn transfers_in_flight_survive_a_migration() {
+    for protocol in ["hysteria2", "tuic"] {
+        let tunnel = tunnel(protocol, true, raw()).await;
+        // Every transfer announces itself once its first bytes have come
+        // back, so the migrations below happen while the streams are genuinely
+        // in flight. Migrating during stream *setup* raced the handshake and
+        // could fail under load for a reason this test does not mean to
+        // measure.
+        let (ready, mut started) = tokio::sync::mpsc::channel::<()>(6);
+        let transfers: Vec<_> = (0..6u8)
+            .map(|seed| {
+                let (socks, echo) = (tunnel.socks, tunnel.echo);
+                let ready = ready.clone();
+                tokio::spawn(async move {
+                    let mut stream = socks_connect(socks, echo).await.unwrap();
+                    round_trip(&mut stream, &payload(seed, 4096)).await;
+                    let _ = ready.send(()).await;
+                    for round in 0..4u8 {
+                        round_trip(
+                            &mut stream,
+                            &payload(seed.wrapping_mul(7).wrapping_add(round), 256 * 1024),
+                        )
+                        .await;
+                    }
+                })
+            })
+            .collect();
+        drop(ready);
+        for _ in 0..6 {
+            started.recv().await.expect("a transfer never started");
+        }
+        for _ in 0..3 {
+            tokio::time::sleep(Duration::from_millis(15)).await;
+            // This tunnel only: a process-wide rebind would also move the
+            // connections of the other tests sharing this binary.
+            zero_transport::quic_pool::rebind_to(tunnel.relay);
+        }
+        for task in futures::future::join_all(transfers).await {
+            task.unwrap_or_else(|error| panic!("{protocol}: {error}"));
+        }
+    }
+}
+
+// ------------------------------------------------------------------- 0-RTT
+
+/// A Hysteria2 server that takes early data (quinn with a TLS server that
+/// issues tickets allowing 0-RTT), echoing every proxied stream.
+async fn zero_rtt_hysteria2_server(echo: SocketAddr) -> SocketAddr {
+    use rustls_pki_types::pem::PemObject;
+    let certs = rustls_pki_types::CertificateDer::pem_slice_iter(CERTIFICATE.as_bytes())
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    let key = rustls_pki_types::PrivateKeyDer::from_pem_slice(PRIVATE_KEY.as_bytes()).unwrap();
+    let mut tls = rustls::ServerConfig::builder_with_provider(Arc::new(
+        rustls::crypto::ring::default_provider(),
+    ))
+    .with_safe_default_protocol_versions()
+    .unwrap()
+    .with_no_client_auth()
+    .with_single_cert(certs, key)
+    .unwrap();
+    tls.alpn_protocols = vec![b"h3".to_vec()];
+    tls.max_early_data_size = u32::MAX;
+    let crypto = quinn::crypto::rustls::QuicServerConfig::try_from(tls).unwrap();
+    let mut server = quinn::ServerConfig::with_crypto(Arc::new(crypto));
+    let mut transport = quinn::TransportConfig::default();
+    transport.max_idle_timeout(Some(Duration::from_secs(30).try_into().unwrap()));
+    server.transport_config(Arc::new(transport));
+    let endpoint = quinn::Endpoint::server(server, "127.0.0.1:0".parse().unwrap()).unwrap();
+    let address = endpoint.local_addr().unwrap();
+    let mut acceptor = zero_transport::hysteria2::Acceptor::new(endpoint);
+    tokio::spawn(async move {
+        let passwords: Vec<Box<str>> = vec![PASSWORD.into()];
+        while let Ok(Some(accepted)) = acceptor.accept(&passwords).await {
+            if let zero_transport::hysteria2::Accepted::Tcp { mut stream, .. } = accepted {
+                tokio::spawn(async move {
+                    let mut upstream = TcpStream::connect(echo).await.unwrap();
+                    let _ = tokio::io::copy_bidirectional(&mut stream, &mut upstream).await;
+                });
+            }
+        }
+    });
+    address
+}
+
+/// The second connection to a Hysteria2 server that allows early data
+/// resumes in 0-RTT: the handshake and the authentication share the first
+/// flight. (A server that does not allow it gets an ordinary handshake.)
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn hysteria2_reconnects_in_zero_rtt_when_the_server_allows_it() {
+    let echo = echo_service().await;
+    let server = zero_rtt_hysteria2_server(echo).await;
+    let mut tls = zero_security::TlsParams::new(SERVER_NAME);
+    tls.extra_roots = vec![CA_CERTIFICATE.as_bytes().to_vec()];
+    let destination = zero_core::Destination::tcp(zero_core::Address::Ip(echo.ip()), echo.port());
+
+    async fn echo_once(mut stream: zero_core::BoxStream, body: &[u8]) {
+        stream.write_all(body).await.unwrap();
+        let mut back = vec![0u8; body.len()];
+        tokio::time::timeout(Duration::from_secs(10), stream.read_exact(&mut back))
+            .await
+            .expect("echo timed out")
+            .unwrap();
+        assert_eq!(back, body);
+    }
+
+    let before = zero_transport::hysteria2::zero_rtt_accepted();
+    let first = zero_transport::hysteria2::connect(
+        &[server],
+        &tls,
+        PASSWORD,
+        &zero_transport::quic_shape::QuicShape::default(),
+        &destination,
+    )
+    .await
+    .expect("first connection");
+    echo_once(first, b"first, in 1-RTT").await;
+    // Give the server's session ticket time to arrive, then drop the pooled
+    // connection so the next stream has to dial.
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    zero_transport::quic_pool::close_all_to(server);
+
+    let second = zero_transport::hysteria2::connect(
+        &[server],
+        &tls,
+        PASSWORD,
+        &zero_transport::quic_shape::QuicShape::default(),
+        &destination,
+    )
+    .await
+    .expect("resumed connection");
+    echo_once(second, b"second, resumed").await;
+    assert!(
+        zero_transport::hysteria2::zero_rtt_accepted() > before,
+        "the reconnection did not use 0-RTT"
+    );
+}
+
+/// A client, a hop that carries it and a Tide server only the hop can name.
+struct ChainedTide {
+    tunnel: Tunnel,
+    /// The hop's core: its counters show whether traffic really crossed it.
+    hop: Arc<zero_runtime::Server>,
+}
+
+/// Tide reached through `dialerProxy`: the client holds no address for the
+/// Tide server (only the hop's own resolver knows its name), so every
+/// connection to it has to be carried by the hop.
+async fn chained_tide(datagrams: bool) -> ChainedTide {
+    use zero_protocol::tide::{encode_key, generate_keypair};
+    let echo = echo_service().await;
+    let udp_echo = udp_echo_service().await;
+    let (egress_port, hop_port, socks_port) = (free_tcp_port(), free_tcp_port(), free_tcp_port());
+    let (secret, public) = generate_keypair();
+    let user = [7u8; 16];
+    let egress = spawn(json!({
+        "log": {"loglevel": "warning"},
+        "inbounds": [{
+            "tag": "egress-in",
+            "listen": "127.0.0.1",
+            "port": egress_port,
+            "protocol": "zerov1",
+            "settings": {
+                "path": "/assets/app",
+                "secretKey": encode_key(&secret),
+                "users": [{"id": encode_key(&user), "name": "test"}],
+            },
+            "streamSettings": inbound_tls(),
+        }],
+        "outbounds": [{"tag": "direct", "protocol": "freedom"}],
+    }));
+    let hop = spawn(json!({
+        "log": {"loglevel": "warning"},
+        "inbounds": [{
+            "tag": "hop-in",
+            "listen": "127.0.0.1",
+            "port": hop_port,
+            "protocol": "vless",
+            "settings": {"clients": [{"id": UUID}]},
+        }],
+        "outbounds": [{"tag": "direct", "protocol": "freedom"}],
+        "dns": {"hosts": {SERVER_NAME: ["127.0.0.1"]}},
+    }));
+    let mut tide_stream = client_tls();
+    tide_stream["sockopt"] = json!({"dialerProxy": "hop"});
+    let client = spawn(json!({
+        "log": {"loglevel": "warning"},
+        "inbounds": [{
+            "tag": "socks-in",
+            "listen": "127.0.0.1",
+            "port": socks_port,
+            "protocol": "socks",
+            "settings": {"udp": true},
+        }],
+        "outbounds": [
+            {
+                "tag": "proxy",
+                "protocol": "zerov1",
+                "settings": {
+                    "address": SERVER_NAME,
+                    "port": egress_port,
+                    "path": "/assets/app",
+                    "serverKey": encode_key(&public),
+                    "user": encode_key(&user),
+                    "datagrams": datagrams,
+                },
+                "streamSettings": tide_stream,
+            },
+            {
+                "tag": "hop",
+                "protocol": "vless",
+                "settings": {"vnext": [{
+                    "address": "127.0.0.1",
+                    "port": hop_port,
+                    "users": [{"id": UUID, "encryption": "none"}],
+                }]},
+                "streamSettings": {"network": "tcp", "security": "none"},
+            },
+        ],
+    }));
+    wait_until_listening(&egress).await;
+    wait_until_listening(&hop).await;
+    wait_until_listening(&client).await;
+    ChainedTide {
+        tunnel: Tunnel {
+            socks: SocketAddr::new("127.0.0.1".parse().unwrap(), socks_port),
+            echo,
+            udp_echo,
+            relay: SocketAddr::new("127.0.0.1".parse().unwrap(), hop_port),
+        },
+        hop,
+    }
+}
+
+/// `zerov1` with `dialerProxy` set: the Tide server is dialled through the
+/// hop, over as many connections as the session asks for.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn tide_runs_through_a_dialer_proxy_hop() {
+    let chained = chained_tide(false).await;
+    let tunnel = &chained.tunnel;
+    let mut stream = socks_connect(tunnel.socks, tunnel.echo).await.unwrap();
+    round_trip(&mut stream, &payload(1, 64)).await;
+    round_trip(&mut stream, &payload(2, 512 * 1024)).await;
+    let mut again = socks_connect(tunnel.socks, tunnel.echo).await.unwrap();
+    round_trip(&mut again, &payload(3, 64)).await;
+    // The hop counts a connection when it accepts it (traffic only when the
+    // connection ends): Tide opens a download and an upload connection.
+    let accepted = chained.hop.stats.snapshot().accepted;
+    assert!(
+        accepted >= 2,
+        "Tide did not connect through the hop: {accepted}"
+    );
+}
+
+/// The same chain carries Tide's UDP flows, which must not go around it to
+/// the server's own address.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn tide_datagrams_follow_a_dialer_proxy_hop() {
+    let chained = chained_tide(true).await;
+    udp_round_trip(&chained.tunnel, b"datagram through a hop").await;
+    let mut stream = socks_connect(chained.tunnel.socks, chained.tunnel.echo)
+        .await
+        .unwrap();
+    round_trip(&mut stream, &payload(5, 64 * 1024)).await;
+    let accepted = chained.hop.stats.snapshot().accepted;
+    assert!(
+        accepted >= 2,
+        "Tide did not connect through the hop: {accepted}"
+    );
+}

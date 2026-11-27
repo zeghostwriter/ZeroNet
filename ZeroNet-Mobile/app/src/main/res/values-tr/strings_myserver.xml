@@ -1,0 +1,136 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="ms_card_title">Sunucum</string>
+    <string name="ms_card_body">Kendi sunucunu birkaç dakikada kur</string>
+    <string name="ms_title">Sunucum</string>
+    <string name="ms_default_name">Sunucum</string>
+    <string name="ms_intro_1">Küçük bir sunucu (VPS) kirala, adresini ve parolasını buraya yaz. ZeroNet her şeyi üzerine kurar, başlatır ve sana kullanacağın yapılandırmaları verir.</string>
+    <string name="ms_intro_2">Ona şu an kaç cihazın bağlı olduğunu da canlı görebilirsin.</string>
+    <string name="ms_privacy">Yalnızca sayılar gösterilir. Bağlanan kimsenin adresi okunmaz, saklanmaz, gönderilmez.</string>
+    <string name="ms_add">Sunucu ekle</string>
+    <string name="ms_connected_count">%1$d bağlı</string>
+    <string name="ms_service_reality">VLESS + REALITY</string>
+    <string name="ms_service_xhttp">VLESS + XHTTP</string>
+    <string name="ms_service_masterdns">MasterDnsVPN</string>
+
+    <string name="ms_form_title">Sunucu ekle</string>
+    <string name="ms_field_name">Ad</string>
+    <string name="ms_field_address">Sunucu adresi</string>
+    <string name="ms_field_port">SSH portu</string>
+    <string name="ms_field_user">Kullanıcı</string>
+    <string name="ms_field_password">Parola</string>
+    <string name="ms_field_domain">Tünel alan adı</string>
+    <string name="ms_password_note">Parola giriş için bir kez kullanılır ve saklanmaz. Uygulama onun yerine sunucuya kendi anahtarını koyar.</string>
+    <string name="ms_what_to_install">Ne kurulsun</string>
+    <string name="ms_reality_note">Hızlı ve sıradan bir web sitesi gibi görünür</string>
+    <string name="ms_xhttp_note">Yine REALITY üzerinden, kendi portunda. İlki bağlanmazsa deneyebileceğin farklı bir trafik biçimi.</string>
+    <string name="ms_masterdns_note">Yalnızca DNS üzerinden çalışır. Kendi alan adın gerekir.</string>
+    <string name="ms_domain_note">Sahip olduğun bir alt alan adı, örneğin t.example.com. Sonraki ekranlar neyin ayarlanacağını gösterir.</string>
+    <string name="ms_connect">Bağlan ve kur</string>
+    <string name="ms_err_address">Sunucunun adresini (IP) yaz.</string>
+    <string name="ms_err_address_shape">Adres yalnızca IP\'dir, örneğin 203.0.113.7.</string>
+    <string name="ms_err_port">SSH portu bir sayıdır, genelde 22.</string>
+    <string name="ms_err_user">Giriş kullanıcısını yaz (genelde root).</string>
+    <string name="ms_err_password">Sunucunun parolasını yaz.</string>
+    <string name="ms_err_choose">Neyin kurulacağını seç.</string>
+    <string name="ms_err_domain">Tünel alan adını yaz, örneğin t.example.com.</string>
+
+    <string name="ms_busy_title">Lütfen bekle</string>
+    <string name="ms_busy">Sunucuya bağlanılıyor…</string>
+
+    <string name="ms_identity_title">Bu senin sunucun mu?</string>
+    <string name="ms_identity_body">Bağlandı. Sunucu kimliğini şöyle bildiriyor:</string>
+    <string name="ms_identity_help">Bunu barındırma panelindekiyle karşılaştır (çoğu panel sunucunun sayfasında veya konsolunda gösterir). Aynıysa devam et. Henüz gizli hiçbir şey gönderilmedi.</string>
+    <string name="ms_identity_yes">Evet, aynı</string>
+    <string name="ms_identity_no">Hayır ya da kontrol edemiyorum</string>
+
+    <string name="ms_dns_title">Alan adını sunucuya yönlendir</string>
+    <string name="ms_dns_step1">1. dash.cloudflare.com\'u aç, alan adını seç, sonra DNS, Records, Add record.</string>
+    <string name="ms_dns_step2">2. Bu iki kaydı ekle. Bulutu gri bırak (yalnızca DNS), asla turuncu yapma.</string>
+    <string name="ms_dns_record">Kayıt %1$d: tür %2$s</string>
+    <string name="ms_dns_name">Ad</string>
+    <string name="ms_dns_value">Değer (IPv4 adresi)</string>
+    <string name="ms_dns_nameserver">Ad sunucusu</string>
+    <string name="ms_dns_needs_ip">IP değil bir ad yazdın: ilk kaydın değeri olarak sunucunun IP adresini kullan.</string>
+    <string name="ms_dns_step3">3. Kontrol et. Yayılması birkaç dakika sürebilir; şimdi kurup sonra test edebilirsin.</string>
+    <string name="ms_dns_other">Cloudflare\'de değil misin? Her kayıt şirketi olur: aynı iki kaydı ekle.</string>
+    <string name="ms_dns_not_checked">Henüz kontrol edilmedi.</string>
+    <string name="ms_dns_checking">Kontrol ediliyor…</string>
+    <string name="ms_dns_right">Kayıt sunucuna işaret ediyor. İyi.</string>
+    <string name="ms_dns_wrong">Ad çözülüyor ama bu sunucuya değil. İlk kaydın değerini kontrol et.</string>
+    <string name="ms_dns_unknown">Henüz görünmüyor. Yeni eklediysen birkaç dakika bekleyip tekrar kontrol et.</string>
+    <string name="ms_dns_check">Kayıtları kontrol et</string>
+    <string name="ms_dns_install">Şimdi kur</string>
+    <string name="ms_copy">Kopyala</string>
+
+    <string name="ms_progress_title">Kuruluyor</string>
+    <string name="ms_progress_wait">Bir iki dakika sürer. Uygulamayı açık tut.</string>
+    <string name="ms_step_check">Sunucu denetleniyor</string>
+    <string name="ms_step_packages">Gerekenler alınıyor</string>
+    <string name="ms_step_download">İndiriliyor ve doğrulanıyor</string>
+    <string name="ms_step_install">Kuruluyor</string>
+    <string name="ms_step_configure">Ayarlar yazılıyor</string>
+    <string name="ms_step_start">Başlatılıyor</string>
+    <string name="ms_step_firewall">Portlar açılıyor</string>
+    <string name="ms_step_access">Bu uygulamanın erişimi kaydediliyor</string>
+    <string name="ms_failed">Durdu:</string>
+    <string name="ms_failed_note">Yarım kalmış hiçbir şey çalışmıyor. Nedeni düzelt ve tekrar dene.</string>
+    <string name="ms_back">Geri dön</string>
+
+    <string name="ms_result_title">Sunucun hazır</string>
+    <string name="ms_ready">%1$s çalışıyor.</string>
+    <string name="ms_config_for">Yapılandırma: %1$s</string>
+    <string name="ms_copy_link">Bağlantıyı kopyala</string>
+    <string name="ms_show_code">Kodu göster</string>
+    <string name="ms_hide_code">Kodu gizle</string>
+    <string name="ms_qr_description">Yapılandırma bağlantısının QR kodu</string>
+    <string name="ms_use_here">Bu uygulamada kullan</string>
+    <string name="ms_used_in_app">Sunucularına eklendi. Şimdi bağlanabilirsin.</string>
+    <string name="ms_use_failed">Sunucularına eklenemedi.</string>
+    <string name="ms_files_note">Bu dosyalar bilgisayardaki MasterDnsVPN programı içindir. Bu uygulamada yukarıdaki bağlantıyı kullan.</string>
+    <string name="ms_files_secret">Dosyalar tünelin anahtarını içerir: yalnızca güvendiğin kişilerle paylaş.</string>
+    <string name="ms_share">Paylaş</string>
+    <string name="ms_open_server">Sunucu sayfasını aç</string>
+    <string name="ms_note_port_moved">%1$d portu zaten %2$s tarafından kullanılıyordu, bu yüzden %3$d portu kullanıldı.</string>
+    <string name="ms_note_firewall_opened">Portlar sunucunun güvenlik duvarında açıldı (%1$s).</string>
+    <string name="ms_note_provider_firewall">Barındırma sağlayıcının kendi güvenlik duvarı olabilir. Hiçbir şey bağlanmazsa panelinde %1$s portunu aç.</string>
+    <string name="ms_note_unverified">Sunucu programı bu uygulamadan yüklendi ve imzalı listeyle doğrulanmadı.</string>
+    <string name="ms_note_key">Uygulama kendi anahtarıyla yeniden giriş yapamadı, bu yüzden bir sonraki sefer parolayı soracak.</string>
+
+    <string name="ms_server_title">Sunucu</string>
+    <string name="ms_gone">Bu sunucu artık yok.</string>
+    <string name="ms_live">Canlı kullanım</string>
+    <string name="ms_reading">Okunuyor…</string>
+    <string name="ms_stat_now">Şu an bağlı</string>
+    <string name="ms_stat_recent">Son %1$d dk</string>
+    <string name="ms_stat_sessions">Açık oturumlar</string>
+    <string name="ms_traffic">Başlangıçtan beri trafik: yükleme %1$s, indirme %2$s</string>
+    <string name="ms_masterdns_lag">Sunucunun günlüğünden sayılır: 5 dakikaya kadar geride kalır, trafik değeri yoktur.</string>
+    <string name="ms_test">MasterDNS\'i buradan dene</string>
+    <string name="ms_testing">Deneniyor…</string>
+    <string name="ms_probe_none">MasterDNS hiçbir genel çözümleyici üzerinden yanıt vermedi. İki DNS kaydının doğru olduğunu kontrol et ve birkaç dakika bekle.</string>
+    <string name="ms_probe_ok">MasterDNS çalışıyor: %2$d çözümleyiciden %1$d tanesi ona ulaştı (en iyi %3$d ms).</string>
+    <string name="ms_remove">Sunucudan kaldır</string>
+    <string name="ms_removed">Kaldırıldı. Sunucu yeniden temiz.</string>
+
+    <string name="ms_remove_title">Her şey kaldırılsın mı?</string>
+    <string name="ms_remove_what">Bu işlem ZeroNet\'i %1$s üzerinden kaldırır.</string>
+    <string name="ms_remove_detail">Sunucu programını ve ayarlarını durdurup siler, açtığı portları kapatır ve bu uygulamanın anahtarını sunucudan çıkarır. Sunucudaki diğer her şey kalır. Başkalarına verdiğin yapılandırmalar çalışmaz olur.</string>
+    <string name="ms_remove_type">Onaylamak için %1$s yaz:</string>
+    <string name="ms_remove_word" translatable="false">remove</string>
+    <string name="ms_remove_confirm">Kaldır</string>
+    <string name="ms_cancel">Vazgeç</string>
+    <string name="ms_forget">Yalnızca bu uygulamada unut</string>
+    <string name="ms_forget_note">Sunucu kapandıysa ya da ona ulaşamıyorsan bunu kullan. Sunucuda hiçbir şey değişmez.</string>
+    <string name="ms_login_with">Giriş yöntemi</string>
+    <string name="ms_login_password">Parola</string>
+    <string name="ms_login_key">SSH anahtarı</string>
+    <string name="ms_field_key">Özel anahtar</string>
+    <string name="ms_key_hint">Anahtar metnini yapıştır (-----BEGIN … PRIVATE KEY-----)</string>
+    <string name="ms_key_choose">Anahtar dosyası seç</string>
+    <string name="ms_field_passphrase">Anahtar parolası (varsa)</string>
+    <string name="ms_key_note">Sunucu parola kabul etmiyorsa bunu kullan. Anahtar giriş için bir kez kullanılır ve hiçbir yere kaydedilmez. .pub dosyasını değil, özel anahtarı kullan.</string>
+    <string name="ms_err_key">Özel SSH anahtarını yapıştır ya da seç.</string>
+    <string name="ms_err_key_shape">Bu bir özel anahtar değil. -----BEGIN … PRIVATE KEY----- ile başlamalı. .pub dosyasını mı seçtin?</string>
+    <string name="ms_key_unreadable">Bu dosya okunamadı.</string>
+</resources>

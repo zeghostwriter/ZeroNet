@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="settings_local_dns">DNS for Iranian sites</string>
+    <string name="settings_local_dns_hint">Asked directly, without the tunnel, for Iranian websites and apps</string>
+    <string name="settings_local_dns_note">Leave empty to use a provider above. Accepts an IP or an IP-addressed tls://… / https://…/dns-query.</string>
+    <string name="settings_fake_dns">Fake DNS</string>
+    <string name="settings_fake_dns_hint">Hands apps placeholder addresses and lets the tunnel look up the real ones. Leave it on unless an app misbehaves.</string>
+    <string name="import_serverless">Add a profile with no server</string>
+    <string name="import_serverless_hint">Connects directly and hides the site name from the filter. No server needed, but it only helps with sites whose address is not blocked.</string>
+</resources>

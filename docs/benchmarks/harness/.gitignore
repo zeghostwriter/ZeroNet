@@ -1,0 +1,15 @@
+# Local benchmark setup, created per docs/benchmarks/README.md. None of it
+# belongs in the tree: the CA key is a secret (throwaway, but still), and the
+# Xray binary and run outputs are machine-local.
+ca.key
+ca.pem
+ca.srl
+cert.pem
+key.pem
+server.csr
+xray
+loadgen/target/
+# alternate-port copies + local runner (10808 is taken on this box)
+client-tls-bench.json
+client-plain-bench.json
+runbench.py

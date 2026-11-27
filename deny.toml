@@ -1,0 +1,60 @@
+# Dependency policy for Zray-Core (PLAN-01 phase 0).
+# Keep this file deliberately explicit: a new license or source must be
+# reviewed instead of silently entering the release graph.
+
+[advisories]
+unmaintained = "workspace"
+unsound = "all"
+yanked = "deny"
+ignore = [
+  # lru 0.12 is pinned by ratatui 0.29 (the TUI's layout cache), and the
+  # fixed releases are semver-incompatible with it. Both advisories concern
+  # APIs ratatui never calls: its only use is `LruCache::get_or_insert`.
+  { id = "RUSTSEC-2026-0002", reason = "IterMut is not used by ratatui 0.29" },
+  { id = "RUSTSEC-2026-0253", reason = "LruCache::pop is not used by ratatui 0.29" },
+  # rsa is pulled in by Arti (zero-tor). The Marvin attack times RSA private-key
+  # operations; Arti's client uses the crate to verify relays' RSA identity
+  # certificates (public-key operations), and Zray holds no RSA private key and
+  # decrypts nothing with RSA. No patched release exists upstream.
+  { id = "RUSTSEC-2023-0071", reason = "Arti verifies relay RSA certificates only; no RSA private-key use" },
+]
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+allow-wildcard-paths = true
+highlight = "all"
+deny = [
+  { name = "v2ray-rust" },
+  { name = "sing-box" },
+]
+
+[licenses]
+confidence-threshold = 0.8
+allow = [
+  "Apache-2.0",
+  "0BSD",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  # Boost: permissive, OSI approved. clipboard-win / error-code, via arboard
+  # (the TUI's clipboard on Windows).
+  "BSL-1.0",
+  "CDLA-Permissive-2.0",
+  "CC0-1.0",
+  "GPL-3.0-only",
+  "ISC",
+  "MIT",
+  "MPL-2.0",
+  "OpenSSL",
+  "Unicode-DFS-2016",
+  "Unicode-3.0",
+  # Public-domain dedication, compatible with the GPL. async_executors, via
+  # Arti's runtime layer (zero-tor).
+  "Unlicense",
+  "Zlib",
+]
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

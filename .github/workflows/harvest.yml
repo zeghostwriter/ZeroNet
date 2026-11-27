@@ -1,0 +1,101 @@
+name: harvest
+
+# Every two hours: fetch the public config feeds (the app's own and some
+# Iran-focused collectors), the configs posted in Iranian Telegram
+# channels (deploy/crowd/telegram-channels.json is the seed list; the
+# harvest finds more and remembers them in telegram-state.json on the
+# crowd-data branch) and the config lists in GitHub repositories pushed to
+# in the last few days (found by GitHub's search, remembered with how many
+# of their servers worked in github-state.json on the same branch), test
+# every config the way the app does, and
+# publish the ones that work and are encrypted as verified.txt on the
+# crowd-data branch. The app searches that list before the big feeds, so it
+# usually connects without downloading or testing thousands of dead
+# entries on a slow link. See crates/zero-discovery/src/bin/zeronet-harvest.rs.
+on:
+  schedule:
+    - cron: "37 */2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# Shared with the crowd workflow: both replace the crowd-data commit.
+concurrency:
+  group: crowd-data
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  harvest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          key: crowd
+      - run: cargo build --release -p zero-discovery --bin zeronet-harvest --bin zeronet-sign
+      - name: channels found by earlier runs
+        run: |
+          curl -fsS --max-time 30 -o telegram-state.json \
+            "https://raw.githubusercontent.com/${{ github.repository }}/crowd-data/telegram-state.json" \
+            || echo '{}' > telegram-state.json
+          curl -fsS --max-time 30 -o github-state.json \
+            "https://raw.githubusercontent.com/${{ github.repository }}/crowd-data/github-state.json" \
+            || echo '{}' > github-state.json
+      - name: find and test configs
+        env:
+          # For GitHub's search; read-only use of the workflow's own token.
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          target/release/zeronet-harvest \
+            --sources deploy/crowd/sources.json \
+            --sources deploy/crowd/harvest-sources.json \
+            --telegram deploy/crowd/telegram-channels.json \
+            --telegram-state telegram-state.json \
+            --github-state github-state.json \
+            --out verified.txt --want 300 --min 20 --minutes 20
+      # Keep what the fresh workflow found in the priority channels at the
+      # top; it tested them in the last ten minutes.
+      - name: keep the fresh configs at the top
+        run: |
+          git fetch -q --depth 1 origin crowd-data
+          if git show FETCH_HEAD:fresh.txt > fresh.txt 2>/dev/null; then
+            target/release/zeronet-harvest merge --top fresh.txt \
+              --rest verified.txt --out verified.txt
+          fi
+      # Sign the list so apps can tell a genuine one from a CDN's or a
+      # network's substitute. Skipped, with a warning, when no signing key is
+      # set: the app then falls back to trusting the list as before.
+      - name: sign the list
+        env:
+          CROWD_SIGNING_KEY: ${{ secrets.CROWD_SIGNING_KEY }}
+        run: |
+          # The decoy-name list the apps fetch next to verified.txt; it is
+          # edited by hand in deploy/crowd and only copied and signed here.
+          cp deploy/crowd/domestic-sni.txt domestic-sni.txt
+          if [ -n "$CROWD_SIGNING_KEY" ]; then
+            target/release/zeronet-sign sign domestic-sni.txt
+            target/release/zeronet-sign verify domestic-sni.txt
+            target/release/zeronet-sign sign verified.txt
+            # The app rejects a list whose signature does not verify against
+            # the key compiled into it. A secret that belongs to another key
+            # would publish lists nobody accepts, so stop here instead.
+            target/release/zeronet-sign verify verified.txt
+          else
+            echo "::warning::No CROWD_SIGNING_KEY; publishing verified.txt unsigned. Run the 'create crowd signing key' workflow."
+          fi
+      - name: publish
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          files="verified.txt domestic-sni.txt telegram-state.json github-state.json"
+          [ -f verified.txt.sig ] && files="$files verified.txt.sig"
+          [ -f domestic-sni.txt.sig ] && files="$files domestic-sni.txt.sig"
+          .github/scripts/publish-crowd-data.sh $files

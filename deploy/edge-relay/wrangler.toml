@@ -1,0 +1,10 @@
+# The Worker's name is its address: https://<name>.<subdomain>.workers.dev.
+name = "edge-relay"
+main = "src/worker.js"
+compatibility_date = "2026-09-01"
+
+[vars]
+# The Tide server this relay forwards to: https address, no path.
+ORIGIN = "https://egress.example.com"
+# The Tide path; must match the server's `path` setting.
+PATH_PREFIX = "/assets/v2"

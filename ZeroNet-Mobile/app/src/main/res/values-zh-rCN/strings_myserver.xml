@@ -1,0 +1,136 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="ms_card_title">我的服务器</string>
+    <string name="ms_card_body">几分钟内搭好你自己的服务器</string>
+    <string name="ms_title">我的服务器</string>
+    <string name="ms_default_name">我的服务器</string>
+    <string name="ms_intro_1">租一台小服务器（VPS），在这里填写它的地址和密码。ZeroNet 会在上面安装并启动所有内容，并给你可用的配置。</string>
+    <string name="ms_intro_2">你还可以实时看到有多少设备连着它。</string>
+    <string name="ms_privacy">只显示数量。任何连接者的地址都不会被读取、保存或发送。</string>
+    <string name="ms_add">添加服务器</string>
+    <string name="ms_connected_count">%1$d 个已连接</string>
+    <string name="ms_service_reality">VLESS + REALITY</string>
+    <string name="ms_service_xhttp">VLESS + XHTTP</string>
+    <string name="ms_service_masterdns">MasterDnsVPN</string>
+
+    <string name="ms_form_title">添加服务器</string>
+    <string name="ms_field_name">名称</string>
+    <string name="ms_field_address">服务器地址</string>
+    <string name="ms_field_port">SSH 端口</string>
+    <string name="ms_field_user">登录用户</string>
+    <string name="ms_field_password">密码</string>
+    <string name="ms_field_domain">隧道域名</string>
+    <string name="ms_password_note">密码只在登录时用一次，不会保存。应用会改为在服务器上放置它自己的密钥。</string>
+    <string name="ms_what_to_install">安装什么</string>
+    <string name="ms_reality_note">速度快，看起来像普通网站</string>
+    <string name="ms_xhttp_note">同样走 REALITY，使用独立端口。流量形态不同，第一个连不上时可以试试。</string>
+    <string name="ms_masterdns_note">只通过 DNS 工作，需要你自己的域名。</string>
+    <string name="ms_domain_note">你拥有的子域名，例如 t.example.com。接下来的页面会告诉你要设置什么。</string>
+    <string name="ms_connect">连接并安装</string>
+    <string name="ms_err_address">请填写服务器地址（它的 IP）。</string>
+    <string name="ms_err_address_shape">地址就是 IP，例如 203.0.113.7。</string>
+    <string name="ms_err_port">SSH 端口是个数字，通常是 22。</string>
+    <string name="ms_err_user">请填写登录用户（通常是 root）。</string>
+    <string name="ms_err_password">请填写服务器密码。</string>
+    <string name="ms_err_choose">请选择要安装的内容。</string>
+    <string name="ms_err_domain">请填写隧道域名，例如 t.example.com。</string>
+
+    <string name="ms_busy_title">请稍等</string>
+    <string name="ms_busy">正在联系服务器…</string>
+
+    <string name="ms_identity_title">这是你的服务器吗？</string>
+    <string name="ms_identity_body">已连接。服务器报告的身份指纹是：</string>
+    <string name="ms_identity_help">请与主机商面板中的指纹对比（很多面板会在服务器页面或控制台里显示）。一致就继续。目前还没有发送任何机密内容。</string>
+    <string name="ms_identity_yes">是的，一致</string>
+    <string name="ms_identity_no">不一致，或无法核对</string>
+
+    <string name="ms_dns_title">把域名指向服务器</string>
+    <string name="ms_dns_step1">1. 打开 dash.cloudflare.com，选择你的域名，然后进入 DNS、Records、Add record。</string>
+    <string name="ms_dns_step2">2. 添加这两条记录。云朵保持灰色（仅 DNS），不要变成橙色。</string>
+    <string name="ms_dns_record">记录 %1$d：类型 %2$s</string>
+    <string name="ms_dns_name">名称</string>
+    <string name="ms_dns_value">值（IPv4 地址）</string>
+    <string name="ms_dns_nameserver">名称服务器</string>
+    <string name="ms_dns_needs_ip">你填的是名称而不是 IP：第一条记录的值请用服务器的 IP 地址。</string>
+    <string name="ms_dns_step3">3. 检查一下。生效可能需要几分钟；也可以先安装，之后再测试。</string>
+    <string name="ms_dns_other">不在 Cloudflare？任何域名注册商都可以：添加同样的两条记录。</string>
+    <string name="ms_dns_not_checked">尚未检查。</string>
+    <string name="ms_dns_checking">正在检查…</string>
+    <string name="ms_dns_right">记录指向了你的服务器。很好。</string>
+    <string name="ms_dns_wrong">域名能解析，但不是指向这台服务器。请检查第一条记录的值。</string>
+    <string name="ms_dns_unknown">暂时看不到。如果刚添加，请等几分钟再检查。</string>
+    <string name="ms_dns_check">检查记录</string>
+    <string name="ms_dns_install">立即安装</string>
+    <string name="ms_copy">复制</string>
+
+    <string name="ms_progress_title">正在设置</string>
+    <string name="ms_progress_wait">需要一两分钟。请保持应用打开。</string>
+    <string name="ms_step_check">检查服务器</string>
+    <string name="ms_step_packages">获取所需组件</string>
+    <string name="ms_step_download">下载并验证</string>
+    <string name="ms_step_install">安装</string>
+    <string name="ms_step_configure">写入设置</string>
+    <string name="ms_step_start">启动</string>
+    <string name="ms_step_firewall">开放端口</string>
+    <string name="ms_step_access">保存此应用的访问权限</string>
+    <string name="ms_failed">已停止：</string>
+    <string name="ms_failed_note">不会留下半途而废的运行内容。排除原因后重试即可。</string>
+    <string name="ms_back">返回</string>
+
+    <string name="ms_result_title">你的服务器已就绪</string>
+    <string name="ms_ready">%1$s 正在运行。</string>
+    <string name="ms_config_for">配置：%1$s</string>
+    <string name="ms_copy_link">复制链接</string>
+    <string name="ms_show_code">显示二维码</string>
+    <string name="ms_hide_code">隐藏二维码</string>
+    <string name="ms_qr_description">配置链接的二维码</string>
+    <string name="ms_use_here">在此应用中使用</string>
+    <string name="ms_used_in_app">已加入你的服务器列表，现在可以连接。</string>
+    <string name="ms_use_failed">无法加入你的服务器列表。</string>
+    <string name="ms_files_note">这些文件用于电脑上的 MasterDnsVPN 程序。在此应用中请使用上面的链接。</string>
+    <string name="ms_files_secret">文件里有隧道的密钥：只分享给你信任的人。</string>
+    <string name="ms_share">分享</string>
+    <string name="ms_open_server">打开服务器页面</string>
+    <string name="ms_note_port_moved">端口 %1$d 已被 %2$s 占用，所以改用端口 %3$d。</string>
+    <string name="ms_note_firewall_opened">已在服务器防火墙中开放端口（%1$s）。</string>
+    <string name="ms_note_provider_firewall">你的主机商可能有自己的防火墙。如果连不上，请在其面板中开放 %1$s。</string>
+    <string name="ms_note_unverified">服务器程序是从此应用上传的，未与已签名的清单核对。</string>
+    <string name="ms_note_key">应用无法用自己的密钥重新登录，所以下次会询问密码。</string>
+
+    <string name="ms_server_title">服务器</string>
+    <string name="ms_gone">这台服务器已不存在。</string>
+    <string name="ms_live">实时使用情况</string>
+    <string name="ms_reading">正在读取…</string>
+    <string name="ms_stat_now">当前已连接</string>
+    <string name="ms_stat_recent">最近 %1$d 分钟</string>
+    <string name="ms_stat_sessions">打开的会话</string>
+    <string name="ms_traffic">启动以来的流量：上传 %1$s，下载 %2$s</string>
+    <string name="ms_masterdns_lag">根据服务器日志统计：最多滞后 5 分钟，没有流量数据。</string>
+    <string name="ms_test">从这里测试 MasterDNS</string>
+    <string name="ms_testing">正在测试…</string>
+    <string name="ms_probe_none">MasterDNS 没有通过任何公共解析器回应。请检查两条 DNS 记录是否正确，并等几分钟。</string>
+    <string name="ms_probe_ok">MasterDNS 可用：%2$d 个解析器中有 %1$d 个连上了它（最快 %3$d 毫秒）。</string>
+    <string name="ms_remove">从服务器上移除</string>
+    <string name="ms_removed">已移除。服务器恢复干净。</string>
+
+    <string name="ms_remove_title">移除全部内容？</string>
+    <string name="ms_remove_what">这会把 ZeroNet 从 %1$s 上卸下。</string>
+    <string name="ms_remove_detail">它会停止并删除服务器程序及其设置，关闭它开放的端口，并从服务器上移除此应用的密钥。服务器上的其他内容保持不变。你发给别人的配置会失效。</string>
+    <string name="ms_remove_type">输入 %1$s 以确认：</string>
+    <string name="ms_remove_word" translatable="false">remove</string>
+    <string name="ms_remove_confirm">移除</string>
+    <string name="ms_cancel">取消</string>
+    <string name="ms_forget">只在此应用中忘记</string>
+    <string name="ms_forget_note">服务器已不存在或连不上时用这个。服务器上不会有任何改动。</string>
+    <string name="ms_login_with">登录方式</string>
+    <string name="ms_login_password">密码</string>
+    <string name="ms_login_key">SSH 密钥</string>
+    <string name="ms_field_key">私钥</string>
+    <string name="ms_key_hint">粘贴密钥文本（-----BEGIN … PRIVATE KEY-----）</string>
+    <string name="ms_key_choose">选择密钥文件</string>
+    <string name="ms_field_passphrase">密钥口令（如果有）</string>
+    <string name="ms_key_note">服务器不允许密码登录时使用。密钥只在登录时用一次，不会被保存。请使用私钥，而不是 .pub 文件。</string>
+    <string name="ms_err_key">请粘贴或选择你的 SSH 私钥。</string>
+    <string name="ms_err_key_shape">这不是私钥。私钥应以 -----BEGIN … PRIVATE KEY----- 开头。是不是选成了 .pub 文件？</string>
+    <string name="ms_key_unreadable">无法读取该文件。</string>
+</resources>

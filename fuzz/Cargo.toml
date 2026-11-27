@@ -1,0 +1,91 @@
+[package]
+name = "zray-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+# A standalone package, not a member of the main workspace: cargo-fuzz builds it
+# with a nightly toolchain and libFuzzer sanitizer flags that should not leak
+# into ordinary `cargo build` of the runtime.
+[workspace]
+
+# Repeated verbatim from the root manifest, which does not reach here: `fuzz`
+# is its own workspace. Without this the crate resolves stock `rustls`, which
+# `zero-security` does not compile against, so the fuzzers would not build at
+# all -- let alone build the code that ships.
+[patch.crates-io]
+rustls = { path = "../vendor/rustls" }
+netstack-smoltcp = { path = "../vendor/netstack-smoltcp" }
+
+[dependencies]
+libfuzzer-sys = "0.4"
+serde_json = "1"
+bytes = "1"
+zero-config = { path = "../crates/zero-config" }
+zero-core = { path = "../crates/zero-core" }
+zero-protocol = { path = "../crates/zero-protocol" }
+zero-security = { path = "../crates/zero-security" }
+zero-transport = { path = "../crates/zero-transport" }
+zero-tun = { path = "../crates/zero-tun" }
+
+[[bin]]
+name = "parse_config_array"
+path = "fuzz_targets/parse_config_array.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "parse_link"
+path = "fuzz_targets/parse_link.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "parse_subscription"
+path = "fuzz_targets/parse_subscription.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "shadowsocks2022_header"
+path = "fuzz_targets/shadowsocks2022_header.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "tls13_record_header"
+path = "fuzz_targets/tls13_record_header.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "tun_ip_packet"
+path = "fuzz_targets/tun_ip_packet.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ws_frame_decode"
+path = "fuzz_targets/ws_frame_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "xhttp_padding"
+path = "fuzz_targets/xhttp_padding.rs"
+test = false
+doc = false
+bench = false
+
+[profile.release]
+debug = 1

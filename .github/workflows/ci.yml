@@ -1,0 +1,272 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+# A second push to the same branch makes the first run's answer irrelevant.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# Nothing here writes to the repository.
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  build:
+    name: build and test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+
+      - name: formatting
+        run: cargo fmt --all -- --check
+
+      - name: clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: tests
+        run: cargo test --workspace --all-targets
+
+      # Doc examples are not covered by --all-targets and are the easiest place
+      # for a stale API to survive unnoticed.
+      - name: doc tests
+        run: cargo test --workspace --doc
+
+      - name: release build
+        run: cargo build --workspace --release
+
+  minimum-toolchain:
+    name: minimum supported Rust
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: read rust-version
+        id: msrv
+        run: echo "version=$(grep -m1 '^rust-version' Cargo.toml | cut -d'"' -f2)" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
+        with:
+          toolchain: ${{ steps.msrv.outputs.version }}
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      # Declaring an MSRV that the workspace does not actually build under is
+      # worse than declaring none, because downstream trusts the number.
+      - run: cargo check --workspace --all-targets
+
+  policy:
+    name: dependency and provenance policy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+        with:
+          toolchain: stable
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2
+        with:
+          command: check
+
+      # A lockfile that changes during a build means the audited dependency set
+      # is not the one being shipped.
+      - name: lockfile is current
+        run: cargo metadata --locked --format-version 1 > /dev/null
+
+  # `fuzz` is a workspace of its own, so `cargo check --workspace` never looks
+  # at it. Builds the targets; running them is a maintainer's job, per
+  # fuzz/README.md.
+  fuzz-targets:
+    name: fuzz targets build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      # Not `--locked`. A lockfile is resolved per platform, so one written on
+      # a single machine is missing the crates every other platform needs, and
+      # pinning it fails the build everywhere except where it was written. The
+      # git dependency is pinned by branch, so re-resolving stays deterministic
+      # about the part that actually matters.
+      - name: check the fuzz targets build
+        run: cargo check --manifest-path fuzz/Cargo.toml --all-targets
+
+  cross:
+    name: cross-platform check
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            target: aarch64-apple-darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+        with:
+          toolchain: stable
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      # The TUN and raw-socket paths drift per platform, so every desktop
+      # target is compiled even where the tests cannot run.
+      - run: cargo check --workspace --target ${{ matrix.target }}
+
+  mobile:
+    name: mobile platform boundary
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+        with:
+          toolchain: stable
+          targets: aarch64-linux-android
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+
+      # `ring`, `aws-lc-sys` and `zstd-sys` all build C, so the shipped
+      # library cannot be produced without the NDK toolchain. The runner has
+      # one; pointing cargo at it is what turns "the Rust compiles" into "the
+      # .so an app would load links".
+      - name: point cargo at the NDK toolchain
+        run: |
+          toolchain="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          test -d "$toolchain" || { echo "no NDK at $ANDROID_NDK_HOME"; exit 1; }
+          api=24
+          {
+            echo "CC_aarch64_linux_android=$toolchain/aarch64-linux-android$api-clang"
+            echo "AR_aarch64_linux_android=$toolchain/llvm-ar"
+            echo "CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=$toolchain/aarch64-linux-android$api-clang"
+          } >> "$GITHUB_ENV"
+
+      # The shared library an Android VpnService loads through JNI.
+      - name: build the Android library
+        run: cargo build -p zray-mobile --target aarch64-linux-android --release
+
+      - name: confirm the exported symbols are present
+        run: |
+          toolchain="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          so=target/aarch64-linux-android/release/libzray_mobile.so
+          test -f "$so"
+          for symbol in zray_start zray_stop zray_set_tun_descriptor \
+                        zray_set_protect_callback zray_last_error; do
+            # -D: the release profile strips the static symbol table; the
+            # exports a loader resolves live in the dynamic one.
+            "$toolchain/llvm-nm" -D --defined-only --extern-only "$so" \
+              | grep -q " $symbol$" || { echo "missing export: $symbol"; exit 1; }
+          done
+
+  apple:
+    name: Apple platform boundary
+    runs-on: macos-latest
+    env:
+      # Rust's default iOS target (10.0) predates `___chkstk_darwin`, which
+      # the C dependencies (zstd) reference when built with a current SDK.
+      # Packet tunnel extensions need iOS 15 or later anyway.
+      IPHONEOS_DEPLOYMENT_TARGET: "15.0"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+        with:
+          toolchain: stable
+          targets: aarch64-apple-ios
+          # llvm-nm matching rustc's LLVM: Xcode's nm can lag behind it and
+          # then reads nothing from the archive.
+          components: llvm-tools
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+
+      # iOS links the static archive into a NEPacketTunnelProvider extension.
+      - name: build the iOS static library
+        run: cargo build -p zray-mobile --target aarch64-apple-ios --release
+
+      - name: confirm the exported symbols are present
+        run: |
+          archive=target/aarch64-apple-ios/release/libzray_mobile.a
+          test -f "$archive"
+          nm_tool="$(ls "$(rustc --print sysroot)"/lib/rustlib/*/bin/llvm-nm | head -n 1)"
+          "$nm_tool" -g --defined-only "$archive" > symbols.txt
+          for symbol in zray_start zray_stop zray_set_tun_descriptor \
+                        zray_set_protect_callback zray_last_error; do
+            grep -q " _$symbol$" symbols.txt \
+              || { echo "missing export: $symbol"; exit 1; }
+          done
+
+      # macOS is a desktop target for the same crate set, and its utun and
+      # ifconfig/route paths are the ones the cross job only type-checks.
+      - name: macOS unit tests
+        run: cargo test -p zero-tun -p zero-core
+
+  android-app:
+    name: Android app
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
+        with:
+          # Its default list includes the legacy "tools" package, which the
+          # SDK repository no longer carries, failing the step.
+          packages: platform-tools
+      # The Android Gradle plugin installs the platform and build tools that
+      # compileSdk names (licences were accepted above), so no package names
+      # are hard-coded here; this only records what the repository offers.
+      - name: available SDK platforms
+        run: sdkmanager --list 2>/dev/null | grep -E "platforms;android-3[6-9]|build-tools;3[6-9]" | sort -u || true
+      - uses: gradle/actions/setup-gradle@0723195856401067f7a2779048b490ace7a47d7c # v5.0.2
+      # The Rust library has its own jobs above; this one checks the Kotlin
+      # and renders every screen (Robolectric + Roborazzi) on the JVM.
+      - name: compile and unit tests
+        working-directory: ZeroNet-Mobile
+        run: ./gradlew --no-daemon -Pzray.skipNative=true :app:compileDebugKotlin :app:testDebugUnitTest
+      - name: screenshots
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: android-screenshots
+          path: ZeroNet-Mobile/app/build/outputs/roborazzi
+          if-no-files-found: ignore
+
+  # The hot-path benchmark asserts bit-identity for the framed read paths and
+  # reports their allocation counts exactly, via a counting global allocator.
+  # An allocation count is the same on every machine, so a regression in it is
+  # visible in review; the wall-clock times it also prints are context only and
+  # are deliberately not gated on.
+  hotpath:
+    name: hot path
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - name: allocation counts and bit-identity
+        run: cargo run --release -p hotpath-bench
+
+  # The shape benchmark replays one proxied page load through each client
+  # framing and prints the packet sizes and directions an observer would see.
+  # It runs on scripted traffic with paused time, so its numbers are the same
+  # everywhere; it fails when a connection opens with a small packet again or
+  # a framing starts costing more upload than it did.
+  shape:
+    name: traffic shape
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - name: packet sizes of a proxied page load
+        run: cargo run --release -p shape-bench

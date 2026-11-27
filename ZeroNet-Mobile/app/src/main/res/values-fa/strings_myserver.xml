@@ -1,0 +1,136 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="ms_card_title">سرور من</string>
+    <string name="ms_card_body">سرور خودت رو توی چند دقیقه راه بنداز</string>
+    <string name="ms_title">سرور من</string>
+    <string name="ms_default_name">سرور من</string>
+    <string name="ms_intro_1">یه سرور کوچیک (VPS) بگیر و آدرس و رمزش رو اینجا بنویس. ZeroNet همه چیز رو روش نصب و روشن میکنه و کانفیگ ها رو بهت میده.</string>
+    <string name="ms_intro_2">میتونی ببینی الان چند دستگاه بهش وصله.</string>
+    <string name="ms_privacy">فقط تعداد نشون داده میشه. آدرس هیچ کسی که وصله خونده، نگه داشته یا فرستاده نمیشه.</string>
+    <string name="ms_add">افزودن سرور</string>
+    <string name="ms_connected_count">%1$d وصل</string>
+    <string name="ms_service_reality">VLESS + REALITY</string>
+    <string name="ms_service_xhttp">VLESS + XHTTP</string>
+    <string name="ms_service_masterdns">MasterDnsVPN</string>
+
+    <string name="ms_form_title">افزودن سرور</string>
+    <string name="ms_field_name">نام</string>
+    <string name="ms_field_address">آدرس سرور</string>
+    <string name="ms_field_port">پورت SSH</string>
+    <string name="ms_field_user">نام کاربری</string>
+    <string name="ms_field_password">رمز</string>
+    <string name="ms_field_domain">دامنه تونل</string>
+    <string name="ms_password_note">رمز فقط یک بار برای ورود استفاده میشه و نگه داشته نمیشه. به جاش برنامه کلید خودش رو روی سرور میذاره.</string>
+    <string name="ms_what_to_install">چی نصب بشه</string>
+    <string name="ms_reality_note">سریع، و شبیه یه سایت معمولی دیده میشه</string>
+    <string name="ms_xhttp_note">یه شکل ترافیک دیگه، روی REALITY و پورت جدا. وقتی اولی وصل نشد امتحانش کن.</string>
+    <string name="ms_masterdns_note">فقط از راه DNS کار میکنه. دامنه خودت رو لازم داره.</string>
+    <string name="ms_domain_note">یه زیردامنه از دامنه خودت، مثل t.example.com. صفحه های بعدی نشون میدن چی باید تنظیم بشه.</string>
+    <string name="ms_connect">وصل شو و نصب کن</string>
+    <string name="ms_err_address">آدرس سرور (IP اون) رو بنویس.</string>
+    <string name="ms_err_address_shape">آدرس فقط همون IP هست، مثل 203.0.113.7.</string>
+    <string name="ms_err_port">پورت SSH یه عدده، معمولا 22.</string>
+    <string name="ms_err_user">نام کاربری ورود رو بنویس (معمولا root).</string>
+    <string name="ms_err_password">رمز سرور رو بنویس.</string>
+    <string name="ms_err_choose">انتخاب کن چی نصب بشه.</string>
+    <string name="ms_err_domain">دامنه تونلت رو بنویس، مثل t.example.com.</string>
+
+    <string name="ms_busy_title">یه لحظه صبر کن</string>
+    <string name="ms_busy">در حال اتصال به سرور…</string>
+
+    <string name="ms_identity_title">این سرور خودته؟</string>
+    <string name="ms_identity_body">وصل شد. سرور هویتش رو این طوری معرفی میکنه:</string>
+    <string name="ms_identity_help">با چیزی که توی پنل هاستینگت هست مقایسه کن (خیلی از پنل ها توی صفحه یا کنسول سرور نشونش میدن). اگه یکی بود ادامه بده. هنوز هیچ چیز محرمانه ای فرستاده نشده.</string>
+    <string name="ms_identity_yes">آره، یکیه</string>
+    <string name="ms_identity_no">نه، یا نمیتونم چک کنم</string>
+
+    <string name="ms_dns_title">دامنه رو به سرور وصل کن</string>
+    <string name="ms_dns_step1">1. dash.cloudflare.com رو باز کن، دامنه ات رو انتخاب کن، بعد DNS، Records، Add record.</string>
+    <string name="ms_dns_step2">2. این دو رکورد رو اضافه کن. ابر رو خاکستری بذار (فقط DNS)، هیچ وقت نارنجی نه.</string>
+    <string name="ms_dns_record">رکورد %1$d: نوع %2$s</string>
+    <string name="ms_dns_name">نام</string>
+    <string name="ms_dns_value">مقدار (آدرس IPv4)</string>
+    <string name="ms_dns_nameserver">نیم سرور</string>
+    <string name="ms_dns_needs_ip">یه اسم نوشتی، نه IP: برای مقدار رکورد اول از IP سرور استفاده کن.</string>
+    <string name="ms_dns_step3">3. چک کن. ممکنه چند دقیقه طول بکشه تا پخش بشه؛ میتونی الان نصب کنی و بعدا تست کنی.</string>
+    <string name="ms_dns_other">توی Cloudflare نیستی؟ هر ثبت کننده ای جواب میده: همین دو رکورد رو اضافه کن.</string>
+    <string name="ms_dns_not_checked">هنوز چک نشده.</string>
+    <string name="ms_dns_checking">در حال چک…</string>
+    <string name="ms_dns_right">رکورد به سرور تو اشاره میکنه. خوبه.</string>
+    <string name="ms_dns_wrong">اسم پیدا میشه ولی به این سرور نمیرسه. مقدار رکورد اول رو چک کن.</string>
+    <string name="ms_dns_unknown">هنوز دیده نمیشه. اگه تازه اضافه اش کردی چند دقیقه صبر کن و دوباره چک کن.</string>
+    <string name="ms_dns_check">چک کردن رکوردها</string>
+    <string name="ms_dns_install">الان نصب کن</string>
+    <string name="ms_copy">کپی</string>
+
+    <string name="ms_progress_title">در حال راه اندازی</string>
+    <string name="ms_progress_wait">یکی دو دقیقه طول میکشه. برنامه رو باز نگه دار.</string>
+    <string name="ms_step_check">بررسی سرور</string>
+    <string name="ms_step_packages">گرفتن چیزهایی که لازم داره</string>
+    <string name="ms_step_download">دانلود و بررسی</string>
+    <string name="ms_step_install">نصب</string>
+    <string name="ms_step_configure">نوشتن تنظیمات</string>
+    <string name="ms_step_start">روشن کردن</string>
+    <string name="ms_step_firewall">باز کردن پورت ها</string>
+    <string name="ms_step_access">ذخیره دسترسی این برنامه</string>
+    <string name="ms_failed">متوقف شد:</string>
+    <string name="ms_failed_note">هیچ کار نیمه کاره ای روشن نمونده. علتش رو درست کن و دوباره امتحان کن.</string>
+    <string name="ms_back">برگشت</string>
+
+    <string name="ms_result_title">سرورت آماده است</string>
+    <string name="ms_ready">%1$s روشنه.</string>
+    <string name="ms_config_for">کانفیگ: %1$s</string>
+    <string name="ms_copy_link">کپی لینک</string>
+    <string name="ms_show_code">نمایش کد</string>
+    <string name="ms_hide_code">پنهان کردن کد</string>
+    <string name="ms_qr_description">کد QR لینک کانفیگ</string>
+    <string name="ms_use_here">توی همین برنامه استفاده کن</string>
+    <string name="ms_used_in_app">به سرورهات اضافه شد. الان میتونی بهش وصل بشی.</string>
+    <string name="ms_use_failed">نشد به سرورهات اضافه بشه.</string>
+    <string name="ms_files_note">این فایل ها برای برنامه MasterDnsVPN روی کامپیوتر هستن. توی همین برنامه از لینک بالا استفاده کن.</string>
+    <string name="ms_files_secret">این فایل ها کلید تونل رو دارن: فقط به آدمهایی بده که بهشون اعتماد داری.</string>
+    <string name="ms_share">اشتراک گذاری</string>
+    <string name="ms_open_server">باز کردن صفحه سرور</string>
+    <string name="ms_note_port_moved">پورت %1$d قبلا توسط %2$s استفاده میشد، برای همین پورت %3$d استفاده شد.</string>
+    <string name="ms_note_firewall_opened">پورت ها توی فایروال سرور باز شدن (%1$s).</string>
+    <string name="ms_note_provider_firewall">ممکنه شرکت هاستینگت فایروال خودش رو هم داشته باشه. اگه چیزی وصل نشد، %1$s رو توی پنلش باز کن.</string>
+    <string name="ms_note_unverified">برنامه سرور از همین اپ آپلود شد و با لیست امضا شده چک نشد.</string>
+    <string name="ms_note_key">برنامه نتونست با کلید خودش دوباره وارد بشه، پس دفعه بعد رمز رو میپرسه.</string>
+
+    <string name="ms_server_title">سرور</string>
+    <string name="ms_gone">این سرور دیگه نیست.</string>
+    <string name="ms_live">مصرف زنده</string>
+    <string name="ms_reading">در حال خوندن…</string>
+    <string name="ms_stat_now">الان وصل</string>
+    <string name="ms_stat_recent">%1$d دقیقه اخیر</string>
+    <string name="ms_stat_sessions">نشست های باز</string>
+    <string name="ms_traffic">ترافیک از زمان روشن شدن: آپلود %1$s، دانلود %2$s</string>
+    <string name="ms_masterdns_lag">از روی لاگ سرور شمرده میشه: تا 5 دقیقه عقب تره و عدد ترافیک نداره.</string>
+    <string name="ms_test">تست MasterDNS از اینجا</string>
+    <string name="ms_testing">در حال تست…</string>
+    <string name="ms_probe_none">MasterDNS از هیچ کدوم از DNS های عمومی جواب نداد. چک کن دو رکورد DNS درست باشن و چند دقیقه صبر کن.</string>
+    <string name="ms_probe_ok">MasterDNS کار میکنه: %1$d از %2$d DNS بهش رسیدن (بهترین %3$d میلی ثانیه).</string>
+    <string name="ms_remove">برداشتن از سرور</string>
+    <string name="ms_removed">برداشته شد. سرور دوباره تمیزه.</string>
+
+    <string name="ms_remove_title">همه چیز برداشته بشه؟</string>
+    <string name="ms_remove_what">این کار ZeroNet رو از %1$s برمیداره.</string>
+    <string name="ms_remove_detail">برنامه سرور و تنظیماتش رو خاموش و پاک میکنه، پورت هایی که باز کرده رو میبنده و کلید این برنامه رو از سرور برمیداره. بقیه چیزهای سرور سر جاشون میمونن. کانفیگ هایی که به بقیه دادی دیگه کار نمیکنن.</string>
+    <string name="ms_remove_type">برای تایید %1$s رو بنویس:</string>
+    <string name="ms_remove_word" translatable="false">remove</string>
+    <string name="ms_remove_confirm">برداشتن</string>
+    <string name="ms_cancel">لغو</string>
+    <string name="ms_forget">فقط توی این برنامه فراموشش کن</string>
+    <string name="ms_forget_note">وقتی سرور از بین رفته یا بهش دسترسی نداری از این استفاده کن. روی سرور چیزی عوض نمیشه.</string>
+    <string name="ms_login_with">ورود با</string>
+    <string name="ms_login_password">رمز عبور</string>
+    <string name="ms_login_key">کلید SSH</string>
+    <string name="ms_field_key">کلید خصوصی</string>
+    <string name="ms_key_hint">متن کلید را بچسبانید (-----BEGIN … PRIVATE KEY-----)</string>
+    <string name="ms_key_choose">انتخاب فایل کلید</string>
+    <string name="ms_field_passphrase">رمز کلید (فقط اگر دارد)</string>
+    <string name="ms_key_note">وقتی سرور ورود با رمز عبور را نمی‌پذیرد از این استفاده کنید. کلید فقط یک بار برای ورود به کار می‌رود و ذخیره نمی‌شود. کلید خصوصی را بدهید، نه فایل .pub را.</string>
+    <string name="ms_err_key">کلید خصوصی SSH را بچسبانید یا انتخاب کنید.</string>
+    <string name="ms_err_key_shape">این کلید خصوصی نیست. باید با -----BEGIN … PRIVATE KEY----- شروع شود. شاید فایل .pub را انتخاب کرده‌اید؟</string>
+    <string name="ms_key_unreadable">خواندن این فایل ممکن نشد.</string>
+</resources>

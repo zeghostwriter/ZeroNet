@@ -1,0 +1,87 @@
+[package]
+name = "zero-runtime"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+# Lets tests of other crates stage a route race for a screen to draw.
+test-util = []
+# QR codes in the Tide server's control panel. Off in the phone library, which
+# is never a server.
+panel = ["dep:qrcode"]
+# The embedded Tor client (Arti). Off by default: it adds a large dependency
+# tree and, while running, tens of MiB. Without it a `tor` outbound parses and
+# validates but every connection fails with a message saying so.
+tor = ["dep:zero-tor"]
+
+[dependencies]
+zero-core = { workspace = true }
+zero-config = { workspace = true }
+zero-dns = { workspace = true }
+zero-net = { workspace = true }
+zero-router = { workspace = true }
+zero-security = { workspace = true }
+zero-transport = { workspace = true }
+zero-protocol = { workspace = true }
+zero-evasion = { workspace = true }
+zero-observatory = { workspace = true }
+zero-tun = { workspace = true }
+zero-tor = { workspace = true, optional = true }
+zero-masterdns = { workspace = true }
+# Inbound TLS configurations are compiled once per generation and cached.
+rustls = { workspace = true }
+socket2 = { workspace = true }
+tokio = { workspace = true }
+bytes = { workspace = true }
+futures = { workspace = true }
+rand = { workspace = true }
+tracing = { workspace = true }
+arc-swap = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+httparse = { workspace = true }
+h3 = { workspace = true }
+h3-quinn = { workspace = true }
+sha2 = { workspace = true }
+# QUIC Initial sniffing decrypts the ClientHello the way RFC 9001 defines it:
+# HKDF for the initial secrets, AES for header protection and AEAD.
+hkdf = { workspace = true }
+aes = { workspace = true }
+aes-gcm = { workspace = true }
+hex = { workspace = true }
+url = { workspace = true }
+qrcode = { version = "0.14", default-features = false, optional = true }
+
+[dev-dependencies]
+# The WireGuard inbound test derives public keys for its client peers.
+x25519-dalek = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "io-util", "net", "time", "test-util"] }
+tracing-subscriber = { workspace = true }
+zero-security = { workspace = true }
+# The ClientHello parity oracle drives the TLS backend directly to capture the
+# shaped hello, without opening a connection to anything.
+rustls = { workspace = true }
+rustls-pki-types = { workspace = true }
+# The sing-box oracle test serves a TLS 1.3 decoy behind the ShadowTLS relay.
+tokio-rustls = { workspace = true }
+# The keepalive wire test stands up a minimal WebSocket relay of its own, so it
+# can count frames without trusting the transport under test to report them.
+sha1 = { workspace = true }
+base64 = { workspace = true }
+# The socket-protection test reads a descriptor's bound port back, which is
+# what lets it assert that the *local* association socket is left alone.
+libc = { workspace = true }
+# The DNS oracle stands up its own DoQ server to compare both clients against.
+quinn = { workspace = true }
+# The XMUX pool tests stand up an HTTP/2 server to count the connections the
+# pool opens against it.
+h2 = { workspace = true }
+http = { workspace = true }
+
+# The WARP route tests run a tunnel against the loopback edge stand-ins.
+zero-transport = { workspace = true, features = ["test-util"] }
+
+# `tune_allocator` sets glibc's mmap threshold.
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = { workspace = true }

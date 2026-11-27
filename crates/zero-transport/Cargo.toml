@@ -1,0 +1,35 @@
+[package]
+name = "zero-transport"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+zero-core = { workspace = true }
+zero-evasion = { workspace = true }
+zero-security = { workspace = true }
+zero-protocol = { workspace = true }
+tokio = { workspace = true }
+bytes = { workspace = true }
+tracing = { workspace = true }
+httparse = { workspace = true }
+h2 = { workspace = true }
+h3 = { workspace = true }
+h3-quinn = { workspace = true }
+quinn = { workspace = true }
+flate2 = { workspace = true }
+http = { workspace = true }
+sha1 = { workspace = true }
+hmac = { workspace = true }
+base64 = { workspace = true }
+rand = { workspace = true }
+rustls = { workspace = true }
+tokio-rustls = { workspace = true }
+ring = { workspace = true }
+quinn-proto = { workspace = true }
+futures = { workspace = true }
+blake2 = { workspace = true }
+
+[features]
+# The loopback WARP stand-ins of `masque::mock`, for other crates' tests.
+test-util = []

@@ -1,0 +1,616 @@
+//! The two liveness tests: a cheap TCP connect and a real request through the
+//! proxy.
+//!
+//! **TCP** answers "is anything listening at the server's address". It is
+//! nearly free and eliminates the majority of a public feed — dead servers,
+//! blocked addresses — in one round trip each. It proves nothing about the
+//! protocol: a filtered server often still completes the handshake.
+//!
+//! **Real** builds the outbound exactly as the runtime would
+//! (`zero_runtime::outbound::connect`), opens a proxied stream to the probe
+//! URL's host and sends a plain `GET`. Only an HTTP status line coming back
+//! through the tunnel counts: that is the same evidence the user's browser
+//! needs. The delay is measured from the start of the connect to the status
+//! line, so it includes the proxy handshake — the latency a user actually
+//! feels on a new connection.
+//!
+//! Both open their sockets through the host's socket protector, so inside a
+//! running VPN they measure the physical network rather than the tunnel.
+
+use std::net::SocketAddr;
+use std::time::{Duration, Instant};
+
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use zero_core::{Address, Destination};
+
+/// Default probe: plain HTTP, answered with an empty 204 by a Google edge
+/// close to every exit.
+///
+/// Not a Cloudflare address. Configs served by Cloudflare Workers (BPB,
+/// edgetunnel and their kin, a large share of what Iranians use) cannot open
+/// a connection from the Worker back into Cloudflare's own network: those
+/// panels route such destinations through a "proxy IP" of uneven quality,
+/// and a probe to cp.cloudflare.com came back as "http: status 404" or not
+/// at all, through configs that work for everything else.
+pub const DEFAULT_PROBE_URL: &str = "http://www.gstatic.com/generate_204";
+
+/// Tried when the tunnel carried the request but the default target answered
+/// wrongly, so one unreachable or misbehaving target does not fail a working
+/// config.
+pub const ALTERNATE_PROBE_URL: &str = "http://cp.cloudflare.com/generate_204";
+
+/// A parsed probe URL.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProbeTarget {
+    pub destination: Destination,
+    pub host_header: String,
+    pub path: String,
+}
+
+impl ProbeTarget {
+    /// Parse an `http://` URL. HTTPS is refused: a TLS layer inside the
+    /// tunnel would double the handshake cost of every test and prove nothing
+    /// more about the proxy.
+    pub fn parse(url: &str) -> Result<Self, String> {
+        let parsed = url::Url::parse(url.trim()).map_err(|error| format!("probe_url: {error}"))?;
+        if parsed.scheme() != "http" {
+            return Err("probe_url must be a plain http:// URL".into());
+        }
+        let host = parsed
+            .host_str()
+            .ok_or_else(|| "probe_url has no host".to_string())?
+            .trim_start_matches('[')
+            .trim_end_matches(']')
+            .to_string();
+        let port = parsed.port().unwrap_or(80);
+        let mut path = parsed.path().to_string();
+        if path.is_empty() {
+            path.push('/');
+        }
+        if let Some(query) = parsed.query() {
+            path.push('?');
+            path.push_str(query);
+        }
+        let host_header = match parsed.port() {
+            Some(port) => format!("{}:{port}", parsed.host_str().unwrap_or(&host)),
+            None => parsed.host_str().unwrap_or(&host).to_string(),
+        };
+        Ok(Self {
+            destination: Destination::tcp(Address::parse_host(&host), port),
+            host_header,
+            path,
+        })
+    }
+}
+
+/// Resolve `host:port`, preferring IPv4 (mobile networks in the target region
+/// rarely carry IPv6 end to end).
+pub async fn resolve(host: &str, port: u16, timeout: Duration) -> Result<Vec<SocketAddr>, String> {
+    // The runtime's resolver: the system's first, with answers a filtering
+    // resolver forges (Iran's 10.10.34.x block page) replaced by encrypted
+    // DNS. Dialling a forged answer only ever produced "connection refused".
+    let address = Address::parse_host(host.trim_matches(['[', ']']));
+    let mut addresses = tokio::time::timeout(
+        timeout,
+        zero_runtime::outbound::resolve_endpoint(&address, port),
+    )
+    .await
+    .map_err(|_| "dns: timed out".to_string())?
+    .map_err(|failure| format!("dns: {failure}"))?;
+    addresses.sort_by_key(|address| address.is_ipv6());
+    addresses.dedup();
+    if addresses.is_empty() {
+        return Err("dns: no addresses".into());
+    }
+    Ok(addresses)
+}
+
+/// Time a TCP handshake to `host:port`. Name resolution is excluded from the
+/// measurement but included in the timeout.
+pub async fn tcp_ping(host: &str, port: u16, timeout: Duration) -> Result<Duration, String> {
+    let deadline = Instant::now() + timeout;
+    let addresses = resolve(host, port, timeout).await?;
+    let mut last_error = String::from("no address answered");
+    // At most two addresses: a feed server with a dozen A records is not
+    // worth a dozen connects in a sweep of thousands.
+    for address in addresses.into_iter().take(2) {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err("tcp: timed out".into());
+        }
+        let started = Instant::now();
+        match tokio::time::timeout(remaining, zero_core::platform::connect_protected(address)).await
+        {
+            Ok(Ok(_stream)) => return Ok(started.elapsed()),
+            Ok(Err(error)) => last_error = format!("tcp: {error}"),
+            Err(_) => return Err("tcp: timed out".into()),
+        }
+    }
+    Err(last_error)
+}
+
+/// One request through `outbound` to `target`, timed to the status line.
+pub async fn real_delay(
+    outbound: &zero_config::Outbound,
+    target: &ProbeTarget,
+    timeout: Duration,
+) -> Result<Duration, String> {
+    let started = Instant::now();
+    let attempt = async {
+        let stream = zero_runtime::outbound::connect(outbound, &target.destination)
+            .await
+            .map_err(|failure| format!("connect: {failure}"))?;
+        // What the tunnel does too: VLESS puts a response header ahead of the
+        // payload, and read unstripped it lands in front of the status line.
+        let mut stream = zero_runtime::outbound::strip_response(outbound, stream);
+        let request = format!(
+            "GET {} HTTP/1.1\r\nHost: {}\r\nUser-Agent: Mozilla/5.0\r\nAccept: */*\r\nConnection: close\r\n\r\n",
+            target.path, target.host_header
+        );
+        stream
+            .write_all(request.as_bytes())
+            .await
+            .map_err(|error| format!("write: {error}"))?;
+        stream
+            .flush()
+            .await
+            .map_err(|error| format!("write: {error}"))?;
+        read_status(&mut stream).await?;
+        let elapsed = started.elapsed();
+        Ok(elapsed)
+    };
+    tokio::time::timeout(timeout, attempt)
+        .await
+        .map_err(|_| "timed out".to_string())?
+}
+
+/// Host of the TLS confirmation request.
+pub const TLS_CONFIRM_HOST: &str = "www.gstatic.com";
+
+/// Host of the TLS confirmation for a direct profile. A direct connection
+/// reaches `www.gstatic.com` with or without fragmentation, so confirming
+/// there would call every direct profile alive. A name the filter reads out
+/// of the hello is what the fragmentation is for.
+pub const DIRECT_CONFIRM_HOST: &str = "www.youtube.com";
+
+fn confirm_host(outbound: &zero_config::Outbound) -> &'static str {
+    if matches!(
+        outbound.protocol,
+        zero_config::OutboundProtocol::Freedom { .. }
+    ) {
+        DIRECT_CONFIRM_HOST
+    } else {
+        TLS_CONFIRM_HOST
+    }
+}
+
+/// A verified HTTPS request through `outbound` to
+/// `https://www.gstatic.com/generate_204`, timed to the status line.
+///
+/// Why this exists: measured from inside Iran (2026-09-24), configs that
+/// answered the plain-HTTP probe in discovery then failed every real request,
+/// TLS handshakes included. A plain `GET` to a well-known host can be
+/// answered by something other than the internet — a captive or broken
+/// server, a CDN worker, a middlebox. A full TLS handshake with certificate
+/// verification against the real host cannot be faked that way, and it is
+/// what the user's browser needs anyway.
+pub async fn tls_confirm(
+    outbound: &zero_config::Outbound,
+    timeout: Duration,
+) -> Result<Duration, String> {
+    let started = Instant::now();
+    let host = confirm_host(outbound);
+    let attempt = async {
+        let destination = Destination::tcp(Address::parse_host(host), 443);
+        let stream = zero_runtime::outbound::connect(outbound, &destination)
+            .await
+            .map_err(|failure| format!("connect: {failure}"))?;
+        let stream = zero_runtime::outbound::strip_response(outbound, stream);
+        let server_name = rustls_pki_types::ServerName::try_from(host.to_string())
+            .map_err(|error| format!("tls: {error}"))?;
+        let mut tls = tokio_rustls::TlsConnector::from(tls_config())
+            .connect(server_name, stream)
+            .await
+            .map_err(|error| format!("tls: {error}"))?;
+        let request = format!(
+            "GET /generate_204 HTTP/1.1\r\nHost: {host}\r\nUser-Agent: Mozilla/5.0\r\nAccept: */*\r\nConnection: close\r\n\r\n"
+        );
+        tls.write_all(request.as_bytes())
+            .await
+            .map_err(|error| format!("write: {error}"))?;
+        tls.flush()
+            .await
+            .map_err(|error| format!("write: {error}"))?;
+        read_status(&mut tls).await?;
+        Ok(started.elapsed())
+    };
+    tokio::time::timeout(timeout, attempt)
+        .await
+        .map_err(|_| "timed out".to_string())?
+}
+
+fn tls_config() -> std::sync::Arc<rustls::ClientConfig> {
+    static CONFIG: std::sync::OnceLock<std::sync::Arc<rustls::ClientConfig>> =
+        std::sync::OnceLock::new();
+    std::sync::Arc::clone(CONFIG.get_or_init(|| {
+        let roots = rustls::RootCertStore {
+            roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
+        };
+        std::sync::Arc::new(
+            rustls::ClientConfig::builder_with_provider(std::sync::Arc::new(
+                rustls::crypto::ring::default_provider(),
+            ))
+            .with_safe_default_protocol_versions()
+            .expect("ring provider supports the default protocol versions")
+            .with_root_certificates(roots)
+            .with_no_client_auth(),
+        )
+    }))
+}
+
+/// Read up to the end of an HTTP status line and accept 2xx/3xx.
+async fn read_status<S: tokio::io::AsyncRead + Unpin>(stream: &mut S) -> Result<u16, String> {
+    let mut head = Vec::with_capacity(64);
+    let mut chunk = [0u8; 256];
+    loop {
+        let read = stream
+            .read(&mut chunk)
+            .await
+            .map_err(|error| format!("read: {error}"))?;
+        if read == 0 {
+            return Err(if head.is_empty() {
+                "read: closed without a response".to_string()
+            } else {
+                "read: closed inside the status line".to_string()
+            });
+        }
+        head.extend_from_slice(&chunk[..read]);
+        if head.contains(&b'\n') || head.len() >= 512 {
+            break;
+        }
+    }
+    let line = String::from_utf8_lossy(&head);
+    let line = line.lines().next().unwrap_or_default();
+    let mut parts = line.split_whitespace();
+    let version = parts.next().unwrap_or_default();
+    let status = parts
+        .next()
+        .and_then(|code| code.parse::<u16>().ok())
+        .filter(|_| version.starts_with("HTTP/"))
+        .ok_or_else(|| "http: malformed status line".to_string())?;
+    if !(200..=399).contains(&status) {
+        return Err(format!("http: status {status}"));
+    }
+    Ok(status)
+}
+
+fn alternate_target(target: &ProbeTarget) -> ProbeTarget {
+    let default = ProbeTarget::parse(DEFAULT_PROBE_URL).expect("the default probe URL parses");
+    if target.host_header == default.host_header {
+        ProbeTarget::parse(ALTERNATE_PROBE_URL).expect("the alternate probe URL parses")
+    } else {
+        default
+    }
+}
+
+/// The outbound as the user's "Allow insecure" switch runs it: with the
+/// certificate check skipped when `allow` is set and the carrier has a
+/// certificate to check, and untouched otherwise. Searches and tests use it
+/// so they find the same servers the connection will then reach.
+pub fn loosened(
+    outbound: &zero_config::Outbound,
+    allow: bool,
+) -> std::borrow::Cow<'_, zero_config::Outbound> {
+    match &outbound.stream.security {
+        zero_config::Security::Tls(tls) if allow && !tls.allow_insecure => {
+            let mut copy = outbound.clone();
+            if let zero_config::Security::Tls(tls) = &mut copy.stream.security {
+                tls.allow_insecure = true;
+            }
+            std::borrow::Cow::Owned(copy)
+        }
+        _ => std::borrow::Cow::Borrowed(outbound),
+    }
+}
+
+/// The real test of one server, as the finder and the "test" buttons run it:
+/// the server as its link describes it, and when that dies in the handshake
+/// on a server that does answer, again with its name hidden from the filter
+/// (an urgent byte in the name, then a decoy ClientHello, then ECH).
+///
+/// Why the further tries: where the network filters by server name, every
+/// TLS server with a filtered name fails the plain test, so automatic
+/// selection would never pick one, although the tunnel itself gets it through
+/// with a decoy (auto mode adds that variant, and the planner turns to it
+/// after a failed handshake). A server that only works behind the decoy is
+/// alive here, and its delay is the decoy's, which is what the user will get.
+/// ECH is the way for a Cloudflare Worker whose name is read however the hello
+/// is cut up: a panel's config that connects and then carries nothing is
+/// exactly that, and without this rung it would be reported dead.
+///
+/// The further tries are only made when they can help: the device can hide
+/// a name and the link has a name to hide (`sni_spoofable`), or the link is a
+/// CDN one ECH fits (`ech_variant_fits`), and the failure was a handshake cut
+/// off, not an address that does not answer at all.
+pub async fn real_test(
+    outbound: &zero_config::Outbound,
+    target: &ProbeTarget,
+    timeout: Duration,
+    confirm: Option<Duration>,
+) -> Result<u64, String> {
+    let plain = real_test_as_is(outbound, target, timeout, confirm).await;
+    let Err(error) = &plain else {
+        return plain;
+    };
+    // A link that carries its own fragmentation (`fm=`) is tried as written
+    // first, and without it when that fails: where fragmenting is what the
+    // network cuts, the server is still alive without it.
+    let fragmented = outbound.stream.evasion.tcp_fragment.is_some()
+        && !matches!(
+            outbound.protocol,
+            zero_config::OutboundProtocol::Freedom { .. }
+        );
+    if fragmented {
+        let mut unfragmented = outbound.clone();
+        unfragmented.stream.evasion.tcp_fragment = None;
+        unfragmented.stream.evasion.tcp_fragment_under = None;
+        if let Ok(delay) = Box::pin(real_test(&unfragmented, target, timeout, confirm)).await {
+            return Ok(delay);
+        }
+        return plain;
+    }
+    // The record version needs nothing from the system, so any link with a
+    // name to hide can try at least that.
+    let can_hide =
+        outbound.stream.evasion.sni_desync.is_none() && crate::config::sni_spoofable(outbound);
+    let can_ech = crate::config::ech_variant_fits(outbound)
+        && outbound.stream.evasion.tcp_fragment.is_none()
+        && outbound.stream.evasion.sni_desync.is_none();
+    let can_move = crate::config::alt_port_fits(outbound);
+    if !(can_hide || can_ech || can_move) || !cut_off_in_the_handshake(outbound, error).await {
+        return plain;
+    }
+    // The urgent byte first (it costs nothing), then the decoy where this
+    // device can send one, then ECH (a lookup, and a name a filter may know).
+    // Every failure is reported when none gets through: the later ones say
+    // how far the server got once its name was out of the filter's sight.
+    let mut failures = error.clone();
+    let mut ways: Vec<(zero_config::Outbound, &str)> = Vec::new();
+    if can_hide {
+        let hidden = |way| {
+            let mut hidden = outbound.clone();
+            hidden.stream.evasion.sni_desync = Some(way);
+            hidden
+        };
+        if zero_evasion::urgent::supported() {
+            ways.push((
+                hidden(zero_config::SniDesyncConfig::urgent()),
+                "with the name hidden",
+            ));
+        }
+        ways.push((
+            hidden(zero_config::SniDesyncConfig::record()),
+            "with another record version",
+        ));
+        if empty_record_fits(outbound) {
+            ways.push((
+                hidden(zero_config::SniDesyncConfig::empty_record()),
+                "behind an empty record",
+            ));
+        }
+        if zero_net::fastopen::supported()
+            && outbound
+                .endpoint()
+                .is_some_and(|(_, port)| zero_net::fastopen::client_first_port(port))
+        {
+            ways.push((
+                hidden(zero_config::SniDesyncConfig::fast_open()),
+                "with the hello in the SYN",
+            ));
+        }
+        if zero_evasion::decoy::available() {
+            ways.push((
+                hidden(zero_config::SniDesyncConfig {
+                    fake_sni: crate::config::SPOOF_DECOY_SNI.into(),
+                    ..zero_config::SniDesyncConfig::decoy()
+                }),
+                "behind a decoy",
+            ));
+        }
+    }
+    if can_ech {
+        let mut sealed = outbound.clone();
+        if let zero_config::Security::Tls(tls) = &mut sealed.stream.security {
+            tls.ech = Some(zero_config::EchConfig {
+                config_list: Box::default(),
+                server_name: None,
+                query_name: None,
+            });
+        }
+        ways.push((sealed, "with ECH"));
+    }
+    if can_move {
+        for port in crate::config::ALT_PORTS {
+            let mut moved = outbound.clone();
+            moved.set_port(port);
+            ways.push((moved, "on another port"));
+        }
+    }
+    for (attempt, label) in ways {
+        match real_test_as_is(&attempt, target, timeout, confirm).await {
+            Ok(delay) => return Ok(delay),
+            Err(second) => failures = format!("{failures}; {label}: {second}"),
+        }
+    }
+    Err(failures)
+}
+
+/// Whether the empty-record way can be tried on this link: REALITY and
+/// ShadowTLS read the first record themselves and drop a connection that
+/// opens with an empty one.
+pub(crate) fn empty_record_fits(outbound: &zero_config::Outbound) -> bool {
+    !matches!(
+        outbound.stream.security,
+        zero_config::Security::Reality(_) | zero_config::Security::ShadowTls(_)
+    )
+}
+
+/// How long the server gets to accept a TCP connection when a test timed out
+/// and the question is whether it is there at all.
+const REACHABLE_WITHIN: Duration = Duration::from_millis(1000);
+
+/// Whether `error`, from a failed test of `outbound`, reads as a handshake
+/// that was cut off after the TCP connection opened: a reset or a TLS
+/// failure says so by itself, and a bare timeout is settled by asking the
+/// server for a TCP connection.
+async fn cut_off_in_the_handshake(outbound: &zero_config::Outbound, error: &str) -> bool {
+    // A reset shows up under either name, depending on whether it landed
+    // before or inside the TLS exchange. A certificate error or an alert is
+    // the server speaking, which no decoy changes.
+    const CUT_OFF: [&str; 3] = [
+        "connect: TCP_RST",
+        "connect: TLS_TIMEOUT",
+        "connect: TLS_HANDSHAKE_MALFORMED",
+    ];
+    if CUT_OFF.iter().any(|kind| error.starts_with(kind)) {
+        return true;
+    }
+    if !error.contains("timed out") && !error.contains("TIMEOUT") {
+        return false;
+    }
+    match outbound.endpoint() {
+        Some((address, port)) => tcp_ping(&address.to_string(), port, REACHABLE_WITHIN)
+            .await
+            .is_ok(),
+        None => false,
+    }
+}
+
+/// One real test of `outbound` exactly as given: a plain-HTTP request as a
+/// cheap filter, then a verified HTTPS confirmation. Only a config that
+/// passes both is alive. The reported delay is the plain request's, so it
+/// stays comparable across protocols and excludes the extra TLS handshake
+/// the confirmation adds.
+async fn real_test_as_is(
+    outbound: &zero_config::Outbound,
+    target: &ProbeTarget,
+    timeout: Duration,
+    confirm: Option<Duration>,
+) -> Result<u64, String> {
+    let first = match real_delay(outbound, target, timeout).await {
+        Ok(delay) => delay,
+        // The proxy connected and carried the request; only the target's
+        // answer was wrong. Ask another target before blaming the config.
+        Err(error) if error.starts_with("http:") || error.starts_with("read:") => {
+            let alternate = alternate_target(target);
+            match real_delay(outbound, &alternate, timeout).await {
+                Ok(delay) => delay,
+                Err(second) => {
+                    return Err(format!(
+                        "{error} ({}); {second} ({})",
+                        target.host_header, alternate.host_header
+                    ))
+                }
+            }
+        }
+        Err(error) => return Err(error),
+    };
+    if let Some(confirm_timeout) = confirm {
+        tls_confirm(outbound, confirm_timeout)
+            .await
+            .map_err(|error| format!("tls confirm: {error}"))?;
+    }
+    Ok(first.as_millis().clamp(1, u128::from(u32::MAX)) as u64)
+}
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use super::*;
+    use tokio::net::TcpListener;
+
+    #[test]
+    fn probe_urls_are_parsed_and_https_is_refused() {
+        let target = ProbeTarget::parse(DEFAULT_PROBE_URL).unwrap();
+        assert_eq!(target.destination.port, 80);
+        assert_eq!(target.host_header, "www.gstatic.com");
+        assert_eq!(target.path, "/generate_204");
+
+        let target = ProbeTarget::parse("http://127.0.0.1:8080/x?y=1").unwrap();
+        assert_eq!(target.destination.port, 8080);
+        assert_eq!(target.host_header, "127.0.0.1:8080");
+        assert_eq!(target.path, "/x?y=1");
+
+        assert!(ProbeTarget::parse("https://www.gstatic.com/generate_204").is_err());
+        assert!(ProbeTarget::parse("not a url").is_err());
+    }
+
+    /// The retry goes to the other well-known target, never to the one that
+    /// just answered wrongly.
+    #[test]
+    fn a_failed_target_is_retried_on_the_other_one() {
+        let default = ProbeTarget::parse(DEFAULT_PROBE_URL).unwrap();
+        let alternate = ProbeTarget::parse(ALTERNATE_PROBE_URL).unwrap();
+        assert_eq!(
+            alternate_target(&default).host_header,
+            alternate.host_header
+        );
+        assert_eq!(
+            alternate_target(&alternate).host_header,
+            default.host_header
+        );
+        let custom = ProbeTarget::parse("http://127.0.0.1:8080/x").unwrap();
+        assert_eq!(alternate_target(&custom).host_header, default.host_header);
+    }
+
+    #[tokio::test]
+    async fn tcp_ping_measures_an_open_port_and_reports_a_closed_one() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move { while listener.accept().await.is_ok() {} });
+        let delay = tcp_ping("127.0.0.1", port, Duration::from_secs(2))
+            .await
+            .unwrap();
+        assert!(delay < Duration::from_secs(2));
+
+        let closed = std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let error = tcp_ping("127.0.0.1", closed, Duration::from_secs(2))
+            .await
+            .unwrap_err();
+        assert!(error.starts_with("tcp:"), "{error}");
+
+        // Hostnames are resolved.
+        assert!(tcp_ping("localhost", port, Duration::from_secs(2))
+            .await
+            .is_ok());
+    }
+
+    /// VLESS answers with a response header (version, addons) ahead of the
+    /// payload. Read unstripped, it put two bytes in front of the status
+    /// line, so every VLESS server failed the real test with "malformed
+    /// status line": users' own REALITY configs showed no ping, and discovery
+    /// never counted a VLESS server alive.
+    #[tokio::test]
+    async fn the_real_test_passes_through_a_vless_server() {
+        let relay = crate::testing::vless_relay().await;
+        let web = crate::testing::http_204_server().await;
+        let link = crate::testing::vless_link(relay, "vless");
+        let outbound = zero_config::parse_link(&link).unwrap().outbound;
+        let target = ProbeTarget::parse(&format!("http://{web}/generate_204")).unwrap();
+        let delay = real_delay(&outbound, &target, Duration::from_secs(5)).await;
+        assert!(delay.is_ok(), "{delay:?}");
+    }
+
+    #[tokio::test]
+    async fn tcp_ping_times_out_on_a_blackhole() {
+        // TEST-NET-1 is not routed; the connect either hangs until the
+        // timeout or fails fast with "unreachable" — both are failures.
+        let started = Instant::now();
+        let result = tcp_ping("192.0.2.1", 443, Duration::from_millis(300)).await;
+        assert!(result.is_err());
+        assert!(started.elapsed() < Duration::from_secs(2));
+    }
+}

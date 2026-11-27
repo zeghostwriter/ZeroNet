@@ -1,0 +1,178 @@
+name: crowd
+
+# Turns the reports apps sent to the crowd relay into rankings.json: which
+# public servers and clean Cloudflare addresses work on which network. The
+# file is published on the `crowd-data` branch, where apps read it from
+# raw.githubusercontent.com and its jsDelivr mirror.
+#
+# Finds the relay deployed by the "deploy crowd relay" workflow through the
+# Cloudflare API (same secrets), or uses the repository variable
+# CROWD_RELAYS (comma-separated URLs) for relays hosted elsewhere. With
+# neither, it does nothing.
+on:
+  schedule:
+    - cron: "*/20 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# Shared with the harvest workflow: both replace the crowd-data commit.
+concurrency:
+  group: crowd-data
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  rank:
+    name: rank reports
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      # First: the relay's address comes from its wrangler.toml.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: find the relays
+        id: relays
+        env:
+          CONFIGURED: ${{ vars.CROWD_RELAYS }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          relays="$CONFIGURED"
+          if [ -n "$CLOUDFLARE_API_TOKEN" ] && [ -n "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            sub=$(curl -fsS -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+              "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/subdomain" \
+              | jq -r '.result.subdomain // empty') || sub=""
+            name=$(sed -n 's/^name = "\(.*\)"$/\1/p' deploy/crowd-relay/wrangler.toml 2>/dev/null)
+            if [ -n "$sub" ] && [ -n "$name" ]; then
+              relays="https://$name.$sub.workers.dev${relays:+,$relays}"
+            fi
+          fi
+          echo "list=$relays" >> "$GITHUB_OUTPUT"
+          [ -n "$relays" ] || echo "No relay set up yet; nothing to do."
+
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+        with:
+          toolchain: stable
+        if: steps.relays.outputs.list != ''
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        if: steps.relays.outputs.list != ''
+        with:
+          key: crowd
+      - run: cargo build --release -p zero-discovery --bin zeronet-crowd --bin zeronet-sign --bin zeronet-stats
+        if: steps.relays.outputs.list != ''
+
+      - name: export reports
+        if: steps.relays.outputs.list != ''
+        env:
+          RELAYS: ${{ steps.relays.outputs.list }}
+          EXPORT_TOKEN: ${{ secrets.CROWD_EXPORT_TOKEN }}
+        run: |
+          # From the start of yesterday (UTC), so the sealed mode totals of
+          # both days are always made from whole days; ranking ignores what
+          # is older than it needs.
+          since=$(date -u -d 'yesterday 00:00' +%s)
+          parts=()
+          IFS=',' read -ra relays <<< "$RELAYS"
+          for relay in "${relays[@]}"; do
+            relay="${relay// /}"
+            [[ "$relay" == https://* ]] || continue
+            file="export-${#parts[@]}.json"
+            # One relay being down must not stop the others from counting.
+            if curl -fsS --retry 3 --max-time 60 \
+                 -H "Authorization: Bearer $EXPORT_TOKEN" \
+                 "$relay/v1/export?since=$since" -o "$file"; then
+              parts+=("$file")
+            else
+              echo "::warning::could not export from $relay"
+            fi
+          done
+          if [ ${#parts[@]} -eq 0 ]; then
+            # Still publish: the rankings carry the relay addresses, which
+            # is how apps learn where to send their first reports.
+            echo "::warning::no relay answered; publishing without reports"
+            echo '[]' > reports.json
+          else
+            jq -s 'add' "${parts[@]}" > reports.json
+          fi
+          echo "$(jq length reports.json) reports"
+
+      - name: rank
+        id: rank
+        if: steps.relays.outputs.list != ''
+        env:
+          RELAYS: ${{ steps.relays.outputs.list }}
+        run: |
+          # What is published now, so a thin or empty run cannot replace it.
+          # Optional: on the first run there is nothing to compare against.
+          # Only a 404 means "nothing published yet"; any other failure stops
+          # the run, or the guard would be skipped exactly when GitHub hiccups.
+          code=$(curl -sS --max-time 30 -o previous.json -w '%{http_code}' \
+            "https://raw.githubusercontent.com/$GITHUB_REPOSITORY/crowd-data/rankings.json")
+          case "$code" in
+            200) ;;
+            404) rm -f previous.json; echo "no published rankings yet" ;;
+            *) echo "could not read the published rankings (HTTP $code)"; exit 1 ;;
+          esac
+          args=(--reports reports.json --out rankings.json --relays "$RELAYS"
+                --sources deploy/crowd/sources.json
+                --sources deploy/crowd/harvest-sources.json
+                --sources deploy/crowd/verified-source.json)
+          if [ -f previous.json ]; then args+=(--previous previous.json); fi
+          # Exit 3 is the guard keeping the published list (too few reports
+          # to rank, or a list that would shrink sharply): not a failure, but
+          # there is no new rankings.json, so the publish step must not use one.
+          status=0
+          target/release/zeronet-crowd "${args[@]}" || status=$?
+          case "$status" in
+            0) echo "fresh=true" >> "$GITHUB_OUTPUT" ;;
+            3) echo "fresh=false" >> "$GITHUB_OUTPUT"
+               echo "::warning::rankings not updated: too few reports to rank; the published list was kept" ;;
+            *) exit "$status" ;;
+          esac
+
+      # How each connection mode does in real use: totals per UTC day, sealed
+      # to the maintainer's public key (repository variable MODE_STATS_KEY),
+      # so the files can sit on the public branch and be read by nobody else.
+      # Nothing is written without the key. The log says only how many reports
+      # went in, never a figure.
+      - name: seal mode totals
+        if: steps.relays.outputs.list != '' && vars.MODE_STATS_KEY != ''
+        env:
+          MODE_STATS_KEY: ${{ vars.MODE_STATS_KEY }}
+        run: |
+          rm -rf modes
+          target/release/zeronet-stats seal --reports reports.json --public "$MODE_STATS_KEY" --out-dir modes --days 2
+
+      - name: publish
+        if: steps.relays.outputs.list != ''
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          CROWD_SIGNING_KEY: ${{ secrets.CROWD_SIGNING_KEY }}
+          FRESH_RANKINGS: ${{ steps.rank.outputs.fresh }}
+        run: |
+          files=""
+          # A run that kept the published list has no new rankings.json: only
+          # the sealed mode totals (below) go out, next to the rankings already there.
+          if [ "$FRESH_RANKINGS" = "true" ]; then
+            if [ -n "$CROWD_SIGNING_KEY" ]; then
+              target/release/zeronet-sign sign rankings.json
+              # The app rejects a list whose signature does not verify against
+              # the key compiled into it. A secret that belongs to another key
+              # would publish lists nobody accepts, so stop here instead.
+              target/release/zeronet-sign verify rankings.json
+            else
+              echo "::warning::No CROWD_SIGNING_KEY; publishing rankings.json unsigned."
+            fi
+            files="rankings.json"
+            [ -f rankings.json.sig ] && files="$files rankings.json.sig"
+          fi
+          # The sealed mode totals, when there are any.
+          [ -d modes ] && [ -n "$(ls -A modes)" ] && files="$files modes"
+          if [ -z "$files" ]; then
+            echo "Nothing new to publish."
+            exit 0
+          fi
+          .github/scripts/publish-crowd-data.sh $files

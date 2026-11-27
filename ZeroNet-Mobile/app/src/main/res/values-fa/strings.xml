@@ -1,0 +1,669 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Service notification and quick-settings tile (used by the :vpn process). -->
+    <string name="notification_channel">وضعیت اتصال</string>
+    <string name="notification_connected">وصل است</string>
+    <string name="notification_searching">در حال پیدا کردن سرور…</string>
+    <string name="notification_searching_detail">%1$d بررسی شد · %2$d سالم</string>
+    <string name="notification_connecting">در حال اتصال…</string>
+    <string name="notification_reconnecting">اتصال دوباره…</string>
+    <string name="notification_disconnect">قطع اتصال</string>
+    <string name="notification_switch">تعویض سرور</string>
+    <string name="notification_server_ping">%1$s · %2$d میلیثانیه</string>
+    <string name="tile_connected">وصل</string>
+    <string name="tile_disconnected">خاموش</string>
+    <string name="tile_searching">در حال جست‌وجو…</string>
+
+    <!-- Tabs -->
+    <string name="tab_home">خانه</string>
+    <string name="tab_servers">سرورها</string>
+    <string name="tab_scanner">اسکنر</string>
+    <string name="tab_settings">تنظیمات</string>
+
+    <!-- Common actions -->
+    <string name="action_add">افزودن</string>
+    <string name="action_back">بازگشت</string>
+    <string name="action_cancel">انصراف</string>
+    <string name="action_clear">پاک کردن</string>
+    <string name="action_close">بستن</string>
+    <string name="action_collapse">پنهان کردن سرورها</string>
+    <string name="action_connect">اتصال</string>
+    <string name="action_copy_link">کپی لینک</string>
+    <string name="action_copy_value">کپی %1$s</string>
+    <string name="action_delete">حذف</string>
+    <string name="action_details">جزئیات</string>
+    <string name="action_expand">نمایش سرورها</string>
+    <string name="action_favorite">افزودن به برگزیده‌ها</string>
+    <string name="action_find_servers">پیدا کردن سرور</string>
+    <string name="action_grant_permission">اجازه‌ی VPN</string>
+    <string name="action_hide_qr">پنهان کردن کد QR</string>
+    <string name="action_paste">چسباندن</string>
+    <string name="action_refresh_servers">به‌روزرسانی سرورها</string>
+    <string name="action_remove_subscription">حذف %1$s</string>
+    <string name="action_save">ذخیره</string>
+    <string name="action_share">نمایش کد QR</string>
+    <string name="action_test">تست</string>
+    <string name="action_test_servers">تست سرورها</string>
+    <string name="action_try_again">دوباره امتحان کن</string>
+    <string name="action_unfavorite">حذف از برگزیده‌ها</string>
+
+    <!-- Home: the orb -->
+    <string name="orb_connect">اتصال</string>
+    <string name="orb_connecting">در حال اتصال</string>
+    <string name="orb_connected">وصل است</string>
+    <string name="orb_disconnecting">در حال قطع</string>
+    <string name="orb_failed">دوباره</string>
+    <string name="orb_action_connect">اتصال</string>
+    <string name="orb_action_disconnect">قطع اتصال</string>
+    <string name="state_disconnected">وصل نیست</string>
+    <string name="state_connecting">در حال اتصال</string>
+    <string name="state_connected_to">وصل به %1$s</string>
+    <string name="state_active">الان وصل است</string>
+
+    <!-- Home: the stage line under the orb -->
+    <string name="stage_history">امتحان سرورهایی که قبلاً جواب داده‌اند…</string>
+    <string name="stage_fetch">گرفتن فهرست‌های تازه‌ی سرور…</string>
+    <string name="stage_parse">خواندن %1$s سرور…</string>
+    <string name="stage_tcp">بررسی %1$s سرور · %2$s در دسترس</string>
+    <string name="stage_real">تست %1$s سرور · %2$s سالم</string>
+    <string name="stage_connecting">راه‌اندازی تونل…</string>
+    <string name="stage_connecting_to">اتصال به %1$s…</string>
+    <string name="stage_reconnecting">اتصال قطع شد. در حال عوض کردن سرور…</string>
+    <string name="stage_chosen_down">کانفیگ شما جواب نمی‌دهد. دوباره امتحانش می‌کنیم…</string>
+    <string name="stage_disconnecting">در حال قطع اتصال…</string>
+    <string name="stage_connected_pool">سرورهای پشتیبان آماده: %1$s</string>
+
+    <!-- Home: why a connection failed -->
+    <string name="fail_no_server">روی این اینترنت سرور سالمی پیدا نشد. یک دقیقه‌ی دیگر دوباره امتحان کنید یا ضدسانسور را روی «قوی» بگذارید.</string>
+    <string name="fail_no_network">اینترنت ندارید. وای‌فای یا داده‌ی همراه را بررسی کنید.</string>
+    <string name="fail_vpn_permission">زیرونت برای ساختن VPN به اجازه‌ی شما نیاز دارد.</string>
+    <string name="fail_vpn_revoked">یک VPN دیگر اتصال را گرفت.</string>
+    <string name="fail_core">اتصال برقرار نشد. دوباره امتحان کنید.</string>
+    <string name="fail_server_unavailable">این سرور جواب نمی‌دهد. سریع‌ترین سرور را امتحان کنید.</string>
+
+    <!-- Home: server card and stats -->
+    <string name="server_fastest">سریع‌ترین سرور</string>
+    <string name="server_fastest_hint">زیرونت خودش انتخاب می‌کند</string>
+    <string name="server_fastest_picked">سریع‌ترین</string>
+    <string name="server_country_best">بهترین سرور این کشور</string>
+    <string name="server_card_action">انتخاب سرور</string>
+    <string name="stats_download">دانلود</string>
+    <string name="stats_upload">آپلود</string>
+    <string name="stats_session">مدت اتصال</string>
+
+    <!-- Units and time -->
+    <string name="unit_bps">بیت/ث</string>
+    <string name="unit_kbps">کیلوبیت/ث</string>
+    <string name="unit_mbps">مگابیت/ث</string>
+    <string name="unit_gbps">گیگابیت/ث</string>
+    <string name="unit_b_value">%1$s بایت</string>
+    <string name="unit_kb_value">%1$s کیلوبایت</string>
+    <string name="unit_mb_value">%1$s مگابایت</string>
+    <string name="unit_gb_value">%1$s گیگابایت</string>
+    <!-- Isolated LTR so "۱۴۰ ms" never renders as "ms ۱۴۰" inside Persian text. -->
+    <string name="delay_ms">⁦%1$s ms⁩</string>
+    <string name="delay_unknown">—</string>
+    <string name="delay_failed">ناموفق</string>
+    <string name="ago_never">هرگز</string>
+    <string name="ago_now">همین حالا</string>
+    <string name="ago_minutes">%1$s دقیقه پیش</string>
+    <string name="ago_hours">%1$s ساعت پیش</string>
+    <string name="ago_days">%1$s روز پیش</string>
+
+    <!-- Server words -->
+    <string name="country_unknown">مکان نامشخص</string>
+    <string name="kind_direct">مستقیم</string>
+    <string name="kind_cdn">CDN</string>
+    <string name="kind_other">معمولی</string>
+    <string name="source_user">افزوده‌ی شما</string>
+    <string name="source_subscription">اشتراک شما</string>
+    <string name="source_feed">فهرست عمومی · %1$s</string>
+    <string name="source_public">فهرست عمومی</string>
+
+    <!-- Server picker sheet -->
+    <string name="picker_title">انتخاب سرور</string>
+    <string name="picker_favorites">برگزیده‌ها</string>
+    <string name="picker_mine">کانفیگ‌های شما</string>
+    <string name="picker_subscriptions">اشتراک‌های شما</string>
+    <string name="picker_lists_hint">چند تا رو انتخاب کنید تا با هم جستجو بشن</string>
+    <plurals name="picker_use_lists">
+        <item quantity="one">جستجو در %s لیست</item>
+        <item quantity="other">جستجو در این %s لیست</item>
+    </plurals>
+    <string name="server_subscription_hint">فقط بین کانفیگ‌های همین اشتراک جابه‌جا می‌شود</string>
+    <string name="picker_countries">کشورها</string>
+    <string name="picker_empty">هنوز سروری نیست. یک بار وصل شوید تا زیرونت چند سرور پیدا کند.</string>
+
+    <!-- Servers tab -->
+    <plurals name="servers_count">
+        <item quantity="one">%1$s سرور</item>
+        <item quantity="other">%1$s سرور</item>
+    </plurals>
+    <plurals name="servers_subtitle">
+        <item quantity="one">%1$s سرور · %2$s سالم</item>
+        <item quantity="other">%1$s سرور · %2$s سالم</item>
+    </plurals>
+    <string name="servers_subtitle_empty">هنوز چیزی پیدا نشده</string>
+    <string name="servers_search">جست‌وجوی کشور یا نام</string>
+    <string name="servers_recommended">پیشنهادی</string>
+    <string name="servers_countries">کشورها</string>
+    <string name="servers_mine">مال من</string>
+    <string name="servers_rec_empty_title">هنوز سروری تست نشده</string>
+    <string name="servers_rec_empty_body">فهرست را تست کنید تا ببینید کدام سرورها روی اینترنت شما کار می‌کنند.</string>
+    <string name="servers_testing">تست %1$s از %2$s…</string>
+    <string name="servers_working_count">%1$s سالم</string>
+    <string name="servers_subscriptions">اشتراک‌ها</string>
+    <string name="servers_your_servers">کانفیگ‌های شما</string>
+    <string name="servers_mine_empty_title">هنوز چیزی اضافه نکرده‌اید</string>
+    <string name="servers_mine_empty_body">لینک کانفیگ یا لینک اشتراک را اینجا اضافه کنید.</string>
+    <string name="servers_add_title">افزودن کانفیگ</string>
+    <string name="servers_add_body">لینک کانفیگ یا لینک اشتراک</string>
+    <string name="servers_no_matches">چیزی با «%1$s» پیدا نشد</string>
+    <string name="servers_empty_title">هنوز سروری ندارید</string>
+    <string name="servers_empty_body">روی «پیدا کردن سرور» بزنید. زیرونت فهرست‌های عمومی را می‌گیرد و روی اینترنت شما تستشان می‌کند.</string>
+    <string name="servers_finding">در حال جست‌وجو…</string>
+
+    <!-- Server detail sheet -->
+    <string name="detail_delay">تأخیر</string>
+    <string name="detail_error">دلیل خطا</string>
+    <string name="detail_last_tested">آخرین تست</string>
+    <string name="detail_protocol">پروتکل</string>
+    <string name="detail_transport">انتقال</string>
+    <string name="detail_security">امنیت</string>
+    <string name="detail_address">آدرس</string>
+    <string name="detail_source">منبع</string>
+    <string name="detail_history">نرخ موفقیت</string>
+    <string name="detail_history_value">%1$s از %2$s تست</string>
+    <string name="detail_testing">در حال تست…</string>
+    <string name="detail_qr_description">کد QR لینک این سرور</string>
+    <string name="detail_share_warning">هر کس این کد را داشته باشد می‌تواند از سرور استفاده کند. فقط با کسانی که به آن‌ها اعتماد دارید به اشتراک بگذارید.</string>
+    <string name="detail_delete_confirm">این سرور حذف شود؟ این کار برگشت‌پذیر نیست.</string>
+
+    <!-- Import sheet -->
+    <string name="import_title">افزودن کانفیگ</string>
+    <string name="scan_qr">اسکن کد QR</string>
+    <string name="scan_from_photo">از روی عکس</string>
+    <string name="scan_hint">دوربین را روی کد QR کانفیگ یا اشتراک بگیرید.</string>
+    <string name="scan_no_camera">به دوربین دسترسی نیست. هنوز می‌توانید عکس یا اسکرین‌شات کد را انتخاب کنید.</string>
+    <string name="scan_not_found">در این عکس کد QRی پیدا نشد.</string>
+    <string name="import_body">یک یا چند لینک کانفیگ، یا لینک اشتراک را اینجا بچسبانید.</string>
+    <string name="import_links">لینک</string>
+    <string name="import_subscription">اشتراک</string>
+    <string name="import_links_placeholder">vless://، vmess://، trojan://، ss://…</string>
+    <string name="import_result">%1$s اضافه شد · %2$s تکراری · %3$s ناشناخته</string>
+    <string name="import_open_file">باز کردن فایل پیکربندی (.json، .txt)</string>
+    <string name="import_file_unreadable">این فایل را نتوانستم به‌عنوان پیکربندی بخوانم</string>
+    <string name="import_error">وارد نشد: %1$s</string>
+    <string name="import_sub_url">https://…</string>
+    <string name="import_sub_name">نام (اختیاری)</string>
+    <string name="import_sub_invalid">آدرسی وارد کنید که با https:// شروع شود</string>
+    <string name="import_sub_hint">زیرونت آن را همراه فهرست‌های عمومی به‌روز می‌کند.</string>
+
+    <!-- Transient messages -->
+    <string name="msg_copied">کپی شد</string>
+    <string name="msg_deleted">سرور حذف شد</string>
+    <string name="msg_subscription_added">اشتراک اضافه شد. در حال گرفتن سرورهایش…</string>
+    <string name="msg_vpn_permission_denied">بدون اجازه‌ی VPN نمی‌شود وصل شد</string>
+    <string name="msg_history_cleared">سرورهای پیدا‌شده پاک شدند</string>
+
+    <!-- Scanner tab -->
+    <string name="scanner_explainer">آدرس‌های کلادفلری را پیدا کنید که هنوز روی شبکه‌ی شما جواب می‌دهند</string>
+    <string name="scanner_ready">آماده</string>
+    <string name="scanner_scanning">در حال اسکن…</string>
+    <string name="scanner_done">تمام شد</string>
+    <string name="scanner_idle_hint">حدود یک دقیقه</string>
+    <string name="scanner_progress_description">پیشرفت اسکن</string>
+    <string name="scanner_progress_state">%1$s درصد</string>
+    <string name="scanner_scanned">اسکن‌شده</string>
+    <string name="scanner_responsive">پاسخ‌داده</string>
+    <string name="scanner_best">بهترین</string>
+    <string name="scanner_start">شروع اسکن</string>
+    <string name="scanner_stop">توقف</string>
+    <string name="scanner_again">اسکن دوباره</string>
+    <string name="scanner_error_title">اسکن متوقف شد</string>
+    <string name="scanner_results">سریع‌ترین آدرس‌ها</string>
+    <string name="scanner_copy_best">کپی %1$s تای اول</string>
+    <string name="scanner_how_title">چرا اسکن؟</string>
+    <string name="scanner_how_body">خیلی از سرورها پشت کلادفلر هستند. وقتی آی‌پی‌های معمولش فیلتر می‌شوند، یک آی‌پی تمیز که هنوز روی اینترنت شما جواب می‌دهد دوباره راهشان می‌اندازد. زیرونت بهترین نتیجه‌ها را خودش استفاده می‌کند.</string>
+    <string name="scanner_none_found">این بار هیچ آدرسی جواب نداد. بعداً یا روی شبکه‌ی دیگری دوباره امتحان کنید.</string>
+    <string name="scanner_port">پورت %1$s</string>
+    <string name="scanner_copy_ip">کپی %1$s</string>
+
+    <!-- Settings: shared -->
+    <string name="settings_search">جست‌وجو در تنظیمات</string>
+    <string name="settings_no_results">تنظیمی با «%1$s» پیدا نشد</string>
+    <string name="settings_applies_next">در اتصال بعدی اعمال می‌شود</string>
+    <string name="settings_reconnect_now">الان دوباره وصل شو</string>
+    <string name="option_off">خاموش</string>
+    <string name="option_on">روشن</string>
+    <string name="option_ask">پرسیدن</string>
+    <string name="option_auto">خودکار</string>
+    <string name="option_system">پیش‌فرض سیستم</string>
+
+    <!-- Settings: connection -->
+    <string name="settings_connection">اتصال</string>
+    <string name="settings_mode">حالت</string>
+    <string name="settings_mode_vpn">VPN</string>
+    <string name="settings_mode_proxy">فقط پراکسی</string>
+    <string name="settings_mode_vpn_hint">همه‌ی برنامه‌ها از زیرونت عبور می‌کنند.</string>
+    <string name="settings_mode_proxy_hint">فقط برنامه‌هایی که روی پراکسی محلی تنظیم کنید از آن استفاده می‌کنند. آیکن VPN نمایش داده نمی‌شود.</string>
+    <string name="settings_autoconnect">اتصال خودکار</string>
+    <string name="settings_autoconnect_app">اجرای برنامه</string>
+    <string name="settings_autoconnect_boot">روشن‌شدن گوشی</string>
+    <string name="settings_autoswitch">رفتن به سرور سریع‌تر</string>
+    <string name="settings_autoswitch_hint">وقتی سرور فعلی کند یا قطع می‌شود</string>
+    <string name="settings_speed_floor">حداقل سرعت</string>
+    <string name="settings_speed_floor_off_hint">فقط وقتی سرور فعلی قطع شود جابه‌جا شو</string>
+    <string name="settings_speed_floor_low_hint">از سروری زیر ۱ مگابیت بر ثانیه رد شو</string>
+    <string name="settings_speed_floor_medium_hint">از سروری زیر ۳ مگابیت بر ثانیه رد شو</string>
+    <string name="settings_speed_floor_custom_hint">سرعت به کیلوبیت بر ثانیه</string>
+    <string name="settings_speed_floor_low">۱ مگابیت</string>
+    <string name="settings_speed_floor_medium">۳ مگابیت</string>
+    <string name="settings_speed_floor_custom">دلخواه</string>
+    <string name="settings_more_connection">کلید قطع اضطراری، IPv6 و MTU</string>
+    <string name="settings_more_connection_hint">گزینه‌های پیشرفته‌ی اتصال</string>
+    <string name="settings_kill_switch">کلید قطع اضطراری</string>
+    <string name="settings_kill_switch_body">قفل خود اندروید زمان پیش از روشن شدن زیرونت را هم پوشش می‌دهد: در تنظیمات VPN سیستم، زیرونت را باز کنید و «VPN همیشه روشن» و «مسدود کردن اتصال‌های بدون VPN» را روشن کنید.</string>
+    <string name="settings_kill_switch_open">باز کردن تنظیمات VPN</string>
+    <string name="settings_ipv6">IPv6 از داخل تونل</string>
+    <string name="settings_ipv6_hint">خاموش بماند، مگر شبکه‌تان به آن نیاز داشته باشد</string>
+    <string name="settings_mtu">اندازه‌ی بسته (MTU)</string>
+    <string name="settings_mtu_hint">%1$s سریع‌ترین است. سایت‌هایی که گیر می‌کنند خودکار درست می‌شوند.</string>
+
+    <!-- Settings: servers & sources -->
+    <string name="settings_sources_card">سرورها و منابع</string>
+    <string name="settings_sources">منابع سرور</string>
+    <string name="settings_sources_value">%1$s از %2$s فهرست عمومی روشن</string>
+    <plurals name="subscriptions_count">
+        <item quantity="one">%1$s اشتراک</item>
+        <item quantity="other">%1$s اشتراک</item>
+    </plurals>
+    <string name="settings_preferred_countries">کشورهای ترجیحی</string>
+    <string name="settings_preferred_countries_hint">«سریع‌ترین» اول این‌ها را امتحان می‌کند</string>
+    <string name="settings_refresh">به‌روزرسانی فهرست‌ها</string>
+    <string name="settings_refresh_auto">خودکار</string>
+    <string name="settings_refresh_manual">دستی</string>
+    <string name="settings_refresh_auto_hint">فهرست‌ها هنگام اتصال به‌روز می‌شوند</string>
+    <string name="settings_refresh_manual_hint">فقط وقتی صفحه‌ی سرورها را پایین بکشید</string>
+    <string name="settings_subscriptions">اشتراک‌های شما</string>
+    <string name="sources_body">فهرست‌های عمومی‌ای که زیرونت می‌گردد، و اشتراک‌های خودتان.</string>
+    <string name="sources_public">فهرست‌های عمومی</string>
+    <string name="sources_tier_0">هر دو ساعت آزمایش می‌شود؛ اول از همه امتحان می‌شود</string>
+    <string name="sources_tier_1">در هر اتصال بررسی می‌شود</string>
+    <string name="sources_tier_2">در صورت نیاز بررسی می‌شود</string>
+    <string name="sources_tier_3">در جست‌وجوی عمیق بررسی می‌شود</string>
+    <string name="sources_no_subscriptions">هنوز اشتراکی اضافه نکرده‌اید.</string>
+    <string name="sources_add_title">افزودن اشتراک</string>
+    <string name="countries_search">جست‌وجوی کشور</string>
+
+    <!-- Settings: split tunnelling -->
+    <string name="settings_split">تونل جداگانه</string>
+    <string name="settings_iran_direct">سایت‌های ایرانی بدون VPN</string>
+    <string name="settings_iran_direct_hint">سایت‌های ایرانی و برنامه‌های بانکی بدون VPN باز می‌شوند</string>
+    <string name="settings_apps">برنامه‌ها</string>
+    <string name="settings_apps_all">همه</string>
+    <string name="settings_apps_only">فقط انتخابی‌ها</string>
+    <string name="settings_apps_except">همه جز انتخابی‌ها</string>
+    <string name="settings_apps_proxy_note">فقط در حالت VPN اعمال می‌شود</string>
+    <string name="settings_choose_apps">انتخاب برنامه‌ها</string>
+    <string name="settings_apps_none">چیزی انتخاب نشده</string>
+    <plurals name="apps_selected">
+        <item quantity="one">%1$s برنامه</item>
+        <item quantity="other">%1$s برنامه</item>
+    </plurals>
+    <string name="settings_bypass_lan">شبکه‌ی محلی بدون VPN</string>
+    <string name="settings_bypass_lan_hint">چاپگر، تلویزیون و مودم در دسترس می‌مانند</string>
+    <string name="settings_routing">پروفایل مسیریابی</string>
+    <string name="routing_title">پروفایل‌های مسیریابی</string>
+    <string name="routing_body">قانون‌های خودتان برای اینکه چه چیزی از تونل برود، مستقیم برود یا اصلاً نرود. قبل از قانون‌های پیش‌فرض و از بالا به پایین اجرا می‌شوند و اولین قانونی که بخورد تصمیم می‌گیرد.</string>
+    <string name="routing_none">هیچ‌کدام</string>
+    <string name="routing_edit_profile">ویرایش پروفایل</string>
+    <string name="routing_new_name">نام پروفایل جدید</string>
+    <string name="routing_name_taken">پروفایلی با این نام وجود دارد</string>
+    <string name="routing_new">پروفایل جدید</string>
+    <string name="routing_use">استفاده از این پروفایل</string>
+    <string name="routing_use_hint">تغییرات همان لحظه اعمال می‌شوند، حتی وقتی وصل هستید</string>
+    <string name="routing_no_rules">هنوز قانونی نیست. از پایین یکی اضافه کنید.</string>
+    <string name="routing_add_rule">افزودن قانون</string>
+    <string name="routing_rename">تغییر نام</string>
+    <string name="routing_delete_profile">حذف پروفایل</string>
+    <string name="routing_move_up">بالا بردن</string>
+    <string name="routing_new_rule">قانون جدید</string>
+    <string name="routing_edit_rule">ویرایش قانون</string>
+    <string name="routing_action">بفرستش</string>
+    <string name="routing_action_proxy">از تونل</string>
+    <string name="routing_action_direct">مستقیم</string>
+    <string name="routing_action_block">مسدود</string>
+    <string name="routing_domains">دامنه‌ها</string>
+    <string name="routing_domains_hint">example.com زیردامنه‌هایش را هم شامل می‌شود. full: و keyword: و regexp: و لیست‌های geosite: هم کار می‌کنند. بینشان کاما بگذارید.</string>
+    <string name="routing_addresses">آدرس‌ها</string>
+    <string name="routing_addresses_hint">یک IP، یک بازه مثل 1.2.3.0/24، یا geoip:private</string>
+    <string name="routing_apps">برنامه‌ها</string>
+    <string name="routing_apps_hint">اتصال‌هایی که این برنامه‌ها باز می‌کنند. اندروید ۱۰ به بالا و حالت VPN لازم است.</string>
+    <string name="routing_ports">پورت‌ها</string>
+    <string name="routing_ports_hint">443 یا 80,443 یا 1000-2000. خالی یعنی همه.</string>
+    <string name="routing_network">نوع ترافیک</string>
+    <string name="routing_network_any">هر دو</string>
+    <string name="routing_network_tcp">TCP</string>
+    <string name="routing_network_udp">UDP</string>
+    <string name="routing_problem_empty">یک دامنه، آدرس، برنامه یا پورت اضافه کنید</string>
+    <string name="routing_problem_port">پورت عددی از 1 تا 65535 است، مثل 443 یا 80,443 یا 1000-2000</string>
+    <string name="routing_delete_rule">حذف</string>
+    <string name="routing_save_rule">ذخیره قانون</string>
+    <plurals name="routing_rule_count">
+        <item quantity="one">%d قانون</item>
+        <item quantity="other">%d قانون</item>
+    </plurals>
+    <string name="apps_body_only">فقط برنامه‌هایی که تیک بزنید از VPN استفاده می‌کنند.</string>
+    <string name="apps_body_except">برنامه‌هایی که تیک بزنید از VPN عبور نمی‌کنند.</string>
+    <string name="apps_search">جست‌وجوی برنامه</string>
+
+    <!-- Settings: share over Wi-Fi -->
+    <string name="settings_share">اشتراک روی وای‌فای</string>
+    <string name="settings_share_toggle">اشتراک‌گذاری این اتصال</string>
+    <string name="settings_share_hint">دستگاه‌های روی وای‌فای یا هات‌اسپات شما می‌توانند از طریق پراکسی از زیرونت استفاده کنند</string>
+    <string name="settings_share_permission_denied">اندروید اجازه‌ی دسترسی به شبکه‌ی محلی را نداد، برای همین اشتراک‌گذاری خاموش ماند.</string>
+    <string name="settings_share_live">در حال اشتراک‌گذاری</string>
+    <string name="settings_share_when_connected">با وصل شدن شروع می‌شود</string>
+    <string name="settings_share_no_network">برای اشتراک‌گذاری به یک وای‌فای وصل شوید یا هات‌اسپات را روشن کنید.</string>
+    <string name="settings_share_auth">محافظت با رمز</string>
+    <string name="settings_share_auth_hint">اختیاری. دستگاه‌های دیگر برای استفاده از پراکسی به آن نیاز دارند.</string>
+    <string name="settings_share_user">نام کاربری</string>
+    <string name="settings_share_pass">رمز عبور</string>
+    <string name="settings_share_http_off">تا وقتی رمز گذاشته شده، اشتراک HTTP خاموش است</string>
+    <string name="settings_share_address">آدرس روی این شبکه</string>
+    <string name="settings_share_socks">SOCKS5</string>
+    <string name="settings_share_http">HTTP</string>
+    <string name="settings_share_port">پورت %1$s</string>
+    <string name="settings_share_qr_description">کد QR پراکسی روی %1$s</string>
+    <string name="settings_share_qr_hint">روی دستگاه دیگر با هر برنامه‌ی پراکسی اسکنش کنید.</string>
+
+    <!-- Settings: anti-censorship -->
+    <string name="settings_evasion">ضدسانسور</string>
+    <string name="settings_evasion_level">شدت</string>
+    <string name="settings_evasion_strong">قوی</string>
+    <string name="settings_evasion_off_hint">اتصال ساده. سریع‌ترین، ولی راحت‌تر مسدود می‌شود.</string>
+    <string name="settings_evasion_auto_hint">عادی وصل می‌شود و اگر سروری مسدود شد، دست‌دهی را تکه‌تکه می‌فرستد. از همان روشی شروع می‌کند که برای دیگران روی شبکه‌ی شما جواب داده.</string>
+    <string name="settings_evasion_strong_hint">ترافیک همیشه پنهان می‌شود. کمی کندتر، ولی خیلی سخت‌تر مسدود می‌شود.</string>
+    <string name="settings_decoy">پنهان کردن نام سرور (SNI)</string>
+    <string name="settings_decoy_off_hint">نام سرور هیچ‌وقت پنهان نمی‌شود.</string>
+    <string name="settings_decoy_auto_hint">فقط وقتی اتصالی به‌خاطر نامش قطع شود، نام سرور از فیلتر پنهان می‌شود.</string>
+    <string name="settings_decoy_always_hint">هر اتصال نام سرورش را از فیلتر پنهان می‌کند، اول با راه سریع. فقط سروری که با این راه جواب نمی‌دهد راه کندتر را می‌گیرد که هر اتصال را حدود یک‌سوم ثانیه دیرتر شروع می‌کند.</string>
+    <string name="option_always">همیشه</string>
+    <string name="settings_decoy_test">آزمایش روی این گوشی</string>
+    <string name="settings_decoy_ttl">برد نام جعلی (تعداد روتر)</string>
+    <string name="settings_decoy_ttl_hint">فقط برای گوشی‌هایی که راه دیگری برای متوقف کردن نام جعلی ندارند: نام جعلی طوری فرستاده می‌شود که بعد از این تعداد روتر، پیش از رسیدن به سرور، از بین برود. حالت خودکار آن را مثل یک سرور جدا امتحان می‌کند و فقط اگر رد شود نگهش می‌دارد.</string>
+    <string name="settings_decoy_ttl_off_hint">گوشی‌هایی که راه دیگری برای متوقف کردن نام جعلی ندارند، آن را نمی‌فرستند.</string>
+    <string name="settings_reuse">استفاده‌ی دوباره از اتصال‌ها (XHTTP)</string>
+    <string name="settings_reuse_off_hint">هر اتصال راه جدای خودش را تا سرور باز می‌کند.</string>
+    <string name="settings_reuse_auto_hint">هر جا جواب بدهد از راه‌های باز دوباره استفاده می‌کند و هر روشی که سریع‌تر جواب بدهد را نگه می‌دارد. سروری که راه‌های دوباره‌استفاده‌شده‌اش گیر کنند، به راه‌های جدای خودش برمی‌گردد.</string>
+    <string name="settings_reuse_on_hint">اتصال‌های تازه از راه‌هایی که از قبل باز هستند می‌روند و زودتر شروع می‌شوند. سروری که راه‌های دوباره‌استفاده‌شده‌اش گیر کنند، تا مدتی به راه‌های جدای خودش برمی‌گردد.</string>
+    <string name="decoy_test_running">در حال آزمایش…</string>
+    <string name="decoy_test_unsupported">این گوشی نمی‌تواند نام سرور را پنهان کند؛ سیستمش اجازه نمی‌دهد. ZeroNet به‌جایش از روش‌های دیگرش استفاده می‌کند.</string>
+    <string name="decoy_test_broken">این گوشی سعی کرد نام را پنهان کند، ولی در آزمایش داخل خود گوشی اتصال درست نرسید، پس اینجا نمی‌شود به آن تکیه کرد.</string>
+    <string name="decoy_test_works">کار می‌کند: این شبکه یک نام فیلترشده را قطع کرد و همان نام به‌صورت پنهان رد شد.</string>
+    <string name="decoy_test_not_needed">پنهان کردن نام روی این گوشی کار می‌کند. این شبکه الان نام‌های آزمایشی را قطع نکرد، پس چیزی برای رد شدن نبود.</string>
+    <string name="decoy_test_blocked">پنهان کردن نام روی این گوشی کار می‌کند، ولی این شبکه باز هم نام‌های آزمایشی را قطع کرد.</string>
+    <string name="decoy_test_offline">پنهان کردن نام روی این گوشی کار می‌کند. سایت‌های آزمایشی در دسترس نبودند، پس بخش شبکه بررسی نشد.</string>
+    <string name="settings_block_quic">مسدود کردن QUIC</string>
+    <string name="settings_block_quic_hint">برنامه‌ها به جای گیر کردن، سراغ TCP می‌روند</string>
+    <string name="settings_allow_insecure">اجازه به اتصال ناامن</string>
+    <string name="settings_allow_insecure_hint">به سرورهای بیشتری وصل می‌شود، ولی امنیت کمتری دارد</string>
+    <string name="settings_remote_dns">DNS برای سایت‌های مسدود</string>
+    <string name="settings_remote_dns_hint">از داخل VPN پرسیده می‌شود تا اپراتور نتواند جواب را ببیند یا عوض کند</string>
+    <string name="settings_custom_dns_hint">DNS دلخواه (مثلاً ۸.۸.۸.۸)</string>
+    <string name="settings_custom_dns_note">برای استفاده از یکی از گزینه‌های بالا خالی بگذارید. یک IP، ‏tls://…‎ یا ‏https://…/dns-query‎ پذیرفته می‌شود.</string>
+    <string name="settings_anti_sanction">DNS برای سرویس‌های تحریمی</string>
+    <string name="settings_anti_sanction_hint">سایت‌هایی که IP ایران را مسدود می‌کنند (OpenAI، GitHub، …) از این‌جا پرسیده و مستقیم باز می‌شوند</string>
+    <string name="settings_anti_sanction_note">برای استفاده از یکی از گزینه‌های بالا خالی بگذارید. یک IP یا ‏tls://…‎ / ‏https://…/dns-query‎ با نشانی IP پذیرفته می‌شود.</string>
+    <string name="settings_block_ads">مسدود کردن تبلیغ و ردیاب</string>
+    <string name="settings_block_ads_hint">دامنه‌های تبلیغاتی شناخته‌شده را برای همه‌ی برنامه‌ها فیلتر می‌کند</string>
+
+    <!-- Settings: appearance -->
+    <string name="settings_appearance">ظاهر</string>
+    <string name="settings_palette">پوسته</string>
+    <string name="settings_palette_dynamic_note">رنگ‌های والپیپر روشن است، پس پوسته فقط رنگ‌های اتصال را تعیین می‌کند</string>
+    <string name="settings_theme_mode">روشن یا تیره</string>
+    <string name="settings_theme_light">روشن</string>
+    <string name="settings_theme_dark">تیره</string>
+    <string name="settings_amoled">سیاه خالص</string>
+    <string name="settings_amoled_hint">در نمایشگرهای OLED باتری کمتری مصرف می‌کند</string>
+    <string name="settings_dynamic">رنگ‌های والپیپر</string>
+    <string name="settings_dynamic_hint">رنگ‌های Material You از والپیپر شما</string>
+    <string name="settings_language">زبان</string>
+    <string name="settings_motion">حرکت</string>
+    <string name="settings_motion_full">کامل</string>
+    <string name="settings_motion_reduced">کم</string>
+    <string name="settings_motion_full_hint">همه‌ی انیمیشن‌ها</string>
+    <string name="settings_motion_reduced_hint">فقط محو شدن ساده</string>
+    <string name="palette_golden">طلایی</string>
+    <string name="palette_nightshade">شبانه</string>
+    <string name="palette_arctic">قطبی</string>
+    <string name="palette_sakura">ساکورا</string>
+    <string name="palette_paper">کاغذی</string>
+    <string name="palette_contrast">پرکنتراست</string>
+
+    <!-- Settings: data & privacy -->
+    <string name="settings_privacy">داده و حریم خصوصی</string>
+    <string name="settings_logs">گزارش‌های کامل</string>
+    <string name="settings_logs_hint">هشدارها همیشه برای عیب‌یابی نگه داشته می‌شوند؛ این گزینه جزئیات قدم‌به‌قدم هسته را اضافه می‌کند. گزارش‌ها فقط روی همین گوشی می‌مانند.</string>
+    <string name="settings_clear_history">پاک کردن سرورهای پیدا‌شده</string>
+    <string name="settings_clear_history_hint">سرورهای عمومی و نتیجه‌ی تست‌ها فراموش می‌شوند. سرورهای خودتان می‌مانند.</string>
+    <plurals name="clear_history_body">
+        <item quantity="one">%1$s سرور پیدا‌شده و نتیجه‌ی تست‌هایش فراموش شود؟ سرورهای خودتان می‌مانند.</item>
+        <item quantity="other">%1$s سرور پیدا‌شده و نتیجه‌ی تست‌هایشان فراموش شوند؟ سرورهای خودتان می‌مانند.</item>
+    </plurals>
+    <string name="clear_history_nothing">سرور پیدا‌شده‌ای برای پاک کردن نیست.</string>
+
+    <!-- Settings: about -->
+    <string name="settings_about">درباره</string>
+    <string name="settings_version">نسخه</string>
+    <string name="settings_engine">موتور</string>
+    <string name="settings_engine_hint">هسته‌ی متن‌بازی که اتصال را اجرا می‌کند</string>
+    <string name="settings_licences">مجوزهای متن‌باز</string>
+    <string name="settings_licences_hint">زیرونت نرم‌افزار آزاد با مجوز MIT است</string>
+    <string name="licences_body">زیرونت روی این پروژه‌ها ساخته شده است.</string>
+
+    <!-- Settings search keywords -->
+    <string name="kw_connection">وی پی ان پراکسی اتصال خودکار قطع اضطراری همیشه روشن شبکه</string>
+    <string name="kw_sources">منبع اشتراک ساب لینک فهرست کشور به‌روزرسانی گیت‌هاب</string>
+    <string name="kw_split">تونل جداگانه دور زدن برنامه مسیر ایران داخلی شبکه محلی</string>
+    <string name="kw_share">اشتراک هات‌اسپات وای‌فای پراکسی ساکس پورت رمز تترینگ</string>
+    <string name="kw_evasion">سانسور فیلترینگ فیلترشکن دی ان اس تبلیغات کوییک</string>
+    <string name="kw_appearance">پوسته رنگ تیره روشن سیاه زبان فارسی انگلیسی انیمیشن حرکت تم</string>
+    <string name="kw_privacy">گزارش لاگ تاریخچه حذف پاک داده حریم خصوصی اشتراک ناشناس کمک دیگران</string>
+    <string name="kw_about">نسخه مجوز لایسنس کد منبع متن‌باز موتور به‌روزرسانی آپدیت</string>
+
+    <!-- Onboarding -->
+    <string name="onboarding_perm_title">زیرونت به دو دسترسی نیاز دارد</string>
+    <string name="onboarding_perm_text">دسترسی VPN برای اینکه ترافیک برنامه‌ها از تونل رد شود، و اعلان برای اینکه ببینید وصل هستید یا نه. اندروید هر کدام را فقط یک بار می‌پرسد و بعداً از تنظیمات گوشی می‌توانید عوضشان کنید.</string>
+    <string name="onboarding_allow">اجازه دادن</string>
+    <string name="onboarding_later">فعلاً نه</string>
+
+    <!-- Connection profiles -->
+    <string name="profile_normal">معمولی</string>
+    <string name="profile_fast">سریع</string>
+    <string name="profile_gaming">گیمینگ</string>
+    <string name="profile_normal_hint">پیشنهادی. سرورهای رمزگذاری‌شده با پشتیبان، و تا وصل نشود راه‌های دیگر را امتحان می‌کند</string>
+    <string name="profile_fast_hint">به اولین سروری که کار کند وصل می‌شود</string>
+    <string name="profile_gaming_hint">بهترین پینگ، امنیت کمتر: سرورهای ضعیف‌تر و UDP مجاز است و وسط بازی سرور عوض نمی‌شود</string>
+    <string name="gaming_title">حالت گیمینگ</string>
+    <string name="gaming_ping">پینگ %1$s ms</string>
+
+    <!-- In-app updates -->
+    <string name="update_sheet_title">به‌روزرسانی</string>
+    <string name="update_title_available">زیرونت %1$s آمد</string>
+    <string name="update_title_downloading">در حال دانلود %1$s</string>
+    <string name="update_title_ready">%1$s آماده‌ی نصب است</string>
+    <string name="update_title_reinstall">این نسخه روی نسخه‌ی فعلی نصب نمی‌شود</string>
+    <string name="update_title_failed">به‌روزرسانی کامل نشد</string>
+    <string name="update_whats_new">تغییرات</string>
+    <string name="update_size">حجم دانلود %1$s. سرورها و تنظیمات شما دست نمی‌خورند.</string>
+    <string name="update_progress">%1$s از %2$s</string>
+    <string name="update_ready_hint">اندروید برای نصب از شما تأیید می‌گیرد.</string>
+    <string name="update_allow_hint">اندروید فقط یک بار می‌پرسد: اجازه‌ی نصب برنامه را به زیرونت بدهید، بعد برگردید و «نصب» را بزنید.</string>
+    <string name="update_reinstall_body">این نسخه با کلیدی متفاوت از زیرونتِ روی گوشی امضا شده، برای همین اندروید آن را روی نسخه‌ی فعلی نصب نمی‌کند. برای گرفتنش، زیرونت را حذف کنید و نسخه‌ی جدید را از صفحه‌ی انتشار نصب کنید. سرورها و تنظیمات شما پاک می‌شوند.</string>
+    <string name="update_now">به‌روزرسانی</string>
+    <string name="update_later">بعداً</string>
+    <string name="update_cancel">لغو</string>
+    <string name="update_install">نصب</string>
+    <string name="update_allow">اجازه‌ی نصب</string>
+    <string name="update_open_page">صفحه‌ی انتشار</string>
+    <string name="update_retry">دوباره</string>
+    <string name="settings_updates">به‌روزرسانی</string>
+    <string name="settings_update_check">بررسی به‌روزرسانی</string>
+    <string name="settings_update_checking">در حال بررسی…</string>
+    <string name="settings_update_latest">آخرین نسخه را دارید</string>
+    <string name="settings_update_available">نسخه‌ی %1$s آمده است</string>
+    <string name="settings_update_downloading">در حال دانلود… %1$s</string>
+    <string name="settings_update_ready">نسخه‌ی %1$s آماده‌ی نصب است</string>
+    <string name="settings_update_failed">بررسی نشد: %1$s</string>
+    <string name="settings_share_results">کمک به اتصال دیگران</string>
+    <string name="settings_share_results_hint">به‌صورت ناشناس اعلام می‌کند کدام سرورهای عمومی و آی‌پی‌های تمیز روی شبکه‌ی شما کار کردند و هر حالت اتصال چقدر خوب عمل کرد (چقدر سریع وصل شد، چقدر پایدار ماند)، تا دیگران سریع‌تر وصل شوند و برنامه بهتر شود. هیچ آدرس یا نامی و هیچ‌کدام از کانفیگ‌های شخصی شما ارسال نمی‌شود.</string>
+    <string name="settings_kill_switch_app">مسدود کردن ترافیک بدون سرور</string>
+    <string name="settings_kill_switch_app_hint">وقتی زیرونت در حال جستجو، راه‌اندازی دوباره یا ناموفق است، برنامه‌ها به‌جای خروج بدون محافظت، اینترنت ندارند. زیرونت تا پیدا شدن سرور سالم دوباره تلاش می‌کند.</string>
+    <string name="stage_blocked">هنوز سرور سالمی پیدا نشده. ترافیک مسدود است (کلید قطع اضطراری) و زیرونت همچنان تلاش می‌کند…</string>
+    <string name="widget_blocked">مسدود — در حال جستجو</string>
+    <string name="notification_blocked_detail">کلید قطع اضطراری: تا پیدا شدن سرور، برنامه‌ها آفلاین‌اند</string>
+    <string name="widget_failed">اتصال برقرار نشد</string>
+    <string name="widget_tap_connect">برای اتصال بزنید</string>
+    <string name="widget_tap_disconnect">برای قطع اتصال بزنید</string>
+    <string name="widget_toggle">اتصال یا قطع اتصال</string>
+    <string name="widget_description">با یک لمس وصل شوید و سرور فعلی را ببینید</string>
+    <string name="trusted_title">شبکه‌های مورد اعتماد</string>
+    <string name="trusted_body">زیرونت روی این شبکه‌ها خاموش می‌ماند: خودکار وصل نمی‌شود و با ورود به آن‌ها قطع می‌شود.</string>
+    <string name="trusted_add">اعتماد به این شبکه (%1$s)</string>
+    <string name="trusted_none">هیچ شبکه‌ی مورد اعتمادی نیست.</string>
+    <string name="trusted_current">الان روی همین شبکه هستید</string>
+    <string name="trusted_remove">لغو اعتماد به %1$s</string>
+    <string name="trusted_unknown_network">این شبکه</string>
+    <string name="kind_split">مسیر دوتایی</string>
+    <string name="kind_quic">QUIC</string>
+    <string name="kind_crowd">برای دیگران کار می‌کند</string>
+    <string name="kind_hint_split">XHTTP با مسیرهای جدا برای ارسال و دریافت: سخت‌ترین نوع برای تشخیص فیلترینگ.</string>
+    <string name="kind_hint_direct">REALITY: شبیه بازدید از یک سایت واقعی و فیلترنشده است.</string>
+    <string name="kind_hint_cdn">پشت یک CDN مثل کلودفلر: بستن آن بخش بزرگی از وب را می‌بندد.</string>
+    <string name="kind_hint_quic">Hysteria2 یا TUIC روی UDP: وقتی UDP باز است سریع است، وگرنه کار نمی‌کند.</string>
+    <string name="kind_hint_other">کانفیگ ساده و بدون پوشش: فقط جایی کار می‌کند که هنوز فیلتر نشده.</string>
+    <string name="kind_hint_crowd">کاربران دیگر زیرونت گزارش داده‌اند این سرور روی شبکه‌شان کار می‌کند.</string>
+    <string name="settings_diagnostics">عیب‌یابی</string>
+    <string name="settings_diag_test">آزمایش اتصال من</string>
+    <string name="settings_diag_test_hint">ببینید شبکه‌تان چه چیزی را می‌بندد و کدام نوع سرورها رد می‌شوند</string>
+    <string name="settings_diag_logs">دیدن گزارش‌ها</string>
+    <string name="settings_diag_logs_hint">زیرونت چه چیزی را امتحان کرد، چه جواب داد و چرا کار نکرد</string>
+    <string name="kw_diagnostics">عیب‌یابی آزمایش مشکل گزارش لاگ وصل نمی‌شود dns dpi</string>
+    <string name="diag_title">آزمایش اتصال</string>
+    <string name="diag_body">شبکه‌ی شما را بیرون از تونل بررسی می‌کند، سپس از هر نوع چند سرور ذخیره‌شده را امتحان می‌کند.</string>
+    <string name="diag_not_run">هنوز اجرا نشده.</string>
+    <string name="diag_run">شروع آزمایش</string>
+    <string name="diag_run_again">آزمایش دوباره</string>
+    <string name="diag_network">شبکه</string>
+    <string name="diag_internet">اینترنت ساده</string>
+    <string name="diag_dns">DNS (سایت‌های فیلترشده)</string>
+    <string name="diag_tls">نام سرور TLS (DPI)</string>
+    <string name="diag_tunnel">از داخل تونل</string>
+    <string name="diag_family">سرورها: %1$s</string>
+    <string name="diag_status_pending">در انتظار</string>
+    <string name="diag_status_running">در حال آزمایش…</string>
+    <string name="diag_status_ok">کار می‌کند</string>
+    <string name="diag_status_warn">تا حدی</string>
+    <string name="diag_status_bad">مسدود</string>
+    <string name="diag_status_skipped">رد شد</string>
+    <string name="diag_verdict_offline">شبکه‌ای وجود ندارد. اول به وای‌فای یا داده‌ی همراه وصل شوید.</string>
+    <string name="diag_verdict_no_internet">این شبکه اصلاً به اینترنت نمی‌رسد و هیچ سروری جواب نداد.</string>
+    <string name="diag_verdict_families">الان این نوع‌ها رد می‌شوند: %1$s. زیرونت خودکار آن‌ها را ترجیح می‌دهد.</string>
+    <string name="diag_verdict_no_servers">هنوز سرور ذخیره‌شده‌ای برای آزمایش نیست. یک بار وصل شوید (یا فهرست سرورها را تازه کنید) و دوباره آزمایش کنید.</string>
+    <string name="diag_verdict_none_work">هیچ‌کدام از سرورهای ذخیره‌شده جواب ندادند. فهرست سرورها را تازه کنید، اسکنر آی‌پی تمیز را امتحان کنید یا کانفیگ خودتان را اضافه کنید.</string>
+    <string name="logs_title">گزارش‌ها</string>
+    <string name="logs_body">گزارش اتصال ثبت می‌کند زیرونت چه چیزی را امتحان کرد. برای جزئیات بیشتر از هسته، «گزارش‌های کامل» را در بخش حریم خصوصی روشن کنید.</string>
+    <string name="logs_body_detailed">گزارش‌های کامل روشن است. هنگام درخواست کمک این‌ها را بفرستید؛ شامل نام سرورها و خطاهاست، نه سایت‌هایی که باز می‌کنید.</string>
+    <string name="logs_connection">اتصال</string>
+    <string name="logs_core">هسته</string>
+    <string name="logs_empty">هنوز چیزی ثبت نشده.</string>
+    <string name="logs_refresh">تازه کردن</string>
+    <string name="logs_copy">کپی</string>
+    <string name="logs_share">اشتراک</string>
+    <string name="logs_clear">پاک کردن</string>
+    <string name="detail_auto_select">استفاده در انتخاب خودکار</string>
+    <string name="detail_auto_select_hint">خاموش: اتصال و جابه‌جایی خودکار از این سرور رد می‌شود. هنوز می‌توانید با زدن روی آن وصل شوید.</string>
+    <string name="badge_skipped">کنار گذاشته</string>
+    <string name="settings_speed_floor_adaptive">تطبیقی</string>
+    <string name="settings_speed_floor_adaptive_hint">سرعت شما را یاد می‌گیرد و سروری را که خیلی کندتر از سرورهای اخیر است کنار می‌گذارد</string>
+    <string name="cdn_throttled_split">کلادفلر روی این شبکه محدود شده؛ برای عبور، دست‌دهی تکه‌تکه فرستاده می‌شود.</string>
+    <string name="cdn_throttled_ech">کلادفلر روی این شبکه محدود شده؛ برای عبور، نام سرور پنهان می‌شود.</string>
+    <string name="cdn_decoy">کلادفلر روی این شبکه با نام فیلتر شده؛ برای عبور، نام سرور از فیلتر پنهان می‌شود.</string>
+    <string name="cdn_blocked">کانفیگ‌های CDN کلادفلر روی این شبکه کار نمی‌کنند و فعلاً استفاده نمی‌شوند.</string>
+    <string name="warp_open">گرفتن حساب Cloudflare WARP</string>
+    <string name="warp_title">Cloudflare WARP</string>
+    <string name="settings_profile">سبک اتصال</string>
+    <string name="settings_warp_order">ترتیب WARP</string>
+    <string name="warp_order_auto_hint">اول هیبرید برعکس امتحان می‌شود. اگر هیچ سروری از راه کلودفلر کار نکرد، هیبرید استفاده می‌شود.</string>
+    <string name="warp_order_hybrid">هیبرید</string>
+    <string name="warp_order_reverse">هیبرید برعکس</string>
+    <string name="warp_order_hybrid_hint">اول یک سرور پیدا‌شده، بعد کلودفلر از راه آن. شبکه‌ی شما فقط همان سرور را می‌بیند.</string>
+    <string name="warp_order_reverse_hint">اول کلودفلر، بعد یک سرور پیدا‌شده از راه آن. به سرورهایی هم می‌رسد که شبکه‌ی شما بسته است.</string>
+    <string name="settings_warp_consent">Cloudflare WARP</string>
+    <string name="settings_warp_consent_ask_hint">یک بار، در اولین اتصال با حالت پیشنهادی پرسیده می‌شود.</string>
+    <string name="settings_warp_consent_on_hint">یک سرور پیدا‌شده را با Cloudflare WARP جفت می‌کند، به ترتیبی که پایین انتخاب می‌کنید. اگر Cloudflare در دسترس نباشد، برای ساختنش یک سرور قرض گرفته می‌شود.</string>
+    <string name="settings_warp_consent_off_hint">هیچ‌وقت از Cloudflare استفاده نمی‌شود.</string>
+    <string name="warp_consent_title">از Cloudflare WARP استفاده شود؟</string>
+    <string name="warp_consent_body">زیرونت یک حساب رایگان Cloudflare WARP می‌سازد و آن را با یک سرور پیدا‌شده جفت می‌کند، پس اتصال دو مرحله‌ای می‌شود و خیلی سخت‌تر بسته می‌شود.</string>
+    <string name="warp_consent_borrow">کلیدها روی همین گوشی ساخته می‌شوند و فقط نیمهٔ عمومی آن‌ها فرستاده می‌شود. اگر Cloudflare از اینجا در دسترس نباشد، اول یک سرور بالا می‌آید تا حساب از راه آن ساخته شود، بعد رها می‌شود.</string>
+    <string name="warp_consent_change">این جواب را بعدا می‌توانید از تنظیمات عوض کنید.</string>
+    <string name="warp_consent_terms">شرایط: cloudflare.com/application/terms</string>
+    <string name="warp_consent_agree">موافقم</string>
+    <string name="warp_consent_decline">نه، ممنون</string>
+    <string name="warp_body">یک حساب رایگان WARP می‌سازد. کلیدها روی همین گوشی ساخته می‌شوند و فقط نیمهٔ عمومی آن‌ها برای Cloudflare فرستاده می‌شود.</string>
+    <string name="warp_terms">این کار یک حساب در Cloudflare می‌سازد. با ادامه دادن، شرایط آن را می‌پذیرید: cloudflare.com/application/terms</string>
+    <string name="warp_get">پذیرفتن و گرفتن حساب</string>
+    <string name="warp_working">در حال ساخت حساب و پیدا کردن سرورهایی که از راه آن کار می‌کنند…</string>
+    <string name="warp_cancel">لغو</string>
+    <string name="warp_done">انجام شد. حساب به سرورهای شما اضافه شد.</string>
+    <string name="warp_failed">حساب گرفته نشد. اتصال خود را بررسی کنید و دوباره تلاش کنید.</string>
+    <string name="warp_retry">تلاش دوباره</string>
+    <string name="warp_finish">تمام</string>
+    <string name="warp_fingerprint_note">اثر انگشت کلیدهای جدید</string>
+    <string name="warp_key_description">اثر انگشت کلیدهای جدید WARP</string>
+    <string name="warp_servers_found">%1$d سرور دیگر پیدا شد که از راه آن کار می‌کنند.</string>
+    <string name="race_title">چطور وصل شد</string>
+    <string name="race_live">در حال امتحان %1$d راه برای رسیدن به Cloudflare، همزمان…</string>
+    <string name="race_won_blocked">از راه %1$s وصل شد. شبکه راه‌های دیگر را بسته بود، پس برنامه راهی را برداشت که اینجا کار می‌کند.</string>
+    <string name="race_won_fastest">از راه %1$s وصل شد، سریع‌ترین راه در این لحظه.</string>
+    <string name="race_failed">هیچ راهی جواب نداد. شبکهٔ دیگری را امتحان کنید، یا حساب دیگری.</string>
+    <string name="race_wireguard">WireGuard</string>
+    <string name="race_h2">وب (HTTP/2)</string>
+    <string name="race_h3">QUIC (HTTP/3)</string>
+    <string name="race_waiting">منتظر</string>
+    <string name="race_trying">در حال امتحان…</string>
+    <string name="race_connected">وصل شد · %1$s ثانیه</string>
+    <string name="race_not_needed">لازم نشد</string>
+    <string name="race_no_answer">جواب نداد</string>
+    <string name="race_blocked">بسته است</string>
+    <string name="race_no_traffic">چیزی رد نشد</string>
+    <string name="race_failed_short">ناموفق</string>
+    <string name="path_phone">گوشی شما</string>
+    <string name="path_provider">اپراتور شما</string>
+    <string name="path_filter">فیلتر</string>
+    <string name="path_world">اینترنت آزاد</string>
+    <string name="path_hint_idle">آزمایش را اجرا کنید تا ببینید اتصال شما کجا متوقف می‌شود.</string>
+    <string name="path_running">در حال بررسی هر مرحله از مسیر…</string>
+    <string name="path_ok_all">الان چیزی جلوی شما را نگرفته است.</string>
+    <string name="path_no_network">گوشی شما شبکه ندارد.</string>
+    <string name="path_no_internet">این شبکه ترافیک را به اینترنت نمی‌رساند.</string>
+    <string name="path_redirected">چیزی در این شبکه ترافیک شما را منحرف می‌کند، مثل صفحهٔ ورود یا یک فیلتر.</string>
+    <string name="path_dns">اپراتور شما برای سایت‌های فیلترشده جواب اشتباه می‌دهد.</string>
+    <string name="path_sni">فیلتر نام سایت را در اتصال‌های امن می‌خواند و آن‌هایی را که نمی‌پسندد قطع می‌کند.</string>
+    <string name="path_no_server">الان هیچ‌کدام از سرورهای ذخیره‌شده جواب نداد.</string>
+    <string name="path_do_offline">به شبکه‌ای که اینترنت دارد وصل شوید و دوباره آزمایش کنید.</string>
+    <string name="path_do_redirect">یک بار مرورگر را باز کنید تا صفحهٔ ورود را ببینید، بعد دوباره آزمایش کنید.</string>
+    <string name="path_do_dns">ZeroNet داخل تونل از DNS خودش استفاده می‌کند، پس این مشکل جلویش را نمی‌گیرد.</string>
+    <string name="path_do_sni">ZeroNet سرورهایی را ترجیح می‌دهد که نام را پنهان می‌کنند، پس همچنان رد می‌شوند.</string>
+    <string name="profile_legacy">قدیمی</string>
+    <string name="profile_legacy_hint">همان روش قبلی حالت معمولی: سرورهای رمزگذاری‌شده، یک بار جستجو</string>
+    <string name="way_warp">در حال امتحان حساب WARP شما…</string>
+    <string name="way_disguise">دوباره با پنهان‌سازی اتصال امتحان می‌شود…</string>
+    <string name="way_open">همهٔ روش‌های باقی‌مانده امتحان می‌شود…</string>
+    <string name="gaming_on_title">حالت گیمینگ روشن شد</string>
+    <string name="gaming_on_note">بهترین پینگ، امنیت کمتر: سرورهای ضعیف‌تر و UDP مجاز است.</string>
+    <string name="mars_words">در حال اتصال از مریخ، ممکن است کمی طول بکشد</string>
+</resources>

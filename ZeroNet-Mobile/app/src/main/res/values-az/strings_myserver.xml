@@ -1,0 +1,136 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="ms_card_title">Mənim serverim</string>
+    <string name="ms_card_body">Öz serverini bir neçə dəqiqəyə qur</string>
+    <string name="ms_title">Mənim serverim</string>
+    <string name="ms_default_name">Mənim serverim</string>
+    <string name="ms_intro_1">Kiçik bir server (VPS) icarəyə götür, ünvanını və parolunu bura yaz. ZeroNet hər şeyi onun üzərinə quraşdırıb işə salır və sənə istifadə üçün konfiqurasiyaları verir.</string>
+    <string name="ms_intro_2">Ona hazırda neçə cihazın qoşulduğunu da canlı görə bilərsən.</string>
+    <string name="ms_privacy">Yalnız say göstərilir. Qoşulan heç kimin ünvanı oxunmur, saxlanmır və göndərilmir.</string>
+    <string name="ms_add">Server əlavə et</string>
+    <string name="ms_connected_count">%1$d qoşulub</string>
+    <string name="ms_service_reality">VLESS + REALITY</string>
+    <string name="ms_service_xhttp">VLESS + XHTTP</string>
+    <string name="ms_service_masterdns">MasterDnsVPN</string>
+
+    <string name="ms_form_title">Server əlavə et</string>
+    <string name="ms_field_name">Ad</string>
+    <string name="ms_field_address">Server ünvanı</string>
+    <string name="ms_field_port">SSH portu</string>
+    <string name="ms_field_user">İstifadəçi</string>
+    <string name="ms_field_password">Parol</string>
+    <string name="ms_field_domain">Tunel domeni</string>
+    <string name="ms_password_note">Parol giriş üçün bir dəfə istifadə olunur və saxlanmır. Əvəzində tətbiq serverə öz açarını qoyur.</string>
+    <string name="ms_what_to_install">Nə quraşdırılsın</string>
+    <string name="ms_reality_note">Sürətli və adi veb sayt kimi görünür</string>
+    <string name="ms_xhttp_note">Yenə REALITY üzərindən, öz portunda. Birincisi qoşulmursa sınaya biləcəyin fərqli trafik forması.</string>
+    <string name="ms_masterdns_note">Yalnız DNS üzərindən işləyir. Öz domenin lazımdır.</string>
+    <string name="ms_domain_note">Sahib olduğun domenin alt domeni, məsələn t.example.com. Növbəti ekranlar nəyin qurulacağını göstərir.</string>
+    <string name="ms_connect">Qoşul və quraşdır</string>
+    <string name="ms_err_address">Serverin ünvanını (IP) yaz.</string>
+    <string name="ms_err_address_shape">Ünvan sadəcə IP-dir, məsələn 203.0.113.7.</string>
+    <string name="ms_err_port">SSH portu rəqəmdir, adətən 22.</string>
+    <string name="ms_err_user">Giriş istifadəçisini yaz (adətən root).</string>
+    <string name="ms_err_password">Serverin parolunu yaz.</string>
+    <string name="ms_err_choose">Nəyin quraşdırılacağını seç.</string>
+    <string name="ms_err_domain">Tunel domenini yaz, məsələn t.example.com.</string>
+
+    <string name="ms_busy_title">Bir az gözlə</string>
+    <string name="ms_busy">Serverlə əlaqə qurulur…</string>
+
+    <string name="ms_identity_title">Bu sənin serverindir?</string>
+    <string name="ms_identity_body">Qoşuldu. Server kimliyini belə bildirir:</string>
+    <string name="ms_identity_help">Bunu hostinq panelindəkilə müqayisə et (bir çox panel serverin səhifəsində və ya konsolunda göstərir). Eynidirsə, davam et. Hələ heç bir gizli məlumat göndərilməyib.</string>
+    <string name="ms_identity_yes">Bəli, eynidir</string>
+    <string name="ms_identity_no">Xeyr və ya yoxlaya bilmirəm</string>
+
+    <string name="ms_dns_title">Domeni serverə yönləndir</string>
+    <string name="ms_dns_step1">1. dash.cloudflare.com-u aç, domenini seç, sonra DNS, Records, Add record.</string>
+    <string name="ms_dns_step2">2. Bu iki qeydi əlavə et. Buludu boz saxla (yalnız DNS), heç vaxt narıncı etmə.</string>
+    <string name="ms_dns_record">Qeyd %1$d: növ %2$s</string>
+    <string name="ms_dns_name">Ad</string>
+    <string name="ms_dns_value">Dəyər (IPv4 ünvanı)</string>
+    <string name="ms_dns_nameserver">Ad serveri</string>
+    <string name="ms_dns_needs_ip">IP yox, ad yazmısan: birinci qeydin dəyəri kimi serverin IP ünvanını işlət.</string>
+    <string name="ms_dns_step3">3. Yoxla. Yayılması bir neçə dəqiqə çəkə bilər; indi quraşdırıb sonra sına bilərsən.</string>
+    <string name="ms_dns_other">Cloudflare-də deyilsən? İstənilən qeydiyyatçı olar: eyni iki qeydi əlavə et.</string>
+    <string name="ms_dns_not_checked">Hələ yoxlanmayıb.</string>
+    <string name="ms_dns_checking">Yoxlanılır…</string>
+    <string name="ms_dns_right">Qeyd sənin serverinə yönəlir. Yaxşıdır.</string>
+    <string name="ms_dns_wrong">Ad tapılır, amma bu serverə yox. Birinci qeydin dəyərini yoxla.</string>
+    <string name="ms_dns_unknown">Hələ görünmür. Təzəcə əlavə etmisənsə, bir neçə dəqiqə gözləyib yenidən yoxla.</string>
+    <string name="ms_dns_check">Qeydləri yoxla</string>
+    <string name="ms_dns_install">İndi quraşdır</string>
+    <string name="ms_copy">Kopyala</string>
+
+    <string name="ms_progress_title">Qurulur</string>
+    <string name="ms_progress_wait">Bir-iki dəqiqə çəkir. Tətbiqi açıq saxla.</string>
+    <string name="ms_step_check">Server yoxlanılır</string>
+    <string name="ms_step_packages">Lazım olanlar alınır</string>
+    <string name="ms_step_download">Yüklənir və doğrulanır</string>
+    <string name="ms_step_install">Quraşdırılır</string>
+    <string name="ms_step_configure">Ayarlar yazılır</string>
+    <string name="ms_step_start">İşə salınır</string>
+    <string name="ms_step_firewall">Portlar açılır</string>
+    <string name="ms_step_access">Bu tətbiqin girişi saxlanılır</string>
+    <string name="ms_failed">Dayandı:</string>
+    <string name="ms_failed_note">Yarımçıq heç nə işləmir. Səbəbi düzəlt və yenidən cəhd et.</string>
+    <string name="ms_back">Geri qayıt</string>
+
+    <string name="ms_result_title">Serverin hazırdır</string>
+    <string name="ms_ready">%1$s işləyir.</string>
+    <string name="ms_config_for">Konfiqurasiya: %1$s</string>
+    <string name="ms_copy_link">Linki kopyala</string>
+    <string name="ms_show_code">Kodu göstər</string>
+    <string name="ms_hide_code">Kodu gizlət</string>
+    <string name="ms_qr_description">Konfiqurasiya linkinin QR kodu</string>
+    <string name="ms_use_here">Bu tətbiqdə istifadə et</string>
+    <string name="ms_used_in_app">Serverlərinə əlavə olundu. İndi qoşula bilərsən.</string>
+    <string name="ms_use_failed">Serverlərinə əlavə etmək alınmadı.</string>
+    <string name="ms_files_note">Bu fayllar kompüterdəki MasterDnsVPN proqramı üçündür. Bu tətbiqdə yuxarıdakı linki istifadə et.</string>
+    <string name="ms_files_secret">Fayllarda tunelin açarı var: yalnız etibar etdiyin adamlarla paylaş.</string>
+    <string name="ms_share">Paylaş</string>
+    <string name="ms_open_server">Server səhifəsini aç</string>
+    <string name="ms_note_port_moved">%1$d portunu artıq %2$s istifadə edirdi, ona görə %3$d portu işlədildi.</string>
+    <string name="ms_note_firewall_opened">Portlar serverin firewall-unda açıldı (%1$s).</string>
+    <string name="ms_note_provider_firewall">Hostinq provayderinin öz firewall-u ola bilər. Heç nə qoşulmursa, panelində %1$s portunu aç.</string>
+    <string name="ms_note_unverified">Server proqramı bu tətbiqdən yükləndi və imzalı siyahı ilə yoxlanılmadı.</string>
+    <string name="ms_note_key">Tətbiq öz açarı ilə yenidən daxil ola bilmədi, ona görə növbəti dəfə parol soruşacaq.</string>
+
+    <string name="ms_server_title">Server</string>
+    <string name="ms_gone">Bu server artıq yoxdur.</string>
+    <string name="ms_live">Canlı istifadə</string>
+    <string name="ms_reading">Oxunur…</string>
+    <string name="ms_stat_now">Hazırda qoşulub</string>
+    <string name="ms_stat_recent">Son %1$d dəq</string>
+    <string name="ms_stat_sessions">Açıq sessiyalar</string>
+    <string name="ms_traffic">Başlanğıcdan bəri trafik: yükləmə %1$s, endirmə %2$s</string>
+    <string name="ms_masterdns_lag">Serverin jurnalından sayılır: 5 dəqiqəyə qədər gecikir, trafik rəqəmi yoxdur.</string>
+    <string name="ms_test">MasterDNS-i buradan sına</string>
+    <string name="ms_testing">Sınanılır…</string>
+    <string name="ms_probe_none">MasterDNS heç bir ictimai resolver vasitəsilə cavab vermədi. İki DNS qeydinin düzgünlüyünü yoxla və bir neçə dəqiqə gözlə.</string>
+    <string name="ms_probe_ok">MasterDNS işləyir: %2$d resolverdən %1$d-i ona çatdı (ən yaxşı %3$d ms).</string>
+    <string name="ms_remove">Serverdən sil</string>
+    <string name="ms_removed">Silindi. Server yenidən təmizdir.</string>
+
+    <string name="ms_remove_title">Hər şey silinsin?</string>
+    <string name="ms_remove_what">Bu, ZeroNet-i %1$s üzərindən silir.</string>
+    <string name="ms_remove_detail">Server proqramını və ayarlarını dayandırıb silir, açdığı portları bağlayır və bu tətbiqin açarını serverdən çıxarır. Serverdəki qalan hər şey qalır. Başqalarına verdiyin konfiqurasiyalar işləməyəcək.</string>
+    <string name="ms_remove_type">Təsdiq üçün %1$s yaz:</string>
+    <string name="ms_remove_word" translatable="false">remove</string>
+    <string name="ms_remove_confirm">Sil</string>
+    <string name="ms_cancel">Ləğv et</string>
+    <string name="ms_forget">Yalnız bu tətbiqdə unut</string>
+    <string name="ms_forget_note">Server yoxdursa və ya ona çata bilmirsənsə bunu istifadə et. Serverdə heç nə dəyişmir.</string>
+    <string name="ms_login_with">Giriş üsulu</string>
+    <string name="ms_login_password">Parol</string>
+    <string name="ms_login_key">SSH açarı</string>
+    <string name="ms_field_key">Gizli açar</string>
+    <string name="ms_key_hint">Açarın mətnini yapışdırın (-----BEGIN … PRIVATE KEY-----)</string>
+    <string name="ms_key_choose">Açar faylı seçin</string>
+    <string name="ms_field_passphrase">Açarın parolu (varsa)</string>
+    <string name="ms_key_note">Server parolu qəbul etmirsə bundan istifadə edin. Açar giriş üçün bir dəfə işlənir və heç yerdə saxlanmır. .pub faylını yox, gizli açarı verin.</string>
+    <string name="ms_err_key">Gizli SSH açarınızı yapışdırın və ya seçin.</string>
+    <string name="ms_err_key_shape">Bu gizli açar deyil. -----BEGIN … PRIVATE KEY----- ilə başlamalıdır. Bəlkə .pub faylını seçmisiniz?</string>
+    <string name="ms_key_unreadable">Bu faylı oxumaq mümkün olmadı.</string>
+</resources>

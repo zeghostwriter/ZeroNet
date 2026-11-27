@@ -1,0 +1,16 @@
+[package]
+name = "zero-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+tokio = { workspace = true }
+bytes = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+serde = { workspace = true }
+
+# `set_bound_interface` pins outbound sockets with SO_BINDTODEVICE / IP_BOUND_IF.
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }

@@ -1,0 +1,32 @@
+[package]
+name = "zero-provision"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+zero-core = { workspace = true }
+zero-config = { workspace = true }
+# Only for `sign::verify`: the release checksums are checked against the same
+# key the app already trusts for its lists. The crate is in every app that
+# uses this one, so it adds no code.
+zero-discovery = { workspace = true }
+# The MasterDNS probe speaks the tunnel's own wire to the server it installed.
+zero-masterdns = { workspace = true }
+zero-protocol = { workspace = true }
+# Ring, not the default aws-lc-rs. RSA stays on: some servers offer only an RSA
+# host key, and without it their key exchange fails with "wrong server
+# signature". The crate is only used to verify signatures here, and is already
+# in the build through Arti.
+russh = { version = "0.64", default-features = false, features = ["ring", "rsa"] }
+tokio = { workspace = true }
+tokio-util = { version = "0.7", default-features = false }
+serde = { workspace = true }
+serde_json = { workspace = true }
+base64 = { workspace = true }
+hex = { workspace = true }
+sha2 = { workspace = true }
+rand = { workspace = true }
+x25519-dalek = { workspace = true }
+percent-encoding = { workspace = true }
+tracing = { workspace = true }
