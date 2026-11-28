@@ -34,7 +34,7 @@ use rustls::{
 use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret as X25519StaticSecret};
 use zeroize::Zeroize;
 
-use crate::utls_profiles::{UtlsClientHelloProfile, UtlsEchGrease};
+use crate::utls_profiles::{UtlsClientHelloProfile, UtlsEchGrease, CHROME_155_TRUST_ANCHORS};
 
 const EXT_SERVER_NAME: u16 = 0x0000;
 const EXT_STATUS_REQUEST: u16 = 0x0005;
@@ -54,6 +54,7 @@ const EXT_PRE_SHARED_KEY: u16 = 0x0029;
 const EXT_PSK_KEY_EXCHANGE_MODES: u16 = 0x002d;
 const EXT_KEY_SHARE: u16 = 0x0033;
 const EXT_ENCRYPTED_CLIENT_HELLO: u16 = 0xfe0d;
+const EXT_TRUST_ANCHORS: u16 = 0xca34;
 const EXT_RENEGOTIATION_INFO: u16 = 0xff01;
 const GROUP_X25519: u16 = 0x001d;
 const GROUP_SECP256R1: u16 = 0x0017;
@@ -634,11 +635,21 @@ fn extension_payloads(
             continue;
         }
 
+        // A zero-filled body would be the right shape for the opaque
+        // extensions in the corpus, but `trust_anchors` is parsed: a server
+        // that reads it sees the ID list, not filler. Only Chrome 155 carries
+        // this extension, so its recorded body is used verbatim.
+        let payload = if extension.extension_type == EXT_TRUST_ANCHORS {
+            debug_assert_eq!(extension.payload_len, CHROME_155_TRUST_ANCHORS.len());
+            CHROME_155_TRUST_ANCHORS.to_vec()
+        } else {
+            vec![0; extension.payload_len]
+        };
         push_exact_or_raw_extension(
             &mut exact_extensions,
             &mut raw_extensions,
             extension.extension_type,
-            vec![0; extension.payload_len],
+            payload,
         )?;
     }
 

@@ -769,6 +769,10 @@ pub fn build_config_with_assets(
 
     // ---- inbounds
     let lan_auth = request.lan.enabled && !request.lan.user.is_empty();
+    // LAN sharing without a password is an explicit choice the app made on
+    // the user's behalf; the core's open-relay guard needs that consent in the
+    // config when the ports move off loopback.
+    let lan_open = request.lan.enabled && !lan_auth;
     let private = vpn && !request.lan.enabled && !request.local_auth.user.is_empty();
     if let Some(inbounds) = config["inbounds"].as_array_mut() {
         if private {
@@ -797,6 +801,9 @@ pub fn build_config_with_assets(
                 // rather than exposing an open proxy next to a protected one.
                 Some("http-in") if lan_auth => {
                     inbound["listen"] = json!("127.0.0.1");
+                }
+                Some("socks-in") | Some("http-in") if lan_open => {
+                    inbound["allowLanNoAuth"] = json!(true);
                 }
                 _ => {}
             }

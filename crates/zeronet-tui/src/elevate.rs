@@ -1000,6 +1000,7 @@ mod unix_impl {
             no_packet_info: true,
             max_packet_size: 65_535,
             mtu: request.mtu,
+            backpressure: cfg!(target_os = "linux"),
         }) {
             Ok(device) => device,
             Err(error) => {

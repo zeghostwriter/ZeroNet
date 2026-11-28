@@ -76,19 +76,25 @@ struct Shared<F> {
 }
 
 /// Keeps `in_flight` honest when a worker is aborted before it finishes.
-struct InFlight<'a> {
-    stats: &'a AtomicStats,
+///
+/// The guard is built at dispatch time, not inside the probe future: cancelling
+/// a task that has not been polled yet drops its future without running its
+/// body, so a guard created inside `probe_one` would never be dropped and the
+/// start would stay counted forever. Holding the stats in the guard lets it be
+/// moved into the future and still run its `Drop` on an abort-before-poll.
+struct InFlight {
+    stats: Arc<AtomicStats>,
     done: bool,
 }
 
-impl InFlight<'_> {
+impl InFlight {
     fn finish(mut self, healthy: bool) {
         self.done = true;
         self.stats.record_finish(healthy);
     }
 }
 
-impl Drop for InFlight<'_> {
+impl Drop for InFlight {
     fn drop(&mut self) {
         if !self.done {
             self.stats.record_abandoned();
@@ -258,7 +264,11 @@ impl ScanEngine {
 
             dispatched += 1;
             shared.stats.record_start();
-            workers.spawn(probe_one(shared.clone(), ip, permit));
+            let in_flight = InFlight {
+                stats: shared.stats.clone(),
+                done: false,
+            };
+            workers.spawn(probe_one(shared.clone(), ip, permit, in_flight));
         }
 
         // Drain: let the last probes finish (their results count), but keep
@@ -280,14 +290,14 @@ impl ScanEngine {
     }
 }
 
-async fn probe_one<F>(shared: Arc<Shared<F>>, ip: IpAddr, permit: OwnedSemaphorePermit)
-where
+async fn probe_one<F>(
+    shared: Arc<Shared<F>>,
+    ip: IpAddr,
+    permit: OwnedSemaphorePermit,
+    in_flight: InFlight,
+) where
     F: Fn(&ProbeResult) + Send + Sync + 'static,
 {
-    let in_flight = InFlight {
-        stats: &shared.stats,
-        done: false,
-    };
     let cfg = &shared.probe_cfg;
     let mut res = shared.prober.probe(ip, cfg).await;
 

@@ -2828,6 +2828,7 @@ impl Server {
             no_packet_info: true,
             max_packet_size: 65_535,
             mtu: inherited.map_or(config.mtu, |handover| handover.mtu),
+            backpressure: cfg!(target_os = "linux"),
         };
         let opened = match inherited {
             // SAFETY: the descriptor came from `inherited::take`, which yields

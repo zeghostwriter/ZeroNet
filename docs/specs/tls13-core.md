@@ -7,9 +7,9 @@ layer against a normal TLS 1.3 server. Scoped to the REALITY substrate only (PLA
 Decision 2): no PSK/resumption, no client auth, no renegotiation, no 0-RTT.
 
 Primary source: the working minimal stack in
-`/home/peers/Desktop/Projects/Zray-Stuff/Zray-Core/reference/shoes/src/reality/` (Rust).
+`reference/shoes/src/reality/` (Rust).
 Normative cross-check: Go's TLS 1.3 fork in
-`/home/peers/Desktop/Projects/Zray-Stuff/Zray-Core/reference/REALITY/` (this is what Xray
+`reference/REALITY/` (this is what Xray
 REALITY servers run).
 
 Citations below use:

@@ -428,6 +428,7 @@ async fn an_adopted_descriptor_is_never_configured_by_the_library() {
                 no_packet_info: true,
                 max_packet_size: 65_535,
                 mtu: 1400,
+                backpressure: cfg!(target_os = "linux"),
             },
             0,
         )

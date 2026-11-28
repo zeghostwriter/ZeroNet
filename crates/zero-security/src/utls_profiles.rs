@@ -14,6 +14,11 @@
 //!   emitted a plain match arm mapping both names to a constant, which would
 //!   give the whole user base a single shared hello.
 //!
+//! * the Chrome 155 shape, whose signature-algorithm list and `trust_anchors`
+//!   body are newer than anything the generator emitted. It is derived from
+//!   the Chrome 133 shape held below, with only the version-specific fields
+//!   changed.
+//!
 //! Adding a profile by hand is the expected way to change this file.
 
 use std::sync::OnceLock;
@@ -26,6 +31,7 @@ const XRAY_MODERN_FINGERPRINTS: &[&str] = &[
     "hellochrome_120",
     "hellochrome_131",
     "hellochrome_133",
+    "hellochrome_155",
     "helloios_13",
     "helloios_14",
     "helloedge_106",
@@ -4459,6 +4465,131 @@ const PROFILE_42: UtlsClientHelloProfile = UtlsClientHelloProfile {
     encrypted_client_hello: Some(ECH_GREASE_BORING),
 };
 
+/// The `trust_anchors` body of the Chrome 155 parrot.
+///
+/// A two-byte list length, then twenty-eight one-byte-length-prefixed root
+/// store IDs in lexical order. The list is fixed for every connection, unlike
+/// the GREASE elsewhere in the hello, so it is held verbatim. Only this
+/// profile declares extension `0xca34`, and the shaping layer passes its
+/// body through as a raw extension.
+pub(crate) const CHROME_155_TRUST_ANCHORS: &[u8] = &[
+    0x00, 0xb8, 0x05, 0x82, 0xdf, 0x13, 0x02, 0x01, 0x05, 0x82, 0xdf, 0x13, 0x02, 0x06, 0x05, 0x82,
+    0xdf, 0x13, 0x02, 0x0d, 0x05, 0x82, 0xdf, 0x13, 0x02, 0x0e, 0x05, 0x82, 0xdf, 0x13, 0x02, 0x0f,
+    0x05, 0x82, 0xdf, 0x13, 0x02, 0x12, 0x05, 0x82, 0xdf, 0x13, 0x02, 0x13, 0x05, 0x82, 0xdf, 0x13,
+    0x02, 0x14, 0x08, 0x83, 0x9a, 0x64, 0x8c, 0x9b, 0x2d, 0x01, 0x07, 0x08, 0x83, 0x9a, 0x64, 0x8c,
+    0x9b, 0x2d, 0x01, 0x08, 0x08, 0x83, 0x9a, 0x64, 0x8c, 0x9b, 0x2d, 0x01, 0x09, 0x08, 0x83, 0x9a,
+    0x64, 0x8c, 0x9b, 0x2d, 0x01, 0x0a, 0x08, 0x83, 0x9a, 0x64, 0x8c, 0x9b, 0x2d, 0x01, 0x0b, 0x08,
+    0x83, 0x9a, 0x64, 0x8c, 0x9b, 0x2d, 0x01, 0x0c, 0x08, 0x83, 0x9a, 0x64, 0x8c, 0x9b, 0x2d, 0x01,
+    0x0d, 0x08, 0x83, 0x9a, 0x64, 0x8c, 0x9b, 0x2d, 0x01, 0x12, 0x08, 0x83, 0x9a, 0x64, 0x8c, 0x9b,
+    0x2d, 0x01, 0x13, 0x04, 0xd6, 0x79, 0x09, 0x01, 0x04, 0xd6, 0x79, 0x09, 0x04, 0x04, 0xd6, 0x79,
+    0x09, 0x05, 0x04, 0xd6, 0x79, 0x09, 0x06, 0x04, 0xd6, 0x79, 0x09, 0x07, 0x04, 0xd6, 0x79, 0x09,
+    0x08, 0x04, 0xd6, 0x79, 0x09, 0x0a, 0x04, 0xd6, 0x79, 0x09, 0x0b, 0x04, 0xd6, 0x79, 0x09, 0x0c,
+    0x04, 0xd6, 0x79, 0x09, 0x0d, 0x04, 0xd6, 0x79, 0x09, 0x0f,
+];
+
+/// Chrome 155 adds ML-DSA algorithms and a GREASE entry ahead of Chrome 133's
+/// signature algorithms. The rest of the list is unchanged.
+const PROFILE_43_SIGALGS: &[u16] = &[
+    GREASE, 0x0904, 0x0905, 0x0906, 0x0403, 0x0804, 0x0401, 0x0503, 0x0805, 0x0501, 0x0806, 0x0601,
+];
+
+const PROFILE_43_EXTENSIONS: &[UtlsExtension] = &[
+    UtlsExtension {
+        extension_type: GREASE,
+        payload_len: 0,
+    },
+    UtlsExtension {
+        extension_type: 0xfe0d,
+        payload_len: 186,
+    },
+    UtlsExtension {
+        extension_type: 0x002d,
+        payload_len: 2,
+    },
+    UtlsExtension {
+        extension_type: 0x44cd,
+        payload_len: 5,
+    },
+    UtlsExtension {
+        extension_type: 0xca34,
+        payload_len: 186,
+    },
+    UtlsExtension {
+        extension_type: 0x000d,
+        payload_len: 26,
+    },
+    UtlsExtension {
+        extension_type: 0x002b,
+        payload_len: 7,
+    },
+    UtlsExtension {
+        extension_type: 0x0023,
+        payload_len: 0,
+    },
+    UtlsExtension {
+        extension_type: 0x0033,
+        payload_len: 1263,
+    },
+    UtlsExtension {
+        extension_type: 0x0000,
+        payload_len: 16,
+    },
+    UtlsExtension {
+        extension_type: 0x0005,
+        payload_len: 5,
+    },
+    UtlsExtension {
+        extension_type: 0x0010,
+        payload_len: 14,
+    },
+    UtlsExtension {
+        extension_type: 0x0017,
+        payload_len: 0,
+    },
+    UtlsExtension {
+        extension_type: 0xff01,
+        payload_len: 1,
+    },
+    UtlsExtension {
+        extension_type: 0x000b,
+        payload_len: 2,
+    },
+    UtlsExtension {
+        extension_type: 0x001b,
+        payload_len: 3,
+    },
+    UtlsExtension {
+        extension_type: 0x0012,
+        payload_len: 0,
+    },
+    UtlsExtension {
+        extension_type: 0x000a,
+        payload_len: 12,
+    },
+    UtlsExtension {
+        extension_type: GREASE_SECOND,
+        payload_len: 1,
+    },
+];
+
+/// Chrome 155 differs from Chrome 133 only in the version-specific fields
+/// above: suites, groups, key shares, ALPN, compression and ECH are shared.
+const PROFILE_43: UtlsClientHelloProfile = UtlsClientHelloProfile {
+    cipher_suites: PROFILE_0_CIPHERS,
+    supported_versions: PROFILE_0_VERSIONS,
+    supported_groups: PROFILE_0_GROUPS,
+    key_shares: PROFILE_0_KEY_SHARES,
+    signature_algorithms: PROFILE_43_SIGALGS,
+    delegated_credentials_algorithms: PROFILE_0_DELEGATED_CREDENTIALS,
+    alpn_protocols: PROFILE_0_ALPN,
+    certificate_compression_algorithms: PROFILE_0_CERT_COMP,
+    record_size_limit: None,
+    application_settings: PROFILE_0_APPS,
+    extensions: PROFILE_43_EXTENSIONS,
+    padding_length: None,
+    encrypted_client_hello: Some(ECH_GREASE_BORING),
+};
+
 /// Resolves a fingerprint name to the ClientHello shape it stands for.
 ///
 /// `random` and `randomized` do not name a fixed shape. Xray's `init()` draws
@@ -4490,6 +4621,7 @@ pub(crate) const CORPUS_PROFILE_NAMES: &[&str] = &[
     "chrome",
     "hellochrome_auto",
     "hellochrome_133",
+    "hellochrome_155",
     "firefox",
     "hellofirefox_auto",
     "hellofirefox_148",
@@ -4655,11 +4787,18 @@ fn modern_fingerprint_at(entropy: u64) -> &'static str {
     names[index as usize]
 }
 
+/// Concrete shape behind a profile name.
+///
+/// `chrome` and `hellochrome_auto` deliberately stay on Chrome 133. The pinned
+/// Xray oracle resolves those aliases to that shape, and the minimal REALITY
+/// hello in `tls13::hello` emits exactly its extension set. Naming
+/// `hellochrome_155` opts into the newer shape without breaking either.
 fn named_profile(fingerprint: &str) -> Option<&'static UtlsClientHelloProfile> {
     match fingerprint {
         "chrome" => Some(&PROFILE_0),
         "hellochrome_auto" => Some(&PROFILE_0),
         "hellochrome_133" => Some(&PROFILE_0),
+        "hellochrome_155" => Some(&PROFILE_43),
         "firefox" => Some(&PROFILE_1),
         "hellofirefox_auto" => Some(&PROFILE_1),
         "hellofirefox_148" => Some(&PROFILE_1),
@@ -4721,5 +4860,82 @@ fn named_profile(fingerprint: &str) -> Option<&'static UtlsClientHelloProfile> {
         "hellochrome_115_pq_psk" => Some(&PROFILE_41),
         "hellochrome_120_pq" => Some(&PROFILE_42),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn chrome_155_is_selectable_by_name_and_by_random_draw() {
+        assert!(CORPUS_PROFILE_NAMES.contains(&"hellochrome_155"));
+        assert!(MODERN_FINGERPRINT_NAMES.contains(&"hellochrome_155"));
+        assert!(named_profile("hellochrome_155").is_some());
+        assert!(profile_shuffles_extensions("hellochrome_155"));
+        assert_eq!(
+            profile_offers_x25519_key_share("hellochrome_155"),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn chrome_155_changes_only_the_version_specific_fields() {
+        let older = named_profile("hellochrome_133").unwrap();
+        let newer = named_profile("hellochrome_155").unwrap();
+
+        assert_eq!(newer.cipher_suites, older.cipher_suites);
+        assert_eq!(newer.supported_versions, older.supported_versions);
+        assert_eq!(newer.supported_groups, older.supported_groups);
+        assert_eq!(newer.key_shares.len(), older.key_shares.len());
+        assert_eq!(newer.alpn_protocols, older.alpn_protocols);
+        assert_eq!(
+            newer.certificate_compression_algorithms,
+            older.certificate_compression_algorithms
+        );
+        assert_eq!(
+            newer.encrypted_client_hello.unwrap().lengths,
+            older.encrypted_client_hello.unwrap().lengths
+        );
+
+        assert_eq!(
+            newer.signature_algorithms,
+            &[
+                GREASE, 0x0904, 0x0905, 0x0906, 0x0403, 0x0804, 0x0401, 0x0503, 0x0805, 0x0501,
+                0x0806, 0x0601
+            ]
+        );
+        let anchors: Vec<&UtlsExtension> = newer
+            .extensions
+            .iter()
+            .filter(|extension| extension.extension_type == 0xca34)
+            .collect();
+        assert_eq!(anchors.len(), 1);
+        assert_eq!(anchors[0].payload_len, CHROME_155_TRUST_ANCHORS.len());
+        assert_eq!(
+            newer.extensions.len(),
+            older.extensions.len() + 1,
+            "the trust anchors extension is the only new extension"
+        );
+    }
+
+    #[test]
+    fn the_default_chrome_alias_keeps_the_pinned_oracle_shape() {
+        let default = named_profile("chrome").unwrap();
+        let pinned = named_profile("hellochrome_133").unwrap();
+        assert!(
+            std::ptr::eq(default, pinned),
+            "the unqualified alias must keep the shape the pinned oracle sends"
+        );
+        assert!(
+            named_profile("hellochrome_auto")
+                .unwrap()
+                .signature_algorithms
+                == pinned.signature_algorithms
+        );
+        assert!(!std::ptr::eq(
+            default,
+            named_profile("hellochrome_155").unwrap()
+        ));
     }
 }

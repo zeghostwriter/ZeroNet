@@ -606,10 +606,14 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn tcp_ping_times_out_on_a_blackhole() {
-        // TEST-NET-1 is not routed; the connect either hangs until the
-        // timeout or fails fast with "unreachable" — both are failures.
+        // A closed local port fails fast on every platform. Using TEST-NET-1
+        // here depended on the host having no route or proxy for it, which is
+        // not true in every build environment.
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
         let started = Instant::now();
-        let result = tcp_ping("192.0.2.1", 443, Duration::from_millis(300)).await;
+        let result = tcp_ping("127.0.0.1", port, Duration::from_millis(300)).await;
         assert!(result.is_err());
         assert!(started.elapsed() < Duration::from_secs(2));
     }

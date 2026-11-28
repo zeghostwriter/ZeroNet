@@ -25,6 +25,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use tokio::sync::{mpsc, watch};
+use tokio::time::Instant;
 use zero_core::GenerationId;
 
 /// How long to wait for every inbound listener to bind before reporting the
@@ -32,6 +33,12 @@ use zero_core::GenerationId;
 const LISTEN_TIMEOUT: Duration = Duration::from_secs(10);
 /// Grace period given to a retiring engine's runtime to wind down.
 const SHUTDOWN_GRACE: Duration = Duration::from_secs(3);
+/// Sampling cadence while the engine is not listening, or traffic is recent.
+const STATS_TICK: Duration = Duration::from_millis(500);
+/// Sampling cadence once listeners are up and no bytes have moved for a while.
+const IDLE_STATS_TICK: Duration = Duration::from_secs(5);
+/// How recently bytes must have moved to keep the fast cadence.
+const TRAFFIC_WINDOW: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConnectionStatus {
@@ -413,190 +420,208 @@ impl ZeroNetDaemon {
 
         tokio::spawn(async move {
             let mut engine: Option<RunningEngine> = None;
-            let mut last_up = 0u64;
-            let mut last_down = 0u64;
-            let mut tick_interval = tokio::time::interval(Duration::from_millis(500));
-            tick_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            let mut sampler = StatsSampler::new(Instant::now());
             // A command that arrived while an engine was starting, and
             // superseded that start.
             let mut pending: Option<DaemonCommand> = None;
 
+            // Boxed so the two signal variants do not pay for the largest
+            // command's inline size on every loop iteration.
+            enum Wake {
+                Command(Box<DaemonCommand>),
+                Sample,
+                EngineExit,
+            }
+
             while runner_flag.load(Ordering::Relaxed) {
-                let cmd = match pending.take() {
-                    Some(cmd) => cmd,
+                let wake = match pending.take() {
+                    Some(cmd) => Wake::Command(Box::new(cmd)),
                     None => tokio::select! {
                         maybe_cmd = cmd_rx.recv() => {
                             let Some(cmd) = maybe_cmd else { break };
-                            cmd
+                            Wake::Command(Box::new(cmd))
                         }
-                        _ = tick_interval.tick() => {
-                            let Some(running_engine) = engine.as_mut() else { continue };
-                            if let Some(reason) = running_engine.exit_reason() {
-                                // The engine is gone but the UI still says
-                                // connected, with the desktop and TUN pointed
-                                // at listeners that no longer exist.
-                                tracing::error!(error = %reason, "engine exited");
-                                if let Some(dead) = engine.take() {
-                                    dead.stop_and_wait().await;
-                                }
-                                update(&status_sender, |st| {
-                                    st.status = ConnectionStatus::Error;
-                                    st.error_msg = Some(reason.clone());
-                                    st.tun_active = false;
-                                    st.upload_speed_bps = 0;
-                                    st.download_speed_bps = 0;
-                                    st.active_connections = 0;
-                                });
-                                continue;
+                        _ = tokio::time::sleep_until(sampler.next_sample) => Wake::Sample,
+                        // The run task's oneshot fires when the engine dies.
+                        // Awaiting it separately keeps the watchdog immediate
+                        // while a quiet connection is on the long deadline.
+                        _ = async {
+                            if let Some(running) = engine.as_mut() {
+                                let _ = (&mut running.exited).await;
+                            } else {
+                                std::future::pending::<()>().await;
                             }
-                            let snapshot = running_engine.server.stats.snapshot();
-                            let up_diff = snapshot.uploaded.saturating_sub(last_up);
-                            let down_diff = snapshot.downloaded.saturating_sub(last_down);
-                            last_up = snapshot.uploaded;
-                            last_down = snapshot.downloaded;
-
-                            // Replaced in place rather than through `update`,
-                            // because throughput ticks are not status
-                            // transitions and must not bump the revision the
-                            // UI uses to detect new errors. Only published
-                            // when something changed, so an idle tunnel does
-                            // not wake the UI twice a second.
-                            status_sender.send_if_modified(|st| {
-                                let next = (
-                                    snapshot.uploaded,
-                                    snapshot.downloaded,
-                                    up_diff * 2, // 500 ms window
-                                    down_diff * 2,
-                                    snapshot.succeeded.saturating_sub(snapshot.failed),
-                                    snapshot.cdn_notice,
-                                );
-                                let current = (
-                                    st.upload_bytes,
-                                    st.download_bytes,
-                                    st.upload_speed_bps,
-                                    st.download_speed_bps,
-                                    st.active_connections,
-                                    st.cdn_notice,
-                                );
-                                if next == current {
-                                    return false;
-                                }
-                                st.upload_bytes = next.0;
-                                st.download_bytes = next.1;
-                                st.upload_speed_bps = next.2;
-                                st.download_speed_bps = next.3;
-                                st.active_connections = next.4;
-                                st.cdn_notice = next.5;
-                                true
-                            });
-                            continue;
-                        }
+                        } => Wake::EngineExit,
                     },
                 };
 
-                match coalesce(cmd, &mut cmd_rx) {
-                    DaemonCommand::Connect {
-                        config_json,
-                        node_name,
-                        options,
+                match wake {
+                    Wake::EngineExit => {
+                        let reason = engine
+                            .as_mut()
+                            .and_then(RunningEngine::exit_reason)
+                            .unwrap_or_else(|| "the engine task ended unexpectedly".to_string());
+                        retire_dead_engine(&mut engine, &status_sender, reason).await;
+                        sampler.reset(Instant::now());
                     }
-                    | DaemonCommand::SwitchNode {
-                        config_json,
-                        node_name,
-                        options,
-                    } => {
-                        // Retire the previous engine first and in full.
-                        // Starting the new one while the old listeners are
-                        // still bound is exactly the split-traffic failure
-                        // described at the top of this module.
-                        if let Some(old) = engine.take() {
-                            old.stop_and_wait().await;
+                    Wake::Sample => {
+                        let now = Instant::now();
+                        let Some(running_engine) = engine.as_mut() else {
+                            // Nothing to sample yet; stay on the fast cadence.
+                            sampler.reset(now);
+                            continue;
+                        };
+                        if let Some(reason) = running_engine.exit_reason() {
+                            retire_dead_engine(&mut engine, &status_sender, reason).await;
+                            sampler.reset(Instant::now());
+                            continue;
                         }
-                        last_up = 0;
-                        last_down = 0;
+                        let snapshot = running_engine.server.stats.snapshot();
+                        let sample = sampler.sample(snapshot.uploaded, snapshot.downloaded, now);
 
-                        update(&status_sender, |st| {
-                            st.status = ConnectionStatus::Connecting;
-                            st.active_node_name = node_name.clone();
-                            st.error_msg = None;
-                            st.tun_active = false;
-                            st.upload_speed_bps = 0;
-                            st.download_speed_bps = 0;
+                        // Replaced in place rather than through `update`,
+                        // because throughput ticks are not status
+                        // transitions and must not bump the revision the
+                        // UI uses to detect new errors. Only published
+                        // when something changed, so an idle tunnel does
+                        // not wake the UI on every sample.
+                        status_sender.send_if_modified(|st| {
+                            let next = (
+                                snapshot.uploaded,
+                                snapshot.downloaded,
+                                sample.upload_bps,
+                                sample.download_bps,
+                                snapshot.succeeded.saturating_sub(snapshot.failed),
+                                snapshot.cdn_notice,
+                            );
+                            let current = (
+                                st.upload_bytes,
+                                st.download_bytes,
+                                st.upload_speed_bps,
+                                st.download_speed_bps,
+                                st.active_connections,
+                                st.cdn_notice,
+                            );
+                            if next == current {
+                                return false;
+                            }
+                            st.upload_bytes = next.0;
+                            st.download_bytes = next.1;
+                            st.upload_speed_bps = next.2;
+                            st.download_speed_bps = next.3;
+                            st.active_connections = next.4;
+                            st.cdn_notice = next.5;
+                            true
                         });
+                        let listening =
+                            status_sender.borrow().status == ConnectionStatus::Connected;
+                        sampler.schedule_next(listening, now);
+                    }
+                    Wake::Command(cmd) => match coalesce(*cmd, &mut cmd_rx) {
+                        DaemonCommand::Connect {
+                            config_json,
+                            node_name,
+                            options,
+                        }
+                        | DaemonCommand::SwitchNode {
+                            config_json,
+                            node_name,
+                            options,
+                        } => {
+                            // Retire the previous engine first and in full.
+                            // Starting the new one while the old listeners are
+                            // still bound is exactly the split-traffic failure
+                            // described at the top of this module.
+                            if let Some(old) = engine.take() {
+                                old.stop_and_wait().await;
+                            }
+                            sampler.reset(Instant::now());
 
-                        // A newer command cancels this start rather than
-                        // queueing behind it: a disconnect clicked while a
-                        // node is still being dialled must not wait out the
-                        // listen timeout first.
-                        let outcome = tokio::select! {
-                            outcome = start_engine(&config_json, &options) => outcome,
-                            next = cmd_rx.recv() => {
-                                match next {
-                                    Some(next) => pending = Some(next),
-                                    None => break,
+                            update(&status_sender, |st| {
+                                st.status = ConnectionStatus::Connecting;
+                                st.active_node_name = node_name.clone();
+                                st.error_msg = None;
+                                st.tun_active = false;
+                                st.upload_speed_bps = 0;
+                                st.download_speed_bps = 0;
+                            });
+
+                            // A newer command cancels this start rather than
+                            // queueing behind it: a disconnect clicked while a
+                            // node is still being dialled must not wait out the
+                            // listen timeout first.
+                            let outcome = tokio::select! {
+                                outcome = start_engine(&config_json, &options) => outcome,
+                                next = cmd_rx.recv() => {
+                                    match next {
+                                        Some(next) => pending = Some(next),
+                                        None => break,
+                                    }
+                                    continue;
                                 }
-                                continue;
-                            }
-                        };
-                        match outcome {
-                            Ok(started) => {
-                                let tun_active = started.tun_active;
-                                engine = Some(started.engine);
-                                update(&status_sender, |st| {
-                                    st.status = ConnectionStatus::Connected;
-                                    st.active_node_name = node_name.clone();
-                                    st.error_msg = None;
-                                    st.tun_active = tun_active;
-                                });
-                            }
-                            Err(err) => {
-                                let msg = format!("{err:#}");
-                                tracing::error!(error = %msg, "engine failed to start");
-                                update(&status_sender, |st| {
-                                    st.status = ConnectionStatus::Error;
-                                    st.error_msg = Some(msg.clone());
-                                    st.tun_active = false;
-                                });
+                            };
+                            match outcome {
+                                Ok(started) => {
+                                    let tun_active = started.tun_active;
+                                    engine = Some(started.engine);
+                                    // The listeners only exist now; bytes moved
+                                    // during the start wait belong to no sample.
+                                    sampler.reset(Instant::now());
+                                    update(&status_sender, |st| {
+                                        st.status = ConnectionStatus::Connected;
+                                        st.active_node_name = node_name.clone();
+                                        st.error_msg = None;
+                                        st.tun_active = tun_active;
+                                    });
+                                }
+                                Err(err) => {
+                                    let msg = format!("{err:#}");
+                                    tracing::error!(error = %msg, "engine failed to start");
+                                    update(&status_sender, |st| {
+                                        st.status = ConnectionStatus::Error;
+                                        st.error_msg = Some(msg.clone());
+                                        st.tun_active = false;
+                                    });
+                                }
                             }
                         }
-                    }
-                    stop @ (DaemonCommand::Disconnect | DaemonCommand::Stop(_)) => {
-                        let ack = match stop {
-                            DaemonCommand::Stop(ack) => Some(ack),
-                            _ => None,
-                        };
-                        if let Some(old) = engine.take() {
-                            old.stop_and_wait().await;
+                        stop @ (DaemonCommand::Disconnect | DaemonCommand::Stop(_)) => {
+                            let ack = match stop {
+                                DaemonCommand::Stop(ack) => Some(ack),
+                                _ => None,
+                            };
+                            if let Some(old) = engine.take() {
+                                old.stop_and_wait().await;
+                            }
+                            sampler.reset(Instant::now());
+                            update(&status_sender, |st| {
+                                st.status = ConnectionStatus::Disconnected;
+                                st.error_msg = None;
+                                st.tun_active = false;
+                                st.upload_speed_bps = 0;
+                                st.download_speed_bps = 0;
+                                st.active_connections = 0;
+                            });
+                            if let Some(ack) = ack {
+                                let _ = ack.send(());
+                            }
                         }
-                        last_up = 0;
-                        last_down = 0;
-                        update(&status_sender, |st| {
-                            st.status = ConnectionStatus::Disconnected;
-                            st.error_msg = None;
-                            st.tun_active = false;
-                            st.upload_speed_bps = 0;
-                            st.download_speed_bps = 0;
-                            st.active_connections = 0;
-                        });
-                        if let Some(ack) = ack {
+                        DaemonCommand::Shutdown(ack) => {
+                            if let Some(old) = engine.take() {
+                                old.stop_and_wait().await;
+                            }
+                            update(&status_sender, |st| {
+                                st.status = ConnectionStatus::Disconnected;
+                                st.error_msg = None;
+                                st.tun_active = false;
+                                st.upload_speed_bps = 0;
+                                st.download_speed_bps = 0;
+                                st.active_connections = 0;
+                            });
                             let _ = ack.send(());
+                            return;
                         }
-                    }
-                    DaemonCommand::Shutdown(ack) => {
-                        if let Some(old) = engine.take() {
-                            old.stop_and_wait().await;
-                        }
-                        update(&status_sender, |st| {
-                            st.status = ConnectionStatus::Disconnected;
-                            st.error_msg = None;
-                            st.tun_active = false;
-                            st.upload_speed_bps = 0;
-                            st.download_speed_bps = 0;
-                            st.active_connections = 0;
-                        });
-                        let _ = ack.send(());
-                        return;
-                    }
+                    },
                 }
             }
 
@@ -706,6 +731,137 @@ fn update(sender: &watch::Sender<DaemonStats>, f: impl FnOnce(&mut DaemonStats))
     f(&mut st);
     st.revision = st.revision.wrapping_add(1);
     let _ = sender.send(st);
+}
+
+/// Cumulative byte counts as reported by the engine.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct TrafficTotals {
+    uploaded: u64,
+    downloaded: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct TrafficSample {
+    upload_bps: u64,
+    download_bps: u64,
+    moved: bool,
+}
+
+/// Convert bytes seen over `elapsed` into a per-second rate.
+///
+/// The window length changes with traffic, so a fixed doubling would report
+/// five times too much after an idle backoff. Integer math keeps the rate
+/// exact without a float conversion in the sampling path.
+fn rate_bps(bytes: u64, elapsed: Duration) -> u64 {
+    let nanos = elapsed.as_nanos();
+    if nanos == 0 {
+        return 0;
+    }
+    u64::try_from((u128::from(bytes) * 1_000_000_000) / nanos).unwrap_or(u64::MAX)
+}
+
+/// Fold a cumulative engine reading into one sample.
+///
+/// Engine counters only go up, but a replacement engine starts them over; the
+/// caller clears `totals` when the engine changes so a restart never looks
+/// like a negative delta.
+fn sample_traffic(
+    totals: &mut TrafficTotals,
+    current: TrafficTotals,
+    elapsed: Duration,
+) -> TrafficSample {
+    let up = current.uploaded.saturating_sub(totals.uploaded);
+    let down = current.downloaded.saturating_sub(totals.downloaded);
+    *totals = current;
+    TrafficSample {
+        upload_bps: rate_bps(up, elapsed),
+        download_bps: rate_bps(down, elapsed),
+        moved: up > 0 || down > 0,
+    }
+}
+
+/// Pick the wait before the next stats read.
+///
+/// `listening` is true only while the status is `Connected`, which is set
+/// after every inbound listener has bound. A quiet listening engine can be
+/// read far less often; a connecting or disconnected one keeps the regular
+/// cadence so state changes still show up promptly.
+fn stats_interval(listening: bool, last_traffic: Instant, now: Instant) -> Duration {
+    if !listening || now.saturating_duration_since(last_traffic) < TRAFFIC_WINDOW {
+        STATS_TICK
+    } else {
+        IDLE_STATS_TICK
+    }
+}
+
+/// Sampling state owned by the daemon loop.
+struct StatsSampler {
+    totals: TrafficTotals,
+    sampled_at: Instant,
+    last_traffic_at: Instant,
+    next_sample: Instant,
+}
+
+impl StatsSampler {
+    fn new(now: Instant) -> Self {
+        Self {
+            totals: TrafficTotals::default(),
+            sampled_at: now,
+            last_traffic_at: now,
+            next_sample: now + STATS_TICK,
+        }
+    }
+
+    /// A new engine (or none at all) starts a fresh window at the fast rate.
+    fn reset(&mut self, now: Instant) {
+        *self = Self::new(now);
+    }
+
+    /// Read the cumulative counters. `now` is the real read time, so a late
+    /// tick spreads its bytes over the whole gap instead of a fixed window.
+    fn sample(&mut self, uploaded: u64, downloaded: u64, now: Instant) -> TrafficSample {
+        let elapsed = now.saturating_duration_since(self.sampled_at);
+        let sample = sample_traffic(
+            &mut self.totals,
+            TrafficTotals {
+                uploaded,
+                downloaded,
+            },
+            elapsed,
+        );
+        self.sampled_at = now;
+        if sample.moved {
+            self.last_traffic_at = now;
+        }
+        sample
+    }
+
+    fn schedule_next(&mut self, listening: bool, now: Instant) {
+        self.next_sample = now + stats_interval(listening, self.last_traffic_at, now);
+    }
+}
+
+/// Tear down an engine whose run task ended while the UI still calls it live.
+///
+/// Without this, the desktop and TUN keep pointing at listeners that no longer
+/// exist until the next stats read notices the death.
+async fn retire_dead_engine(
+    engine: &mut Option<RunningEngine>,
+    status_sender: &watch::Sender<DaemonStats>,
+    reason: String,
+) {
+    tracing::error!(error = %reason, "engine exited");
+    if let Some(dead) = engine.take() {
+        dead.stop_and_wait().await;
+    }
+    update(status_sender, |st| {
+        st.status = ConnectionStatus::Error;
+        st.error_msg = Some(reason);
+        st.tun_active = false;
+        st.upload_speed_bps = 0;
+        st.download_speed_bps = 0;
+        st.active_connections = 0;
+    });
 }
 
 struct StartedEngine {
@@ -3234,6 +3390,75 @@ mod tests {
             .await
             .expect("shutdown finished within the grace period")
             .expect("completion was signalled");
+    }
+
+    #[test]
+    fn delayed_samples_keep_cumulative_totals_and_rate() {
+        let start = Instant::now();
+        let mut sampler = StatsSampler::new(start);
+        let first = sampler.sample(500, 1_000, start + STATS_TICK);
+        assert_eq!(first.upload_bps, 1_000);
+        assert_eq!(first.download_bps, 2_000);
+        assert!(first.moved);
+
+        // The next read is five seconds later: the rate uses the real gap,
+        // not the fast-window doubling, while totals keep climbing.
+        let later = start + STATS_TICK + IDLE_STATS_TICK;
+        let second = sampler.sample(5_000, 1_000, later);
+        assert_eq!(second.upload_bps, 900);
+        assert_eq!(second.download_bps, 0);
+        assert!(second.moved);
+        assert_eq!(
+            sampler.totals,
+            TrafficTotals {
+                uploaded: 5_000,
+                downloaded: 1_000
+            }
+        );
+
+        // A replacement engine restarts its counters; clearing the window
+        // keeps that from being read as a negative delta.
+        sampler.reset(later);
+        let restarted = sampler.sample(10, 20, later + STATS_TICK);
+        assert_eq!(restarted.upload_bps, 20);
+        assert_eq!(restarted.download_bps, 40);
+    }
+
+    #[test]
+    fn idle_backoff_only_applies_to_a_quiet_listening_engine() {
+        let start = Instant::now();
+        let quiet = start - Duration::from_secs(TRAFFIC_WINDOW.as_secs() + 1);
+        assert_eq!(stats_interval(false, quiet, start), STATS_TICK);
+        assert_eq!(stats_interval(true, quiet, start), IDLE_STATS_TICK);
+        assert_eq!(
+            stats_interval(true, start - Duration::from_secs(4), start),
+            STATS_TICK
+        );
+        assert_eq!(
+            stats_interval(true, start - TRAFFIC_WINDOW, start),
+            IDLE_STATS_TICK
+        );
+
+        let mut sampler = StatsSampler::new(quiet);
+        sampler.schedule_next(true, start);
+        assert_eq!(sampler.next_sample - start, IDLE_STATS_TICK);
+
+        // Bytes arriving during the backoff bring the next read forward.
+        let traffic = sampler.sample(1_000, 2_000, start);
+        assert!(traffic.moved);
+        sampler.schedule_next(true, start);
+        assert_eq!(sampler.next_sample - start, STATS_TICK);
+
+        // Once that traffic is outside the window, the next read backs off.
+        let later = start + TRAFFIC_WINDOW;
+        let quiet_sample = sampler.sample(1_000, 2_000, later);
+        assert!(!quiet_sample.moved);
+        sampler.schedule_next(true, later);
+        assert_eq!(sampler.next_sample - later, IDLE_STATS_TICK);
+
+        // Losing the listeners drops the backoff even while quiet.
+        sampler.schedule_next(false, later);
+        assert_eq!(sampler.next_sample - later, STATS_TICK);
     }
 
     #[test]

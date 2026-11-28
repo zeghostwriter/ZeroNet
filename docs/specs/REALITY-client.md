@@ -4,7 +4,7 @@ Target: a Rust client speaking **XTLS REALITY** to an Xray-core server.
 Primary protocol version analyzed: Xray-core **v26.9.9** source in this repo, with explicit
 notes for **v26.3.27**-era server behavior (the version this project targets).
 
-All citations are relative to `/home/peers/Desktop/Projects/Zray-Stuff/Zray-Core/reference/`:
+All citations are relative to the `reference/` directory:
 
 | Tag | Path | What it is |
 |-----|------|------------|

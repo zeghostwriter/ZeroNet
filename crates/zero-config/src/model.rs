@@ -317,6 +317,7 @@ impl Fingerprint {
 const XRAY_PROFILE_NAMES: &[&str] = &[
     "hellochrome_auto",
     "hellochrome_133",
+    "hellochrome_155",
     "hellofirefox_auto",
     "hellofirefox_148",
     "hellosafari_auto",
@@ -3547,6 +3548,13 @@ mod tests {
             Fingerprint::parse("hellochrome_120_pq"),
             Some(Fingerprint::Named(Arc::from("hellochrome_120_pq")))
         );
+        assert_eq!(
+            Fingerprint::parse("hellochrome_155"),
+            Some(Fingerprint::Named(Arc::from("hellochrome_155")))
+        );
+        assert!(Fingerprint::parse("hellochrome_155")
+            .unwrap()
+            .supports_reality());
         assert!(!Fingerprint::parse("hello360_auto")
             .unwrap()
             .supports_reality());

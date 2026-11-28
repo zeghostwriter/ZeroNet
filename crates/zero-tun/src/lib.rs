@@ -502,6 +502,14 @@ pub struct TunConfig {
     pub no_packet_info: bool,
     pub max_packet_size: usize,
     pub mtu: usize,
+    /// Ask the kernel to apply backpressure on the TUN queue (Linux only).
+    ///
+    /// When set, `IFF_BACKPRESSURE` is OR-ed into the `TUNSETIFF` flags so the
+    /// kernel stops reading from the queue once it is full instead of dropping
+    /// packets. It defaults to `true` on Linux and `false` everywhere else, and
+    /// a kernel that does not understand the bit is handled by retrying without
+    /// it (see `configure_linux`), so leaving it on is safe.
+    pub backpressure: bool,
 }
 
 impl Default for TunConfig {
@@ -511,6 +519,7 @@ impl Default for TunConfig {
             no_packet_info: true,
             max_packet_size: MAX_PACKET,
             mtu: 1500,
+            backpressure: cfg!(target_os = "linux"),
         }
     }
 }
@@ -1769,23 +1778,63 @@ fn set_nonblocking(file: &std::fs::File) -> io::Result<()> {
 }
 
 #[cfg(target_os = "linux")]
+const TUNSETIFF: libc::c_ulong = 0x4004_54ca;
+
+/// `IFF_BACKPRESSURE` from `linux/if_tun.h`. The bit is not present in older
+/// libc crates, so it is restated here; `0x0080` is unused by the other TUN
+/// flags, and a kernel that predates it rejects the request with `EINVAL`, which
+/// `configure_linux` retries without.
+#[cfg(target_os = "linux")]
+const IFF_BACKPRESSURE: i16 = 0x0080;
+
+/// Build the `TUNSETIFF` flag word for `config`.
+///
+/// `IFF_TUN` is always present; `IFF_NO_PI` is added when packet-info framing is
+/// turned off, and `IFF_BACKPRESSURE` when backpressure is requested. Kept as a
+/// pure function so the flag math can be tested without a real TUN device.
+#[cfg(target_os = "linux")]
+fn tun_iff_flags(config: &TunConfig) -> i16 {
+    let mut flags = libc::IFF_TUN as i16;
+    if config.no_packet_info {
+        flags |= libc::IFF_NO_PI as i16;
+    }
+    if config.backpressure {
+        flags |= IFF_BACKPRESSURE;
+    }
+    flags
+}
+
+/// Whether a failed `TUNSETIFF` should be retried with the backpressure bit
+/// cleared. Only an `EINVAL` from a request that asked for backpressure is
+/// retryable: that is how an older kernel reports it does not know the bit.
+#[cfg(target_os = "linux")]
+fn backpressure_retry_on(backpressure: bool, error: &io::Error) -> bool {
+    backpressure && error.raw_os_error() == Some(libc::EINVAL)
+}
+
+#[cfg(target_os = "linux")]
 fn configure_linux(file: &std::fs::File, config: &TunConfig) -> io::Result<()> {
     use std::os::fd::AsRawFd;
     let mut request = Ifreq::default();
     request.name[..config.name.len()].copy_from_slice(config.name.as_bytes());
-    request.flags = libc::IFF_TUN as i16;
-    if config.no_packet_info {
-        request.flags |= libc::IFF_NO_PI as i16;
-    }
+    request.flags = tun_iff_flags(config);
     let result = unsafe { libc::ioctl(file.as_raw_fd(), TUNSETIFF, &request) };
     if result < 0 {
-        return Err(io::Error::last_os_error());
+        let error = io::Error::last_os_error();
+        if backpressure_retry_on(config.backpressure, &error) {
+            // Retry once without the backpressure bit; `IFF_NO_PI` and the name
+            // are left exactly as the first attempt had them.
+            request.flags &= !IFF_BACKPRESSURE;
+            let retry = unsafe { libc::ioctl(file.as_raw_fd(), TUNSETIFF, &request) };
+            if retry < 0 {
+                return Err(io::Error::last_os_error());
+            }
+            return Ok(());
+        }
+        return Err(error);
     }
     Ok(())
 }
-
-#[cfg(target_os = "linux")]
-const TUNSETIFF: libc::c_ulong = 0x4004_54ca;
 
 #[cfg(target_os = "linux")]
 #[repr(C)]
@@ -1995,6 +2044,64 @@ mod tests {
     #[test]
     fn config_accepts_a_normal_device_name() {
         TunConfig::default().validate().unwrap();
+    }
+
+    // The backpressure flag math lives on Linux only, so the tests that build
+    // the `TUNSETIFF` word are gated the same way as the code under test.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn iff_flags_combine_tun_no_pi_and_backpressure() {
+        let base = libc::IFF_TUN as i16;
+
+        let plain = TunConfig {
+            no_packet_info: false,
+            backpressure: false,
+            ..TunConfig::default()
+        };
+        assert_eq!(tun_iff_flags(&plain), base);
+
+        let no_pi = TunConfig {
+            no_packet_info: true,
+            backpressure: false,
+            ..TunConfig::default()
+        };
+        assert_eq!(tun_iff_flags(&no_pi), base | libc::IFF_NO_PI as i16);
+
+        let with_bp = TunConfig {
+            no_packet_info: true,
+            backpressure: true,
+            ..TunConfig::default()
+        };
+        let flags = tun_iff_flags(&with_bp);
+        assert_eq!(flags, base | libc::IFF_NO_PI as i16 | IFF_BACKPRESSURE);
+        assert_ne!(flags & IFF_BACKPRESSURE, 0);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn backpressure_retry_clears_only_the_backpressure_bit() {
+        let config = TunConfig {
+            no_packet_info: true,
+            backpressure: true,
+            ..TunConfig::default()
+        };
+        let retry = tun_iff_flags(&config) & !IFF_BACKPRESSURE;
+        // The retry keeps the device type and `IFF_NO_PI`; only the newer bit
+        // is dropped, so the fallback opens the same device minus backpressure.
+        assert_eq!(retry, libc::IFF_TUN as i16 | libc::IFF_NO_PI as i16);
+        assert_eq!(retry & IFF_BACKPRESSURE, 0);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn backpressure_fallback_is_limited_to_einval() {
+        let einval = io::Error::from_raw_os_error(libc::EINVAL);
+        assert!(backpressure_retry_on(true, &einval));
+        // Without backpressure requested, nothing is retried.
+        assert!(!backpressure_retry_on(false, &einval));
+        // A different failure (e.g. EBUSY) is reported, never retried.
+        let ebusy = io::Error::from_raw_os_error(libc::EBUSY);
+        assert!(!backpressure_retry_on(true, &ebusy));
     }
 
     #[test]

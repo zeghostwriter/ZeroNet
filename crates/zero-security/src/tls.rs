@@ -1352,6 +1352,49 @@ mod tests {
         }
     }
 
+    /// The named Chrome 155 profile sends the newer signature algorithms and
+    /// the trust-anchor IDs, while the default alias keeps the older shape.
+    #[test]
+    fn chrome_155_sends_its_version_specific_fields() {
+        use crate::utls_profiles::CHROME_155_TRUST_ANCHORS;
+
+        let flight = first_flight(client_config(
+            &TlsParams::new("example.com").with_fingerprint_name("hellochrome_155"),
+        ));
+        let extensions = client_hello_extensions(&flight);
+        let anchors = extensions
+            .iter()
+            .find(|(kind, _)| *kind == 0xca34)
+            .expect("a trust_anchors extension");
+        assert_eq!(anchors.1, CHROME_155_TRUST_ANCHORS);
+
+        let sigalgs = extensions
+            .iter()
+            .find(|(kind, _)| *kind == 0x000d)
+            .expect("a signature_algorithms extension");
+        assert_eq!(sigalgs.1.len(), 2 + 12 * 2);
+        let ids: Vec<u16> = sigalgs.1[2..]
+            .chunks_exact(2)
+            .map(|pair| u16::from_be_bytes([pair[0], pair[1]]))
+            .collect();
+        assert_eq!(ids[0] & 0x0f0f, 0x0a0a, "the first entry is GREASE");
+        assert_eq!(
+            &ids[1..],
+            &[
+                0x0904, 0x0905, 0x0906, 0x0403, 0x0804, 0x0401, 0x0503, 0x0805, 0x0501, 0x0806,
+                0x0601
+            ]
+        );
+
+        let default_flight = first_flight(client_config(&TlsParams::new("example.com")));
+        assert!(
+            !client_hello_extensions(&default_flight)
+                .iter()
+                .any(|(kind, _)| *kind == 0xca34),
+            "the default alias must not claim Chrome 155"
+        );
+    }
+
     #[derive(Debug)]
     struct Yes(rustls::crypto::WebPkiSupportedAlgorithms);
     impl ServerCertVerifier for Yes {

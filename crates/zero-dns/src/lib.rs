@@ -1336,6 +1336,12 @@ impl Resolver {
         let query = build_query(id, name, kind)?;
         let deadline = tokio::time::Instant::now() + DNS_TIMEOUT;
         let mut buf = vec![0u8; UDP_RECV_BUFFER];
+        // The last parse failure, reported only if the whole budget runs out
+        // without a usable answer. One malformed datagram must not abort the
+        // resolution: a later retransmission, or the next resolver tier, may
+        // still answer, so the error is held back until the deadline.
+        let mut malformed: Option<ResolveError> = None;
+        let mut malformed_count: u32 = 0;
         loop {
             tokio::time::timeout_at(deadline, socket.send(&query))
                 .await
@@ -1350,19 +1356,27 @@ impl Resolver {
                     Err(_) => break,
                     Ok(received) => received.map_err(io_error)?,
                 };
-                let response = &buf[..received];
-                // A datagram that does not answer *this* question (wrong ID,
-                // wrong name, a late answer to an earlier query, or an
-                // off-path forgery) is ignored, not treated as the answer.
-                if !answers_query(response, &query) {
-                    continue;
+                match classify_udp_response(&buf[..received], &query, id, kind) {
+                    UdpOutcome::NotOurs => continue,
+                    UdpOutcome::Malformed(error) => {
+                        malformed_count += 1;
+                        tracing::debug!(
+                            malformed = malformed_count,
+                            "ignoring a malformed UDP DNS datagram from {target}"
+                        );
+                        malformed = Some(error);
+                        continue;
+                    }
+                    UdpOutcome::Answer(packet) => {
+                        let truncated = packet.truncated;
+                        return Ok((packet, truncated));
+                    }
                 }
-                let packet = parse_response(response, id, kind)?;
-                let truncated = packet.truncated;
-                return Ok((packet, truncated));
             }
             if tokio::time::Instant::now() >= deadline {
-                return Err(ResolveError::Transport("UDP DNS receive timed out".into()));
+                return Err(malformed.unwrap_or_else(|| {
+                    ResolveError::Transport("UDP DNS receive timed out".into())
+                }));
             }
         }
     }
@@ -2338,6 +2352,39 @@ fn answers_query(response: &[u8], query: &[u8]) -> bool {
         .is_some_and(|echoed| echoed.eq_ignore_ascii_case(question))
 }
 
+/// The gate one received UDP datagram passes through before it can be the
+/// answer: is it even for this query, and if so does it parse.
+enum UdpOutcome {
+    /// A datagram that does not answer *this* question — wrong ID, wrong
+    /// name, a late answer to an earlier query, or an off-path forgery. It is
+    /// ignored, exactly as a non-matching datagram always was.
+    NotOurs,
+    /// A datagram that answers this question but whose body does not parse.
+    /// The error is handed back so the caller can count it and keep waiting,
+    /// rather than letting one bad datagram abort the whole resolution.
+    Malformed(ResolveError),
+    /// A datagram that parsed into an answer.
+    Answer(PacketAnswer),
+}
+
+/// Gate and parse one received datagram against the query that was sent.
+///
+/// Pure: no I/O, no shared state, no logging, so the retransmit loop alone
+/// decides what a malformed datagram costs (a counter and a debug line) and
+/// when to give up. The ID and question checks in [`answers_query`] run first,
+/// so a datagram for another question is [`UdpOutcome::NotOurs`] and never
+/// reaches the parser; only a datagram that is ours but unparseable becomes
+/// [`UdpOutcome::Malformed`].
+fn classify_udp_response(response: &[u8], query: &[u8], id: u16, kind: QueryType) -> UdpOutcome {
+    if !answers_query(response, query) {
+        return UdpOutcome::NotOurs;
+    }
+    match parse_response(response, id, kind) {
+        Ok(packet) => UdpOutcome::Answer(packet),
+        Err(error) => UdpOutcome::Malformed(error),
+    }
+}
+
 /// Parse a response to a specific query, rejecting one that answers a
 /// different question.
 fn parse_answer(data: &[u8], query: &[u8], kind: QueryType) -> Result<PacketAnswer, ResolveError> {
@@ -3025,6 +3072,114 @@ mod tests {
             .unwrap();
         assert_eq!(ips, vec!["10.0.0.7".parse::<IpAddr>().unwrap()]);
         server.await.unwrap();
+    }
+
+    /// A single malformed datagram must not end the resolution: the valid
+    /// answer that follows it on the same socket is still read and used. Before
+    /// the parse-and-gate step was factored out, the first unparseable datagram
+    /// returned an error and the real answer behind it was never seen.
+    #[tokio::test]
+    async fn a_malformed_udp_datagram_is_skipped_and_the_following_answer_is_used() {
+        let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let address = socket.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let mut buffer = [0u8; 512];
+            let (len, peer) = socket.recv_from(&mut buffer).await.unwrap();
+            let query = buffer[..len].to_vec();
+            // First datagram: it answers the question (same ID and echoed
+            // question, so `answers_query` accepts it) but claims an answer
+            // whose record is cut off, so the body fails to parse.
+            let mut malformed = query.clone();
+            malformed[2] = 0x81;
+            malformed[3] = 0x80;
+            malformed[7] = 1; // one answer ...
+            malformed.extend_from_slice(&[0xc0, 0x0c]); // ... with no fixed section
+            socket.send_to(&malformed, peer).await.unwrap();
+            // Then the real answer, which must win.
+            let mut response = query;
+            response[2] = 0x81;
+            response[3] = 0x80;
+            response[7] = 1;
+            response.extend_from_slice(&[0xc0, 0x0c, 0, 1, 0, 1, 0, 0, 0, 30, 0, 4, 10, 0, 0, 7]);
+            socket.send_to(&response, peer).await.unwrap();
+        });
+        let resolver = Resolver::new(udp_settings(address.port()));
+        let ips = resolver
+            .lookup("example.com", QueryStrategy::UseIpv4)
+            .await
+            .unwrap();
+        assert_eq!(ips, vec!["10.0.0.7".parse::<IpAddr>().unwrap()]);
+        server.await.unwrap();
+    }
+
+    /// When every datagram from the first resolver is malformed, the lookup
+    /// still falls through to the next tier once the first one's budget is
+    /// spent: the parse failures are counted and the last error is returned
+    /// only after the deadline, so a higher tier gets its chance. This waits
+    /// out the per-query UDP budget, so it is the slow one.
+    #[tokio::test]
+    async fn an_all_malformed_resolver_falls_through_to_the_next_tier() {
+        let first = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let first_address = first.local_addr().unwrap();
+        // Answer every query with a datagram that matches the question but
+        // never parses, for as long as the resolver keeps retransmitting. The
+        // task is detached: dropping its handle lets it run until the runtime
+        // stops at the end of the test.
+        drop(tokio::spawn(async move {
+            let mut buffer = [0u8; 512];
+            while let Ok((len, peer)) = first.recv_from(&mut buffer).await {
+                let mut malformed = buffer[..len].to_vec();
+                malformed[2] = 0x81;
+                malformed[3] = 0x80;
+                malformed[7] = 1;
+                malformed.extend_from_slice(&[0xc0, 0x0c]);
+                if first.send_to(&malformed, peer).await.is_err() {
+                    break;
+                }
+            }
+        }));
+
+        let second = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let second_address = second.local_addr().unwrap();
+        let second_server = tokio::spawn(async move {
+            let mut buffer = [0u8; 512];
+            let (len, peer) = second.recv_from(&mut buffer).await.unwrap();
+            let mut response = buffer[..len].to_vec();
+            response[2] = 0x81;
+            response[3] = 0x80;
+            response[7] = 1;
+            response.extend_from_slice(&[0xc0, 0x0c, 0, 1, 0, 1, 0, 0, 0, 30, 0, 4, 10, 0, 0, 9]);
+            second.send_to(&response, peer).await.unwrap();
+        });
+
+        let server = |port, tag: &str| DnsServer {
+            endpoint: ResolverEndpoint::Udp {
+                address: Address::parse_host("127.0.0.1"),
+                port,
+            },
+            domains: Vec::new(),
+            expect_ips: Vec::new(),
+            unexpect_ips: Vec::new(),
+            skip_fallback: false,
+            // Distinct tags place the two resolvers in separate tiers, so the
+            // second is asked only after the first one's budget is spent.
+            tag: Some(tag.into()),
+        };
+        let settings = DnsSettings {
+            servers: vec![
+                server(first_address.port(), "first"),
+                server(second_address.port(), "second"),
+            ]
+            .into_boxed_slice(),
+            ..DnsSettings::default()
+        };
+        let resolver = Resolver::new(settings);
+        let ips = resolver
+            .lookup("example.com", QueryStrategy::UseIpv4)
+            .await
+            .unwrap();
+        assert_eq!(ips, vec!["10.0.0.9".parse::<IpAddr>().unwrap()]);
+        second_server.await.unwrap();
     }
 
     #[tokio::test]

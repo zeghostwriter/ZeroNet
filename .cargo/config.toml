@@ -1,0 +1,5 @@
+# The integration tests start a real server, and applying its config recurses
+# deeper than the 2 MiB a worker thread gets by default. A larger default stack
+# keeps those tests from aborting; release binaries are unaffected.
+[env]
+RUST_MIN_STACK = "33554432"

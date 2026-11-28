@@ -119,8 +119,31 @@ enum EncryptedMiss {
 /// query would otherwise cost its whole timeout before the second try). The
 /// first usable answer wins; the other is dropped.
 async fn resolve_domain(name: &str, port: u16) -> Result<Vec<SocketAddr>, Failure> {
-    let system = system_lookup(name, port);
-    let encrypted = encrypted_lookup(name, port);
+    race_resolvers(
+        name,
+        system_lookup(name, port),
+        encrypted_lookup(name, port),
+    )
+    .await
+}
+
+/// Pick the first usable answer from two resolver futures.
+///
+/// `system` and `encrypted` are the lookups in flight, supplied by the caller
+/// so this decision can be exercised without a network. The system lookup is
+/// polled first; the encrypted one is polled only after a system miss or after
+/// [`SYSTEM_HEAD_START`], just as a real pair of lookups would be. A ready
+/// system answer therefore wins even when an encrypted answer is also ready.
+/// The loser is dropped, so both lookups must be safe to cancel.
+async fn race_resolvers<S, E>(
+    name: &str,
+    system: S,
+    encrypted: E,
+) -> Result<Vec<SocketAddr>, Failure>
+where
+    S: std::future::Future<Output = Result<Vec<SocketAddr>, SystemMiss>>,
+    E: std::future::Future<Output = Result<Vec<SocketAddr>, EncryptedMiss>>,
+{
     tokio::pin!(system, encrypted);
     let mut early = None;
     tokio::select! {
@@ -3254,6 +3277,96 @@ pub fn filter_family(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A lookup that fails the test if the race polls it at all.
+    fn never_polled<T>(what: &'static str) -> impl std::future::Future<Output = T> {
+        std::future::poll_fn(move |_| panic!("{what}"))
+    }
+
+    /// The first usable system answer wins even when encrypted DNS is also
+    /// ready: the race must prefer the system resolver, not the last future.
+    #[tokio::test]
+    async fn a_fast_system_answer_wins() {
+        let system = vec!["203.0.113.7:443".parse::<SocketAddr>().unwrap()];
+        let found = race_resolvers(
+            "example.test",
+            std::future::ready(Ok::<_, SystemMiss>(system.clone())),
+            std::future::ready(Ok::<_, EncryptedMiss>(vec!["198.51.100.9:443"
+                .parse()
+                .unwrap()])),
+        )
+        .await
+        .unwrap();
+        assert_eq!(found, system);
+    }
+
+    #[tokio::test]
+    async fn a_hijacked_system_answer_falls_back_to_encrypted_dns() {
+        let clean = vec!["203.0.113.9:443".parse::<SocketAddr>().unwrap()];
+        let found = race_resolvers(
+            "filtered.example",
+            std::future::ready(Err::<Vec<SocketAddr>, _>(SystemMiss::Hijacked)),
+            std::future::ready(Ok::<_, EncryptedMiss>(clean.clone())),
+        )
+        .await
+        .unwrap();
+        assert_eq!(found, clean);
+    }
+
+    #[tokio::test]
+    async fn both_resolvers_failing_reports_why() {
+        let failure = race_resolvers(
+            "dead.example",
+            std::future::ready(Err::<Vec<SocketAddr>, _>(SystemMiss::Failed(
+                "no addresses".into(),
+            ))),
+            std::future::ready(Err::<Vec<SocketAddr>, _>(EncryptedMiss::Failed(
+                "network unreachable".into(),
+            ))),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(failure.kind, FailureKind::DnsNoData);
+        assert_eq!(failure.stage, Stage::Resolving);
+        let detail = failure.detail.as_deref().unwrap_or_default();
+        assert!(detail.contains("dead.example"), "{detail}");
+        assert!(detail.contains("no addresses"), "{detail}");
+        assert!(detail.contains("network unreachable"), "{detail}");
+    }
+
+    #[tokio::test]
+    async fn a_hijacked_answer_without_encrypted_fallback_names_interference() {
+        let failure = race_resolvers(
+            "filtered.example",
+            std::future::ready(Err::<Vec<SocketAddr>, _>(SystemMiss::Hijacked)),
+            std::future::ready(Err::<Vec<SocketAddr>, _>(EncryptedMiss::Failed(
+                "network unreachable".into(),
+            ))),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(failure.kind, FailureKind::DnsSuspectedInterference);
+        let detail = failure.detail.as_deref().unwrap_or_default();
+        assert!(detail.contains("filtered.example"), "{detail}");
+        assert!(detail.contains("network unreachable"), "{detail}");
+    }
+
+    /// Loopback names are answered locally, so the encrypted lookup must not
+    /// even be started for them.
+    #[tokio::test]
+    async fn localhost_does_not_consult_encrypted_dns() {
+        let local = vec!["127.0.0.1:443".parse::<SocketAddr>().unwrap()];
+        let found = race_resolvers(
+            "localhost",
+            std::future::ready(Ok::<_, SystemMiss>(local.clone())),
+            never_polled::<Result<Vec<SocketAddr>, EncryptedMiss>>(
+                "encrypted DNS is not needed for localhost",
+            ),
+        )
+        .await
+        .unwrap();
+        assert_eq!(found, local);
+    }
 
     /// Iran's resolvers answer a filtered name with the block page; those
     /// answers must never be dialled. Ordinary private and public addresses

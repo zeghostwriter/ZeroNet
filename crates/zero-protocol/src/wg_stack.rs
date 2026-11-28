@@ -1669,6 +1669,33 @@ mod tests {
         }
     }
 
+    #[test]
+    fn a_tunnel_snapshots_its_persistent_keepalive_when_it_is_built() {
+        let make_link = |keepalive| {
+            let (up, _) = mpsc::channel(1);
+            let (_, down) = mpsc::channel(1);
+            let wire = Wire::Inside {
+                link: PacketLink {
+                    up,
+                    down,
+                    rebind: Arc::new(Notify::new()),
+                },
+                local: "172.16.0.2:5000".parse().unwrap(),
+            };
+            let mut params = client_params([2u8; 32], [0; 3]);
+            params.persistent_keepalive = keepalive;
+            WgLink::new(wire, "162.159.192.1:2408".parse().unwrap(), params)
+        };
+        let mut wg = make_link(Some(25));
+        assert_eq!(wg.tunnel.persistent_keepalive(), Some(25));
+        // The timer works from the value copied into the tunnel, so a later
+        // edit to the parameters cannot leave one arming interval and one
+        // send interval disagreeing.
+        wg.params.persistent_keepalive = Some(1);
+        assert_eq!(wg.tunnel.persistent_keepalive(), Some(25));
+        assert_eq!(make_link(None).tunnel.persistent_keepalive(), None);
+    }
+
     async fn echo(stream: &mut zero_core::BoxStream, body: &[u8]) {
         stream.write_all(body).await.unwrap();
         let mut back = vec![0u8; body.len()];
@@ -1842,6 +1869,21 @@ mod tests {
         assert_eq!(udp_payload(&packet[..20], local), None);
         // IPv6 is refused rather than mangled.
         assert!(udp_packet("[::1]:1".parse().unwrap(), local, b"x").is_none());
+    }
+
+    #[test]
+    fn a_reply_is_accepted_only_for_an_address_this_link_owns() {
+        let local: SocketAddr = "172.16.0.2:5000".parse().unwrap();
+        let remote: SocketAddr = "162.159.192.1:2408".parse().unwrap();
+        let neighbour: SocketAddr = "172.16.0.3:5000".parse().unwrap();
+        // The same /24 is not enough on a point-to-point link: this
+        // interface owns only its own /32, so a reply addressed to the
+        // neighbour is not ours even though it shares the subnet.
+        let misaddressed = udp_packet(remote, neighbour, b"datagram").unwrap();
+        assert_eq!(udp_payload(&misaddressed, local), None);
+        // The exact address and port still pass.
+        let ours = udp_packet(remote, local, b"datagram").unwrap();
+        assert_eq!(udp_payload(&ours, local), Some((remote, &b"datagram"[..])));
     }
 
     #[test]
